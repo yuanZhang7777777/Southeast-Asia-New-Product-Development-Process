@@ -1,0 +1,1274 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>海外仓开发新品认领工作台 - 自动分配演示版</title>
+  <style>
+    :root {
+      --bg: #f5f7f5;
+      --panel: #ffffff;
+      --soft-panel: #fbfcfb;
+      --ink: #1f2924;
+      --muted: #65726a;
+      --faint: #8d9891;
+      --line: #dde5df;
+      --line-strong: #c9d4cc;
+      --green: #2f7852;
+      --green-soft: #e8f4ed;
+      --blue: #2f6386;
+      --blue-soft: #e8f1f7;
+      --amber: #9a6816;
+      --amber-soft: #fbf0d8;
+      --red: #b3433b;
+      --red-soft: #f9e8e6;
+      --shadow: 0 14px 34px rgba(24, 36, 29, .08);
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: "Microsoft YaHei", "PingFang SC", "Segoe UI", Arial, sans-serif;
+      font-size: 14px;
+      line-height: 1.55;
+    }
+
+    button, input, select, textarea { font: inherit; }
+    button { cursor: pointer; }
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 30;
+      background: rgba(245, 247, 245, .96);
+      border-bottom: 1px solid var(--line);
+      backdrop-filter: blur(10px);
+    }
+    .top-inner {
+      max-width: 1360px;
+      margin: 0 auto;
+      padding: 14px 22px;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      flex-wrap: wrap;
+    }
+    .brand {
+      min-width: 300px;
+      display: grid;
+      gap: 3px;
+    }
+    .brand strong {
+      font-size: 20px;
+      line-height: 1.25;
+      letter-spacing: 0;
+    }
+    .brand span {
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .top-controls {
+      margin-left: auto;
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .control, .btn, .seg-btn {
+      border: 1px solid var(--line-strong);
+      border-radius: 8px;
+      background: var(--panel);
+      color: var(--ink);
+      min-height: 36px;
+      padding: 8px 11px;
+    }
+    .control { min-width: 130px; }
+    .btn:hover, .seg-btn:hover, .control:focus { border-color: var(--green); }
+    .btn.primary {
+      border-color: var(--green);
+      background: var(--green);
+      color: #fff;
+    }
+    .btn.warn {
+      border-color: #e2c47f;
+      background: var(--amber-soft);
+      color: var(--amber);
+    }
+    .btn.ghost {
+      background: transparent;
+    }
+    .seg {
+      display: inline-flex;
+      border: 1px solid var(--line-strong);
+      border-radius: 9px;
+      overflow: hidden;
+      background: var(--panel);
+    }
+    .seg-btn {
+      border: 0;
+      border-radius: 0;
+      border-right: 1px solid var(--line);
+      background: transparent;
+      min-width: 92px;
+    }
+    .seg-btn:last-child { border-right: 0; }
+    .seg-btn.active {
+      background: var(--green-soft);
+      color: var(--green);
+      font-weight: 700;
+    }
+
+    .app {
+      max-width: 1360px;
+      margin: 0 auto;
+      padding: 18px 22px 56px;
+      display: grid;
+      gap: 16px;
+    }
+    .hero {
+      display: grid;
+      grid-template-columns: minmax(0, 1.35fr) minmax(320px, .85fr);
+      gap: 16px;
+      align-items: stretch;
+    }
+    .command {
+      background: linear-gradient(135deg, #ffffff 0%, #f7fbf8 100%);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+      padding: 18px;
+      display: grid;
+      gap: 16px;
+      overflow: hidden;
+    }
+    .command-title {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      align-items: flex-start;
+    }
+    .command-title h1 {
+      margin: 0;
+      font-size: 24px;
+      line-height: 1.25;
+      letter-spacing: 0;
+    }
+    .command-title p {
+      margin: 6px 0 0;
+      color: var(--muted);
+      max-width: 760px;
+    }
+    .command-actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      min-width: 260px;
+    }
+    .stage-rail {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 8px;
+    }
+    .stage-card {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px;
+      background: #fff;
+      display: grid;
+      gap: 6px;
+      min-width: 0;
+    }
+    .stage-card.active {
+      border-color: #b8ddc6;
+      background: var(--green-soft);
+    }
+    .stage-name {
+      font-weight: 800;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .stage-metric {
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .stage-line {
+      height: 5px;
+      border-radius: 999px;
+      background: #edf1ed;
+      overflow: hidden;
+    }
+    .stage-line span {
+      display: block;
+      height: 100%;
+      width: 0%;
+      background: var(--green);
+      border-radius: 999px;
+      transition: width .22s ease;
+    }
+    .smart-panel {
+      background: #1f2924;
+      color: #fff;
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+      padding: 18px;
+      display: grid;
+      gap: 14px;
+      align-content: start;
+    }
+    .smart-panel h2 {
+      margin: 0;
+      font-size: 16px;
+    }
+    .smart-panel p {
+      margin: 0;
+      color: rgba(255,255,255,.76);
+      font-size: 12.5px;
+    }
+    .smart-rules {
+      display: grid;
+      gap: 8px;
+    }
+    .rule-item {
+      border: 1px solid rgba(255,255,255,.16);
+      border-radius: 8px;
+      padding: 9px 10px;
+      background: rgba(255,255,255,.06);
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+    }
+    .rule-item b {
+      font-size: 13px;
+    }
+    .rule-item span {
+      color: rgba(255,255,255,.72);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+    .overview {
+      display: grid;
+      grid-template-columns: 1.15fr 1.3fr 1fr;
+      gap: 14px;
+    }
+    .band, .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+    .band-head, .panel-head {
+      padding: 13px 15px;
+      border-bottom: 1px solid var(--line);
+      background: var(--soft-panel);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+    .band-head h2, .panel-head h2 {
+      margin: 0;
+      font-size: 15px;
+      line-height: 1.35;
+    }
+    .band-body, .panel-body { padding: 14px 15px; }
+    .kpis {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(92px, 1fr));
+      gap: 8px;
+    }
+    .kpi {
+      border: 1px solid var(--line);
+      background: #fff;
+      border-radius: 8px;
+      padding: 9px 10px;
+      min-width: 0;
+      display: grid;
+      gap: 7px;
+    }
+    .kpi b {
+      display: block;
+      font-size: 21px;
+      line-height: 1.1;
+    }
+    .kpi span {
+      color: var(--muted);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+    .mini-track {
+      height: 5px;
+      border-radius: 999px;
+      background: #edf1ed;
+      overflow: hidden;
+    }
+    .mini-fill {
+      display: block;
+      height: 100%;
+      border-radius: 999px;
+      background: var(--green);
+      width: 0%;
+      transition: width .22s ease;
+    }
+    .todo-list, .warn-list, .flow-list {
+      margin: 0;
+      padding: 0;
+      list-style: none;
+      display: grid;
+      gap: 8px;
+    }
+    .todo-item, .warn-item, .flow-item {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+      padding: 9px 10px;
+      display: grid;
+      gap: 5px;
+    }
+    .item-main {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      font-weight: 700;
+    }
+    .item-sub {
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      border-radius: 999px;
+      padding: 2px 8px;
+      font-size: 11.5px;
+      line-height: 1.5;
+      border: 1px solid transparent;
+      white-space: nowrap;
+    }
+    .pill.green { color: var(--green); background: var(--green-soft); border-color: #bee0ca; }
+    .pill.blue { color: var(--blue); background: var(--blue-soft); border-color: #bed7e8; }
+    .pill.amber { color: var(--amber); background: var(--amber-soft); border-color: #ead59f; }
+    .pill.red { color: var(--red); background: var(--red-soft); border-color: #efc6c1; }
+    .pill.gray { color: var(--muted); background: #f1f4f1; border-color: var(--line); }
+
+    .workspace {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 330px;
+      gap: 16px;
+      align-items: start;
+    }
+    .toolbar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      padding: 13px 15px;
+      border-bottom: 1px solid var(--line);
+      background: var(--soft-panel);
+    }
+    .toolbar .spacer { flex: 1; }
+    .table-wrap { overflow-x: auto; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 980px;
+      font-size: 13px;
+    }
+    th {
+      text-align: left;
+      color: var(--muted);
+      font-size: 12px;
+      background: #f2f5f2;
+      border-bottom: 1px solid var(--line);
+      padding: 8px;
+      white-space: nowrap;
+    }
+    td {
+      border-bottom: 1px solid var(--line);
+      padding: 8px;
+      vertical-align: middle;
+    }
+    tr.selected td { background: #f4fbf7; }
+    tr.focused td {
+      background: #eef7f1;
+      box-shadow: inset 3px 0 0 var(--green);
+    }
+    .sku-cell {
+      display: grid;
+      gap: 3px;
+    }
+    .sku-title {
+      font-weight: 800;
+      color: var(--ink);
+    }
+    .sku-sub {
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .assignee {
+      width: 130px;
+      border: 1px solid var(--line-strong);
+      border-radius: 8px;
+      padding: 7px 8px;
+      background: #fff;
+    }
+    .tiny-input {
+      width: 88px;
+      border: 1px solid var(--line-strong);
+      border-radius: 8px;
+      padding: 7px 8px;
+      background: #fff;
+    }
+    .lock-btn {
+      border: 1px solid var(--line-strong);
+      background: #fff;
+      border-radius: 8px;
+      padding: 6px 8px;
+      min-width: 60px;
+    }
+    .lock-btn.locked {
+      color: var(--amber);
+      border-color: #e7cd8c;
+      background: var(--amber-soft);
+      font-weight: 700;
+    }
+    .side-stack {
+      display: grid;
+      gap: 14px;
+    }
+    .balance-list {
+      display: grid;
+      gap: 8px;
+    }
+    .person-row {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 9px 10px;
+      background: #fff;
+      display: grid;
+      gap: 7px;
+    }
+    .person-top {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      font-weight: 700;
+    }
+    .bar-track {
+      height: 8px;
+      border-radius: 999px;
+      background: #edf1ed;
+      overflow: hidden;
+    }
+    .bar-fill {
+      height: 100%;
+      border-radius: 999px;
+      background: var(--green);
+      width: 0%;
+    }
+    .notice {
+      border: 1px dashed #c9d4cc;
+      border-radius: 8px;
+      padding: 10px;
+      color: var(--muted);
+      background: #fcfdfb;
+      font-size: 12.5px;
+      white-space: pre-line;
+    }
+    .focus-card {
+      display: grid;
+      gap: 10px;
+    }
+    .focus-title {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      align-items: flex-start;
+    }
+    .focus-title h3 {
+      margin: 0;
+      font-size: 17px;
+    }
+    .focus-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+    .focus-metric {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 8px;
+      background: #fff;
+    }
+    .focus-metric b {
+      display: block;
+      font-size: 15px;
+    }
+    .focus-metric span {
+      color: var(--muted);
+      font-size: 11.5px;
+    }
+    .claim-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(330px, 1fr));
+      gap: 12px;
+      padding: 14px;
+    }
+    .claim-card {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+      padding: 12px;
+      display: grid;
+      gap: 10px;
+    }
+    .claim-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      align-items: start;
+    }
+    .claim-head h3 {
+      margin: 0;
+      font-size: 15px;
+    }
+    .info-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 7px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .info-grid b { color: var(--ink); font-weight: 700; }
+    .claim-actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+    .claim-actions .full { grid-column: 1 / -1; }
+    textarea {
+      width: 100%;
+      min-height: 76px;
+      border: 1px solid var(--line-strong);
+      border-radius: 8px;
+      padding: 8px 9px;
+      resize: vertical;
+    }
+    .review-list {
+      display: grid;
+      gap: 10px;
+      padding: 14px;
+    }
+    .review-row {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+      padding: 12px;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 12px;
+      align-items: center;
+    }
+    .empty {
+      color: var(--muted);
+      border: 1px dashed var(--line-strong);
+      border-radius: 8px;
+      padding: 18px;
+      text-align: center;
+      background: #fff;
+    }
+    .hidden { display: none !important; }
+
+    @media (max-width: 1080px) {
+      .hero, .overview, .workspace { grid-template-columns: 1fr; }
+      .stage-rail { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .top-controls { margin-left: 0; justify-content: flex-start; }
+    }
+    @media (max-width: 680px) {
+      .top-inner, .app { padding-left: 14px; padding-right: 14px; }
+      .brand { min-width: 0; width: 100%; }
+      .seg { width: 100%; }
+      .seg-btn { flex: 1; min-width: 0; }
+      .control, .btn { width: 100%; }
+      .command-title { display: grid; }
+      .command-actions { min-width: 0; justify-content: stretch; }
+      .stage-rail { grid-template-columns: 1fr; }
+      .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .claim-actions { grid-template-columns: 1fr; }
+      .review-row { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="top-inner">
+      <div class="brand">
+        <strong>海外仓开发新品认领工作台</strong>
+        <span>自动预分配 · 店铺运营认领 · 主管复核 · 流转备货</span>
+      </div>
+      <div class="top-controls">
+        <select class="control" id="periodSelect">
+          <option>开发0623期</option>
+          <option>开发0616期</option>
+          <option>开发0609期</option>
+        </select>
+        <div class="seg" id="roleSeg">
+          <button class="seg-btn active" data-role="lead">练玉君/组长</button>
+          <button class="seg-btn" data-role="operator">店铺运营</button>
+          <button class="seg-btn" data-role="manager">主管/负责人</button>
+        </div>
+        <select class="control hidden" id="operatorSelect"></select>
+        <span class="pill amber" id="deadlinePill">周三18:00截止</span>
+        <button class="btn ghost" id="resetBtn">重置演示</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="app">
+    <section class="hero">
+      <div class="command">
+        <div class="command-title">
+          <div>
+            <h1>本期开发新品从分配到备货的统一工作台</h1>
+            <p>系统先把主SKU整组预分配给店铺运营，组长只处理需要调整的部分；提交后自动生成待办、预警和备货流转。</p>
+          </div>
+          <div class="command-actions">
+            <button class="btn primary" id="heroAutoAssignBtn">生成本期预分配</button>
+            <button class="btn" id="heroNotifyBtn">确认分配并通知</button>
+          </div>
+        </div>
+        <div class="stage-rail" id="stageRail"></div>
+      </div>
+      <div class="smart-panel">
+        <div>
+          <h2>当前自动分配规则</h2>
+          <p>第一版先用演示规则，后续可替换成国家、类目、能力、历史负责人等权重。</p>
+        </div>
+        <div class="smart-rules">
+          <div class="rule-item"><b>主SKU不拆</b><span>硬约束</span></div>
+          <div class="rule-item"><b>子SKU数量均衡</b><span>默认目标</span></div>
+          <div class="rule-item"><b>锁定不覆盖</b><span>组长优先</span></div>
+          <div class="rule-item"><b>未锁定可重排</b><span>快速修正</span></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="overview">
+      <div class="band">
+        <div class="band-head">
+          <h2>今日待办</h2>
+          <span class="pill blue" id="roleHint">组长视角</span>
+        </div>
+        <div class="band-body">
+          <ul class="todo-list" id="todoList"></ul>
+        </div>
+      </div>
+      <div class="band">
+        <div class="band-head">
+          <h2>本期进度</h2>
+          <span class="pill gray" id="progressText">开发0623期</span>
+        </div>
+        <div class="band-body">
+          <div class="kpis" id="kpis"></div>
+        </div>
+      </div>
+      <div class="band">
+        <div class="band-head">
+          <h2>预警</h2>
+          <span class="pill red" id="warningCount">0项</span>
+        </div>
+        <div class="band-body">
+          <ul class="warn-list" id="warningList"></ul>
+        </div>
+      </div>
+    </section>
+
+    <section class="workspace">
+      <div class="panel" id="leadPanel">
+        <div class="toolbar">
+          <button class="btn primary" id="autoAssignBtn">一键预分配</button>
+          <button class="btn" id="redistributeBtn">重新分配未锁定项</button>
+          <select class="control" id="batchOwner"></select>
+          <button class="btn" id="batchApplyBtn">批量改负责人</button>
+          <button class="btn warn" id="clearBtn">撤回未锁定分配</button>
+          <span class="spacer"></span>
+          <button class="btn primary" id="notifyBtn">确认并通知</button>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th><input type="checkbox" id="selectAll"></th>
+                <th>主SKU整组</th>
+                <th>国家</th>
+                <th>开发信息</th>
+                <th>参考单销</th>
+                <th>历史负责人</th>
+                <th>负责人</th>
+                <th>状态</th>
+                <th>锁定</th>
+              </tr>
+            </thead>
+            <tbody id="assignRows"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="panel hidden" id="operatorPanel">
+        <div class="panel-head">
+          <h2>我的待认领</h2>
+          <span class="pill blue" id="operatorTaskCount">0项</span>
+        </div>
+        <div class="claim-grid" id="claimGrid"></div>
+      </div>
+
+      <div class="panel hidden" id="managerPanel">
+        <div class="panel-head">
+          <h2>主管复核</h2>
+          <span class="pill amber" id="reviewCount">0项待看</span>
+        </div>
+        <div class="review-list" id="reviewList"></div>
+      </div>
+
+      <aside class="side-stack">
+        <div class="panel">
+          <div class="panel-head">
+            <h2>分配均衡度</h2>
+            <span class="pill green" id="balancePill">待分配</span>
+          </div>
+        <div class="panel-body">
+            <div class="balance-list" id="balanceList"></div>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panel-head">
+            <h2>选中SKU快照</h2>
+            <span class="pill gray" id="focusTag">未选中</span>
+          </div>
+          <div class="panel-body">
+            <div class="focus-card" id="focusCard"></div>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panel-head">
+            <h2>数据流转</h2>
+            <span class="pill blue">自动同步待办</span>
+          </div>
+          <div class="panel-body">
+            <ul class="flow-list" id="flowList"></ul>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panel-head">
+            <h2>通知预览</h2>
+            <span class="pill gray">确认后发送</span>
+          </div>
+          <div class="panel-body">
+            <div class="notice" id="noticePreview">完成分配后，这里会显示每位店铺运营收到的待认领SKU。</div>
+          </div>
+        </div>
+      </aside>
+    </section>
+  </main>
+
+  <script>
+    const operators = ["庞莹莹", "陆俊全", "陈丽妹", "赵钰婷", "李干", "江琴", "李桂敏", "饶培丽"];
+    const initialItems = [
+      { id: "HZC029", mainSku: "HZC029", subSkuCount: 4, country: "越南", category: "家居厨卫", dev: "陆俊全", refDaily: 1.2, margin: "16.8%", historyOwner: "陆俊全", status: "待分配", assignee: "", locked: false, notified: false, selected: false, claim: null },
+      { id: "FR027", mainSku: "FR027", subSkuCount: 3, country: "越南", category: "运动娱乐", dev: "江琴", refDaily: 2.1, margin: "18.4%", historyOwner: "江琴", status: "待分配", assignee: "", locked: false, notified: false, selected: false, claim: null },
+      { id: "BGQHC18", mainSku: "BGQHC18", subSkuCount: 6, country: "菲律宾", category: "收纳清洁", dev: "庞莹莹", refDaily: 0.8, margin: "12.7%", historyOwner: "庞莹莹", status: "待分配", assignee: "", locked: false, notified: false, selected: false, claim: null },
+      { id: "FFJ321", mainSku: "FFJ321", subSkuCount: 5, country: "菲律宾", category: "宠物用品", dev: "陆伟豪", refDaily: 1.5, margin: "14.2%", historyOwner: "陆伟豪", status: "待分配", assignee: "", locked: false, notified: false, selected: false, claim: null },
+      { id: "GFPH13", mainSku: "GFPH13", subSkuCount: 2, country: "菲律宾", category: "家居厨卫", dev: "陈丽妹", refDaily: 0.6, margin: "10.5%", historyOwner: "陈丽妹", status: "待分配", assignee: "", locked: false, notified: false, selected: false, claim: null },
+      { id: "GQ49", mainSku: "GQ49", subSkuCount: 4, country: "菲律宾", category: "园艺用品", dev: "郑纯华", refDaily: 1.1, margin: "13.1%", historyOwner: "郑纯华", status: "待分配", assignee: "", locked: false, notified: false, selected: false, claim: null },
+      { id: "HC051", mainSku: "HC051", subSkuCount: 3, country: "菲律宾", category: "卫浴用品", dev: "陈丽妹", refDaily: 1.4, margin: "14.5%", historyOwner: "陈丽妹", status: "待分配", assignee: "", locked: false, notified: false, selected: false, claim: null },
+      { id: "HWSQ03", mainSku: "HWSQ03", subSkuCount: 1, country: "菲律宾", category: "宠物用品", dev: "陈丽妹", refDaily: 0.4, margin: "引流款", historyOwner: "", status: "待分配", assignee: "", locked: false, notified: false, selected: false, claim: null },
+      { id: "WPBB195", mainSku: "WPBB195", subSkuCount: 2, country: "菲律宾", category: "汽车配件", dev: "陈丽妹", refDaily: 1.0, margin: "15.6%", historyOwner: "陈丽妹", status: "待分配", assignee: "", locked: false, notified: false, selected: false, claim: null },
+      { id: "CDHG0344", mainSku: "CDHG0344", subSkuCount: 2, country: "菲律宾", category: "消费电子", dev: "陈丽妹", refDaily: 0.7, margin: "11.9%", historyOwner: "", status: "待分配", assignee: "", locked: false, notified: false, selected: false, claim: null },
+      { id: "CMOD049", mainSku: "CMOD049", subSkuCount: 3, country: "马来西亚", category: "家居配件", dev: "潘露英", refDaily: 1.8, margin: "17.3%", historyOwner: "潘露英", status: "待分配", assignee: "", locked: false, notified: false, selected: false, claim: null },
+      { id: "WYOD1789", mainSku: "WYOD1789", subSkuCount: 1, country: "马来西亚", category: "服饰配件", dev: "颜佳文", refDaily: 0.5, margin: "9.8%", historyOwner: "颜佳文", status: "待分配", assignee: "", locked: false, notified: false, selected: false, claim: null }
+    ];
+
+    const key = "ow_new_product_assignment_demo_v1";
+    let state = loadState();
+    let currentRole = "lead";
+    let activeOperator = operators[0];
+    let focusedId = state.items[0]?.id || "";
+
+    const $ = (id) => document.getElementById(id);
+
+    function loadState() {
+      try {
+        const raw = localStorage.getItem(key);
+        if (raw) return JSON.parse(raw);
+      } catch (error) {}
+      return { items: JSON.parse(JSON.stringify(initialItems)), notifiedAt: "" };
+    }
+    function saveState() {
+      localStorage.setItem(key, JSON.stringify(state));
+    }
+    function statusClass(status) {
+      if (["已分配", "已认领", "主管通过", "已流转备货"].includes(status)) return "green";
+      if (["系统预分配", "手动调整", "待主管复核"].includes(status)) return "blue";
+      if (["待分配", "待确认通知", "已锁定"].includes(status)) return "amber";
+      return "red";
+    }
+    function ownerOptions(selected) {
+      return ['<option value="">未分配</option>'].concat(
+        operators.map((op) => `<option value="${op}" ${selected === op ? "selected" : ""}>${op}</option>`)
+      ).join("");
+    }
+    function calcLoad() {
+      const load = Object.fromEntries(operators.map((op) => [op, { main: 0, sub: 0, todo: 0, claimed: 0 }]));
+      state.items.forEach((item) => {
+        if (!item.assignee) return;
+        load[item.assignee].main += 1;
+        load[item.assignee].sub += item.subSkuCount;
+        if (item.notified && !item.claim) load[item.assignee].todo += 1;
+        if (item.claim) load[item.assignee].claimed += 1;
+      });
+      return load;
+    }
+    function autoAssign({ clearUnlocked }) {
+      if (clearUnlocked) {
+        state.items.forEach((item) => {
+          if (!item.locked) {
+            item.assignee = "";
+            item.status = "待分配";
+            item.notified = false;
+            item.claim = null;
+          }
+        });
+      }
+      const load = calcLoad();
+      const targets = state.items
+        .filter((item) => !item.locked && !item.claim && (clearUnlocked || !item.assignee))
+        .sort((a, b) => b.subSkuCount - a.subSkuCount || a.mainSku.localeCompare(b.mainSku));
+      targets.forEach((item) => {
+        const owner = operators.slice().sort((a, b) => load[a].sub - load[b].sub || load[a].main - load[b].main || a.localeCompare(b, "zh-CN"))[0];
+        item.assignee = owner;
+        item.status = "系统预分配";
+        item.notified = false;
+        load[owner].main += 1;
+        load[owner].sub += item.subSkuCount;
+      });
+      saveState();
+      render();
+    }
+    function clearUnlocked() {
+      state.items.forEach((item) => {
+        if (!item.locked) {
+          item.assignee = "";
+          item.status = "待分配";
+          item.notified = false;
+          item.selected = false;
+          item.claim = null;
+        }
+      });
+      state.notifiedAt = "";
+      saveState();
+      render();
+    }
+    function confirmAndNotify() {
+      state.items.forEach((item) => {
+        if (item.assignee && !item.claim) {
+          item.notified = true;
+          if (["系统预分配", "手动调整"].includes(item.status)) item.status = "已分配";
+        }
+      });
+      state.notifiedAt = new Date().toLocaleString("zh-CN");
+      saveState();
+      render();
+    }
+    function warnings() {
+      const list = [];
+      const unassigned = state.items.filter((item) => !item.assignee);
+      if (unassigned.length) list.push({ title: `${unassigned.length}组主SKU未分配`, sub: "先完成分配，店铺运营才会收到待认领。", level: "red" });
+      const noClaim = state.items.filter((item) => item.notified && !item.claim);
+      if (noClaim.length) list.push({ title: `${noClaim.length}组待认领未提交`, sub: "截止前需要完成是否认领和认领单销。", level: "amber" });
+      const missingReason = state.items.filter((item) => item.claim && item.claim.decision === "否" && (!item.claim.reason || !item.claim.summary));
+      if (missingReason.length) list.push({ title: `${missingReason.length}组不认领反馈不完整`, sub: "不认领必须有原因和销售反馈总结。", level: "red" });
+      const lowDaily = state.items.filter((item) => item.claim && item.claim.decision === "是" && Number(item.claim.daily) < 0.5);
+      if (lowDaily.length) list.push({ title: `${lowDaily.length}组认领单销偏低`, sub: "主管复核时重点看是否仍值得首备。", level: "amber" });
+      if (!list.length) list.push({ title: "暂无预警", sub: "分配、认领和反馈都在正常流转。", level: "green" });
+      return list;
+    }
+    function stats() {
+      const total = state.items.length;
+      const assigned = state.items.filter((item) => item.assignee).length;
+      const notified = state.items.filter((item) => item.notified).length;
+      const claimed = state.items.filter((item) => item.claim).length;
+      const approved = state.items.filter((item) => item.status === "主管通过" || item.status === "已流转备货").length;
+      const flow = state.items.filter((item) => item.status === "已流转备货").length;
+      return { total, assigned, notified, claimed, approved, flow };
+    }
+    function renderKpis() {
+      const s = stats();
+      const data = [
+        ["待分配", s.total - s.assigned, s.assigned / s.total],
+        ["待认领", s.notified - s.claimed, s.claimed / Math.max(1, s.notified)],
+        ["已认领", s.claimed, s.claimed / s.total],
+        ["主管已确认", s.approved, s.approved / s.total],
+        ["已流转备货", s.flow, s.flow / s.total]
+      ];
+      $("kpis").innerHTML = data.map(([label, value, pct]) => `
+        <div class="kpi">
+          <b>${value}</b>
+          <span>${label}</span>
+          <div class="mini-track"><i class="mini-fill" style="width:${Math.round(Math.min(1, Math.max(0, pct)) * 100)}%"></i></div>
+        </div>
+      `).join("");
+      $("progressText").textContent = `${$("periodSelect").value} · ${s.claimed}/${s.total} 已认领`;
+    }
+    function renderStageRail() {
+      const s = stats();
+      const stages = [
+        ["开发发布", s.total, s.total, "本期主SKU已进入池子"],
+        ["自动分配", s.assigned, s.total, "组长确认负责人"],
+        ["通知认领", s.notified, s.total, "店铺运营收到待办"],
+        ["运营提交", s.claimed, s.total, "是否认领和单销"],
+        ["复核备货", s.flow, s.total, "主管确认后流转"]
+      ];
+      $("stageRail").innerHTML = stages.map(([name, done, total, desc]) => {
+        const pct = Math.round(done / Math.max(1, total) * 100);
+        const active = done > 0 && done < total ? "active" : "";
+        return `
+          <div class="stage-card ${active}">
+            <div class="stage-name">${name}</div>
+            <div class="stage-metric">${done}/${total} · ${desc}</div>
+            <div class="stage-line"><span style="width:${pct}%"></span></div>
+          </div>
+        `;
+      }).join("");
+    }
+    function renderTodos() {
+      const roleName = currentRole === "lead" ? "组长视角" : currentRole === "operator" ? `${activeOperator} · 店铺运营` : "主管视角";
+      $("roleHint").textContent = roleName;
+      let todos = [];
+      if (currentRole === "lead") {
+        const unassigned = state.items.filter((item) => !item.assignee).length;
+        const draft = state.items.filter((item) => item.assignee && !item.notified && !item.claim).length;
+        todos = [
+          { title: "完成本期主SKU分配", sub: `${unassigned}组未分配，${draft}组待确认通知`, tag: unassigned ? "待处理" : "已完成", level: unassigned ? "amber" : "green" },
+          { title: "检查分配均衡度", sub: "主SKU不拆组，优先拉平每个人子SKU数量", tag: "自动计算", level: "blue" }
+        ];
+      } else if (currentRole === "operator") {
+        const mine = state.items.filter((item) => item.assignee === activeOperator && item.notified && !item.claim);
+        todos = mine.length ? mine.map((item) => ({ title: `${item.mainSku} 待认领`, sub: `${item.country} · ${item.subSkuCount}个子SKU · 参考单销${item.refDaily}`, tag: "待提交", level: "amber" })) : [{ title: "暂无待认领", sub: "分配确认后会自动出现在这里。", tag: "空闲", level: "green" }];
+      } else {
+        const review = state.items.filter((item) => item.claim && item.status === "待主管复核");
+        const flow = state.items.filter((item) => item.status === "主管通过").length;
+        todos = [
+          { title: "复核认领结果", sub: `${review.length}组待复核`, tag: review.length ? "待处理" : "已完成", level: review.length ? "amber" : "green" },
+          { title: "流转备货草稿", sub: `${flow}组已通过，可进入备货申请草稿`, tag: "下一步", level: "blue" }
+        ];
+      }
+      $("todoList").innerHTML = todos.map((item) => `
+        <li class="todo-item">
+          <div class="item-main"><span>${item.title}</span><span class="pill ${item.level}">${item.tag}</span></div>
+          <div class="item-sub">${item.sub}</div>
+        </li>
+      `).join("");
+    }
+    function renderWarnings() {
+      const list = warnings();
+      $("warningCount").textContent = `${list.filter((item) => item.level !== "green").length}项`;
+      $("warningList").innerHTML = list.map((item) => `
+        <li class="warn-item">
+          <div class="item-main"><span>${item.title}</span><span class="pill ${item.level}">${item.level === "red" ? "预警" : item.level === "amber" ? "关注" : "正常"}</span></div>
+          <div class="item-sub">${item.sub}</div>
+        </li>
+      `).join("");
+    }
+    function renderAssignRows() {
+      $("assignRows").innerHTML = state.items.map((item) => `
+        <tr class="${item.selected ? "selected" : ""} ${item.id === focusedId ? "focused" : ""}" data-focus="${item.id}">
+          <td><input type="checkbox" data-select="${item.id}" ${item.selected ? "checked" : ""}></td>
+          <td>
+            <div class="sku-cell">
+              <span class="sku-title">${item.mainSku}</span>
+              <span class="sku-sub">${item.subSkuCount}个子SKU · 主SKU整组不拆</span>
+            </div>
+          </td>
+          <td>${item.country}</td>
+          <td>
+            <div class="sku-cell">
+              <span>${item.category}</span>
+              <span class="sku-sub">开发：${item.dev} · 毛利：${item.margin}</span>
+            </div>
+          </td>
+          <td>${item.refDaily}</td>
+          <td>${item.historyOwner || "无"}</td>
+          <td><select class="assignee" data-owner="${item.id}" ${item.claim ? "disabled" : ""}>${ownerOptions(item.assignee)}</select></td>
+          <td><span class="pill ${statusClass(item.locked ? "已锁定" : item.status)}">${item.locked ? "已锁定" : item.status}</span></td>
+          <td><button class="lock-btn ${item.locked ? "locked" : ""}" data-lock="${item.id}">${item.locked ? "已锁定" : "锁定"}</button></td>
+        </tr>
+      `).join("");
+      document.querySelectorAll("[data-focus]").forEach((row) => {
+        row.onclick = () => {
+          focusedId = row.dataset.focus;
+          render();
+        };
+      });
+      document.querySelectorAll("[data-select]").forEach((box) => {
+        box.onclick = (event) => event.stopPropagation();
+        box.onchange = () => {
+          const item = state.items.find((x) => x.id === box.dataset.select);
+          item.selected = box.checked;
+          focusedId = item.id;
+          saveState();
+          renderAssignRows();
+          renderFocus();
+        };
+      });
+      document.querySelectorAll("[data-owner]").forEach((select) => {
+        select.onclick = (event) => event.stopPropagation();
+        select.onchange = () => {
+          const item = state.items.find((x) => x.id === select.dataset.owner);
+          focusedId = item.id;
+          item.assignee = select.value;
+          item.status = select.value ? "手动调整" : "待分配";
+          item.notified = false;
+          saveState();
+          render();
+        };
+      });
+      document.querySelectorAll("[data-lock]").forEach((button) => {
+        button.onclick = (event) => {
+          event.stopPropagation();
+          const item = state.items.find((x) => x.id === button.dataset.lock);
+          focusedId = item.id;
+          item.locked = !item.locked;
+          saveState();
+          render();
+        };
+      });
+      $("selectAll").checked = state.items.every((item) => item.selected);
+    }
+    function renderBalance() {
+      const load = calcLoad();
+      const maxSub = Math.max(1, ...operators.map((op) => load[op].sub));
+      const values = operators.map((op) => load[op].sub);
+      const diff = Math.max(...values) - Math.min(...values);
+      $("balancePill").textContent = diff <= 2 ? "较均衡" : "需调整";
+      $("balancePill").className = `pill ${diff <= 2 ? "green" : "amber"}`;
+      $("balanceList").innerHTML = operators.map((op) => `
+        <div class="person-row">
+          <div class="person-top"><span>${op}</span><span>${load[op].main}组 / ${load[op].sub}子SKU</span></div>
+          <div class="bar-track"><div class="bar-fill" style="width:${Math.round(load[op].sub / maxSub * 100)}%"></div></div>
+          <div class="item-sub">待认领 ${load[op].todo} · 已提交 ${load[op].claimed}</div>
+        </div>
+      `).join("");
+    }
+    function renderNotice() {
+      const grouped = {};
+      state.items.filter((item) => item.assignee).forEach((item) => {
+        grouped[item.assignee] ||= [];
+        grouped[item.assignee].push(`${item.mainSku}(${item.subSkuCount}子SKU)`);
+      });
+      const lines = Object.entries(grouped).map(([owner, items]) => `${owner}：${items.join("、")}`);
+      $("noticePreview").textContent = lines.length ? `通知预览\n${lines.join("\n")}\n\n确认并通知后，店铺运营待办会按以上分配生成。` : "完成分配后，这里会显示每位店铺运营收到的待认领SKU。";
+    }
+    function renderFlow() {
+      const s = stats();
+      const steps = [
+        ["开发发布", `${s.total}组主SKU进入本期`],
+        ["组长分配", `${s.assigned}/${s.total}已分配`],
+        ["店铺运营认领", `${s.claimed}/${s.notified || s.assigned}已提交`],
+        ["主管复核", `${s.approved}组已确认`],
+        ["备货申请", `${s.flow}组已流转备货草稿`]
+      ];
+      $("flowList").innerHTML = steps.map(([title, sub], idx) => `
+        <li class="flow-item">
+          <div class="item-main"><span>${idx + 1}. ${title}</span><span class="pill ${idx <= 1 ? "blue" : "gray"}">流转</span></div>
+          <div class="item-sub">${sub}</div>
+        </li>
+      `).join("");
+    }
+    function renderFocus() {
+      const item = state.items.find((x) => x.id === focusedId) || state.items[0];
+      if (!item) {
+        $("focusTag").textContent = "未选中";
+        $("focusCard").innerHTML = '<div class="empty">点击左侧任意主SKU查看快照。</div>';
+        return;
+      }
+      $("focusTag").textContent = item.status;
+      $("focusTag").className = `pill ${statusClass(item.locked ? "已锁定" : item.status)}`;
+      const next = !item.assignee ? "等待组长分配负责人" :
+        !item.notified ? "等待组长确认并通知" :
+        !item.claim ? "等待店铺运营提交认领" :
+        item.status === "待主管复核" ? "等待主管复核" :
+        item.status === "主管通过" ? "可流转备货申请草稿" :
+        item.status === "已流转备货" ? "已进入备货申请草稿" : "等待补充反馈";
+      $("focusCard").innerHTML = `
+        <div class="focus-title">
+          <h3>${item.mainSku}</h3>
+          <span class="pill ${item.locked ? "amber" : statusClass(item.status)}">${item.locked ? "已锁定" : item.status}</span>
+        </div>
+        <div class="focus-grid">
+          <div class="focus-metric"><b>${item.subSkuCount}</b><span>子SKU整组</span></div>
+          <div class="focus-metric"><b>${item.refDaily}</b><span>参考单销</span></div>
+          <div class="focus-metric"><b>${item.assignee || "未分配"}</b><span>负责人</span></div>
+          <div class="focus-metric"><b>${item.country}</b><span>国家</span></div>
+        </div>
+        <div class="item-sub">开发：${item.dev} · 类目：${item.category} · 毛利：${item.margin}</div>
+        <div class="notice">${next}${item.claim ? `\n认领结果：${item.claim.decision} · 首备量 ${item.claim.stockQty || 0}` : ""}</div>
+      `;
+    }
+    function renderClaims() {
+      const mine = state.items.filter((item) => item.assignee === activeOperator && item.notified);
+      $("operatorTaskCount").textContent = `${mine.filter((item) => !item.claim).length}项待认领`;
+      $("claimGrid").innerHTML = mine.length ? mine.map((item) => `
+        <article class="claim-card">
+          <div class="claim-head">
+            <h3>${item.mainSku}</h3>
+            <span class="pill ${statusClass(item.status)}">${item.claim ? item.claim.decision === "是" ? "已认领" : "不认领" : "待认领"}</span>
+          </div>
+          <div class="info-grid">
+            <span><b>国家</b> ${item.country}</span>
+            <span><b>子SKU</b> ${item.subSkuCount}个</span>
+            <span><b>类目</b> ${item.category}</span>
+            <span><b>参考单销</b> ${item.refDaily}</span>
+            <span><b>开发</b> ${item.dev}</span>
+            <span><b>毛利</b> ${item.margin}</span>
+          </div>
+          <div class="claim-actions">
+            <select class="control" data-decision="${item.id}">
+              <option value="是" ${item.claim?.decision === "是" ? "selected" : ""}>认领</option>
+              <option value="否" ${item.claim?.decision === "否" ? "selected" : ""}>不认领</option>
+            </select>
+            <input class="tiny-input" data-daily="${item.id}" type="number" step="0.1" min="0" value="${item.claim?.daily ?? item.refDaily}" placeholder="认领单销">
+            <textarea class="full" data-summary="${item.id}" placeholder="销售反馈总结：调研实情、为什么认领/不认领，可写截图或链接">${item.claim?.summary ?? ""}</textarea>
+            <input class="control full" data-reason="${item.id}" value="${item.claim?.reason ?? ""}" placeholder="不认领理由/备注">
+            <button class="btn primary full" data-submit="${item.id}">提交认领结果</button>
+          </div>
+        </article>
+      `).join("") : '<div class="empty">当前没有待认领任务。组长确认并通知后，这里会自动出现分配给你的主SKU。</div>';
+      document.querySelectorAll("[data-submit]").forEach((button) => {
+        button.onclick = () => submitClaim(button.dataset.submit);
+      });
+    }
+    function submitClaim(id) {
+      const item = state.items.find((x) => x.id === id);
+      const decision = document.querySelector(`[data-decision="${id}"]`).value;
+      const daily = document.querySelector(`[data-daily="${id}"]`).value;
+      const summary = document.querySelector(`[data-summary="${id}"]`).value.trim();
+      const reason = document.querySelector(`[data-reason="${id}"]`).value.trim();
+      item.claim = { decision, daily, summary, reason, stockQty: Math.round(Number(daily || 0) * 30) };
+      item.status = "待主管复核";
+      saveState();
+      render();
+    }
+    function renderReview() {
+      const reviewItems = state.items.filter((item) => item.claim);
+      $("reviewCount").textContent = `${reviewItems.filter((item) => item.status === "待主管复核").length}项待看`;
+      $("reviewList").innerHTML = reviewItems.length ? reviewItems.map((item) => `
+        <div class="review-row">
+          <div>
+            <div class="item-main"><span>${item.mainSku} · ${item.assignee}</span><span class="pill ${statusClass(item.status)}">${item.status}</span></div>
+            <div class="item-sub">${item.country} · ${item.subSkuCount}子SKU · ${item.claim.decision === "是" ? `认领单销 ${item.claim.daily}，首备 ${item.claim.stockQty}` : `不认领：${item.claim.reason || "未填原因"}`}</div>
+            <div class="item-sub">反馈：${item.claim.summary || "未填写销售反馈总结"}</div>
+          </div>
+          <div>
+            <button class="btn primary" data-approve="${item.id}">确认通过</button>
+            <button class="btn" data-return="${item.id}">退回补充</button>
+            <button class="btn" data-flow="${item.id}">流转备货</button>
+          </div>
+        </div>
+      `).join("") : '<div class="empty">暂无提交的认领结果。</div>';
+      document.querySelectorAll("[data-approve]").forEach((button) => button.onclick = () => updateReview(button.dataset.approve, "主管通过"));
+      document.querySelectorAll("[data-return]").forEach((button) => button.onclick = () => updateReview(button.dataset.return, "待补充反馈"));
+      document.querySelectorAll("[data-flow]").forEach((button) => button.onclick = () => updateReview(button.dataset.flow, "已流转备货"));
+    }
+    function updateReview(id, status) {
+      const item = state.items.find((x) => x.id === id);
+      item.status = status;
+      saveState();
+      render();
+    }
+    function renderPanels() {
+      $("leadPanel").classList.toggle("hidden", currentRole !== "lead");
+      $("operatorPanel").classList.toggle("hidden", currentRole !== "operator");
+      $("managerPanel").classList.toggle("hidden", currentRole !== "manager");
+      $("operatorSelect").classList.toggle("hidden", currentRole !== "operator");
+    }
+    function renderDeadline() {
+      const now = new Date();
+      const target = new Date(now);
+      const day = target.getDay();
+      const diffToWed = (3 - day + 7) % 7;
+      target.setDate(target.getDate() + diffToWed);
+      target.setHours(18, 0, 0, 0);
+      if (target < now) target.setDate(target.getDate() + 7);
+      const diff = target - now;
+      const hours = Math.floor(diff / 3600000);
+      const mins = Math.floor(diff % 3600000 / 60000);
+      $("deadlinePill").textContent = `周三18:00截止 · ${hours}小时${mins}分`;
+    }
+    function render() {
+      renderPanels();
+      renderDeadline();
+      renderStageRail();
+      renderKpis();
+      renderTodos();
+      renderWarnings();
+      renderAssignRows();
+      renderBalance();
+      renderNotice();
+      renderFlow();
+      renderFocus();
+      renderClaims();
+      renderReview();
+    }
+
+    $("operatorSelect").innerHTML = operators.map((op) => `<option>${op}</option>`).join("");
+    $("batchOwner").innerHTML = ownerOptions("");
+    $("roleSeg").querySelectorAll("[data-role]").forEach((button) => {
+      button.onclick = () => {
+        currentRole = button.dataset.role;
+        $("roleSeg").querySelectorAll("[data-role]").forEach((b) => b.classList.toggle("active", b === button));
+        render();
+      };
+    });
+    $("operatorSelect").onchange = () => {
+      activeOperator = $("operatorSelect").value;
+      render();
+    };
+    $("autoAssignBtn").onclick = () => autoAssign({ clearUnlocked: false });
+    $("heroAutoAssignBtn").onclick = () => autoAssign({ clearUnlocked: false });
+    $("redistributeBtn").onclick = () => autoAssign({ clearUnlocked: true });
+    $("clearBtn").onclick = clearUnlocked;
+    $("notifyBtn").onclick = confirmAndNotify;
+    $("heroNotifyBtn").onclick = confirmAndNotify;
+    $("batchApplyBtn").onclick = () => {
+      const owner = $("batchOwner").value;
+      state.items.forEach((item) => {
+        if (item.selected && !item.claim) {
+          item.assignee = owner;
+          item.status = owner ? "手动调整" : "待分配";
+          item.notified = false;
+        }
+      });
+      saveState();
+      render();
+    };
+    $("selectAll").onchange = () => {
+      state.items.forEach((item) => item.selected = $("selectAll").checked);
+      saveState();
+      renderAssignRows();
+    };
+    $("resetBtn").onclick = () => {
+      if (!confirm("确认重置演示数据？")) return;
+      localStorage.removeItem(key);
+      state = loadState();
+      render();
+    };
+    setInterval(renderDeadline, 60000);
+    render();
+  </script>
+</body>
+</html>

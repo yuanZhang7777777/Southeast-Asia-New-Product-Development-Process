@@ -1,0 +1,1035 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>海外仓字段责任确认操作台 - Codex版</title>
+  <style>
+    :root {
+      --bg: #f6f7f4;
+      --panel: #ffffff;
+      --panel2: #fbfcfa;
+      --ink: #1f2723;
+      --muted: #667169;
+      --soft: #8b968f;
+      --line: #dfe5dd;
+      --line2: #cbd4cc;
+      --green: #2f7752;
+      --green-bg: #eaf5ee;
+      --blue: #2f6287;
+      --blue-bg: #eaf2f7;
+      --amber: #9a6b18;
+      --amber-bg: #fbf1dc;
+      --red: #b4493f;
+      --red-bg: #fae9e7;
+      --shadow: 0 12px 30px rgba(24, 34, 29, .08);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: "Microsoft YaHei", "PingFang SC", "Segoe UI", Arial, sans-serif;
+      font-size: 14px;
+      line-height: 1.55;
+    }
+    button, input, select, textarea { font: inherit; }
+    button { cursor: pointer; }
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 30;
+      background: rgba(246, 247, 244, .96);
+      border-bottom: 1px solid var(--line);
+      backdrop-filter: blur(10px);
+    }
+    .top-inner {
+      max-width: 1240px;
+      margin: 0 auto;
+      padding: 14px 22px;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+    .title {
+      display: grid;
+      gap: 2px;
+      min-width: 280px;
+    }
+    .title strong {
+      font-size: 19px;
+      line-height: 1.25;
+      letter-spacing: 0;
+    }
+    .title span {
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .top-actions {
+      margin-left: auto;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+    .btn {
+      border: 1px solid var(--line2);
+      background: var(--panel);
+      color: var(--ink);
+      border-radius: 8px;
+      padding: 8px 12px;
+      min-height: 36px;
+    }
+    .btn:hover { border-color: var(--green); color: var(--green); }
+    .btn.primary {
+      border-color: var(--green);
+      background: var(--green);
+      color: white;
+    }
+    .btn.ghost { background: transparent; }
+    .app {
+      max-width: 1240px;
+      margin: 0 auto;
+      padding: 18px 22px 54px;
+      display: grid;
+      grid-template-columns: 300px minmax(0, 1fr);
+      gap: 16px;
+    }
+    .sidebar, .main, .strip, .workbench {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+    }
+    .sidebar {
+      overflow: hidden;
+      align-self: start;
+      position: sticky;
+      top: 77px;
+      max-height: calc(100vh - 96px);
+      display: flex;
+      flex-direction: column;
+    }
+    .side-head {
+      padding: 12px;
+      border-bottom: 1px solid var(--line);
+      background: var(--panel2);
+      display: grid;
+      gap: 8px;
+    }
+    .search {
+      width: 100%;
+      border: 1px solid var(--line2);
+      border-radius: 8px;
+      padding: 8px 10px;
+      background: white;
+    }
+    .filter-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+    .filter-row select {
+      border: 1px solid var(--line2);
+      border-radius: 8px;
+      padding: 7px 8px;
+      background: white;
+      min-width: 0;
+    }
+    .table-list {
+      overflow: auto;
+    }
+    .table-item {
+      width: 100%;
+      border: 0;
+      border-bottom: 1px solid var(--line);
+      background: white;
+      text-align: left;
+      padding: 12px;
+      display: grid;
+      gap: 6px;
+    }
+    .table-item:hover { background: #f8faf7; }
+    .table-item.active {
+      background: var(--green-bg);
+      box-shadow: inset 3px 0 0 var(--green);
+    }
+    .table-name {
+      font-weight: 700;
+      font-size: 13.5px;
+      line-height: 1.35;
+    }
+    .table-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+      color: var(--muted);
+      font-size: 11.5px;
+    }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      border-radius: 999px;
+      padding: 2px 8px;
+      border: 1px solid transparent;
+      white-space: nowrap;
+      font-size: 11.5px;
+      line-height: 1.5;
+    }
+    .pill.ok { color: var(--green); background: var(--green-bg); border-color: #bfdfc9; }
+    .pill.tbd { color: var(--amber); background: var(--amber-bg); border-color: #edd9ab; }
+    .pill.info { color: var(--blue); background: var(--blue-bg); border-color: #c2d8e8; }
+    .pill.warn { color: var(--red); background: var(--red-bg); border-color: #efc6c2; }
+    .main {
+      min-width: 0;
+      overflow: hidden;
+    }
+    .summary {
+      padding: 16px;
+      border-bottom: 1px solid var(--line);
+      background: var(--panel2);
+      display: grid;
+      gap: 12px;
+    }
+    .summary-top {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 16px;
+      align-items: start;
+    }
+    h1 {
+      margin: 0;
+      font-size: 20px;
+      line-height: 1.35;
+      letter-spacing: 0;
+    }
+    .sub {
+      color: var(--muted);
+      font-size: 12.5px;
+      margin-top: 5px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 14px;
+    }
+    .score {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(86px, 1fr));
+      gap: 8px;
+    }
+    .metric {
+      border: 1px solid var(--line);
+      background: white;
+      border-radius: 8px;
+      padding: 9px 10px;
+      min-width: 86px;
+    }
+    .metric b {
+      display: block;
+      font-size: 19px;
+      line-height: 1.2;
+    }
+    .metric span {
+      color: var(--muted);
+      font-size: 11.5px;
+    }
+    .flow {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    .step {
+      border: 1px solid var(--line2);
+      background: white;
+      border-radius: 8px;
+      padding: 7px 10px;
+      color: var(--muted);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+    .step.active {
+      color: var(--green);
+      border-color: #b9dcc6;
+      background: var(--green-bg);
+      font-weight: 700;
+    }
+    .content {
+      display: flex;
+      flex-direction: column;
+      min-height: 560px;
+    }
+    .fields {
+      min-width: 0;
+      padding: 16px;
+    }
+    .panel-head {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      justify-content: space-between;
+      margin-bottom: 10px;
+    }
+    .panel-head h2 {
+      margin: 0;
+      font-size: 15px;
+    }
+    .add-form {
+      border: 1px solid var(--line);
+      background: #f8faf7;
+      border-radius: 8px;
+      padding: 10px;
+      margin: 0 0 12px;
+      display: grid;
+      grid-template-columns: minmax(180px, 1.4fr) minmax(120px, .8fr) minmax(110px, .65fr) minmax(180px, 1.3fr) auto;
+      gap: 8px;
+      align-items: start;
+    }
+    .add-input, .add-select {
+      width: 100%;
+      border: 1px solid var(--line2);
+      border-radius: 8px;
+      padding: 8px 9px;
+      background: white;
+      min-height: 38px;
+    }
+    .add-input::placeholder { color: var(--soft); }
+    .field-table {
+      width: 100%;
+      border-collapse: collapse;
+      table-layout: fixed;
+      font-size: 13px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    .field-table th {
+      background: #f2f5f1;
+      color: var(--muted);
+      font-weight: 700;
+      text-align: left;
+      padding: 8px;
+      border-bottom: 1px solid var(--line);
+      font-size: 12px;
+    }
+    .field-table td {
+      padding: 8px;
+      border-bottom: 1px solid var(--line);
+      vertical-align: top;
+      word-break: break-word;
+    }
+    .field-table tr:last-child td { border-bottom: 0; }
+    .field-table tr.system-row td { color: var(--soft); background: #fcfdfb; }
+    .field-name {
+      font-weight: 700;
+      color: var(--ink);
+    }
+    .system-row .field-name { color: var(--soft); }
+    .owner-select, .status-select, .note-input {
+      width: 100%;
+      border: 1px solid var(--line2);
+      border-radius: 8px;
+      padding: 7px 8px;
+      background: white;
+      min-height: 34px;
+    }
+    .owner-select.pending, .status-select.pending {
+      border-color: #edd9ab;
+      background: #fff8e8;
+    }
+    .note-input {
+      resize: none;
+      min-height: 38px;
+      color: var(--muted);
+      overflow: hidden;
+      line-height: 1.45;
+    }
+    .right {
+      min-width: 0;
+      padding: 16px;
+      display: grid;
+      grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr) minmax(0, .85fr);
+      gap: 12px;
+      align-content: start;
+      border-bottom: 1px solid var(--line);
+      background: var(--panel2);
+    }
+    .side-section {
+      background: white;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 12px;
+      min-width: 0;
+    }
+    .side-section h3 {
+      margin: 0 0 8px;
+      font-size: 13px;
+      color: var(--ink);
+    }
+    .compact-list {
+      margin: 0;
+      padding-left: 18px;
+      color: var(--muted);
+      display: grid;
+      gap: 6px;
+      font-size: 12.5px;
+    }
+    .link-line {
+      display: grid;
+      gap: 6px;
+      color: var(--muted);
+      font-size: 12.5px;
+    }
+    .toast {
+      position: fixed;
+      right: 18px;
+      bottom: 18px;
+      background: #1f2723;
+      color: white;
+      border-radius: 8px;
+      padding: 11px 14px;
+      opacity: 0;
+      transform: translateY(8px);
+      transition: .18s ease;
+      z-index: 80;
+      max-width: 360px;
+      box-shadow: var(--shadow);
+    }
+    .toast.show {
+      opacity: 1;
+      transform: translateY(0);
+    }
+    @media (max-width: 980px) {
+      .app { grid-template-columns: 1fr; padding: 14px; }
+      .sidebar { position: static; max-height: none; }
+      .right { grid-template-columns: 1fr; }
+      .add-form { grid-template-columns: 1fr 1fr; }
+      .summary-top { grid-template-columns: 1fr; }
+      .score { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    }
+    @media (max-width: 620px) {
+      .top-inner { align-items: stretch; flex-direction: column; padding: 12px 14px; }
+      .top-actions { margin-left: 0; justify-content: flex-start; }
+      .score { grid-template-columns: 1fr; }
+      .add-form { grid-template-columns: 1fr; }
+      .field-table { display: block; overflow-x: auto; table-layout: auto; }
+      .field-table th, .field-table td { min-width: 140px; }
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="top-inner">
+      <div class="title">
+        <strong>海外仓字段责任确认操作台</strong>
+        <span>Codex版 · 2026-06-26 · 现场逐表确认谁填什么</span>
+      </div>
+      <div class="top-actions">
+        <button class="btn" id="showPendingBtn">只看待确认</button>
+        <button class="btn" id="resetBtn">重置本地修改</button>
+        <button class="btn primary" id="exportBtn">导出确认结果</button>
+      </div>
+    </div>
+  </header>
+
+  <div class="app">
+    <aside class="sidebar">
+      <div class="side-head">
+        <input class="search" id="searchInput" placeholder="搜索表名或字段">
+        <div class="filter-row">
+          <select id="roleFilter">
+            <option value="">全部角色</option>
+          </select>
+          <select id="statusFilter">
+            <option value="">全部状态</option>
+            <option value="已确认">已确认</option>
+            <option value="待确认">待确认</option>
+            <option value="系统带出">系统带出</option>
+          </select>
+        </div>
+      </div>
+      <div class="table-list" id="tableList"></div>
+    </aside>
+
+    <main class="main">
+      <section class="summary">
+        <div class="summary-top">
+          <div>
+            <h1 id="tableTitle"></h1>
+            <div class="sub" id="tableSub"></div>
+          </div>
+          <div class="score">
+            <div class="metric"><b id="metricFields">0</b><span>人工字段</span></div>
+            <div class="metric"><b id="metricPending">0</b><span>待确认</span></div>
+            <div class="metric"><b id="metricSystem">0</b><span>系统带出</span></div>
+          </div>
+        </div>
+        <div class="flow" id="flow"></div>
+      </section>
+
+      <section class="content">
+        <aside class="right">
+          <section class="side-section">
+            <h3>当前口径</h3>
+            <div class="link-line" id="currentJudgement"></div>
+          </section>
+          <section class="side-section">
+            <h3>确认点</h3>
+            <ol class="compact-list" id="questionList"></ol>
+          </section>
+          <section class="side-section">
+            <h3>流转</h3>
+            <div class="link-line" id="handoff"></div>
+          </section>
+        </aside>
+        <div class="fields">
+          <div class="panel-head">
+            <h2>字段责任</h2>
+          </div>
+          <div class="add-form">
+            <input class="add-input" id="addName" placeholder="新增字段名，例如：调价确认人">
+            <select class="add-select" id="addOwner"></select>
+            <select class="add-select" id="addStatus">
+              <option value="待确认">待确认</option>
+              <option value="已确认">已确认</option>
+              <option value="系统带出">系统带出</option>
+            </select>
+            <input class="add-input" id="addNote" placeholder="备注，例如：到货后填写">
+            <button class="btn primary" id="addFieldBtn">添加到当前表</button>
+          </div>
+          <table class="field-table">
+            <thead>
+              <tr>
+                <th style="width: 28%;">字段</th>
+                <th style="width: 22%;">谁填</th>
+                <th style="width: 15%;">状态</th>
+                <th>备注</th>
+              </tr>
+            </thead>
+            <tbody id="fieldRows"></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <script>
+    const ROLES = [
+      "待确认",
+      "练玉君/组长",
+      "店铺运营",
+      "运营主管/部门负责人",
+      "开发",
+      "供应链",
+      "运营/店铺负责人",
+      "PMO",
+      "系统带出"
+    ];
+
+    const FLOW = [
+      ["dev", "开发新品认领"],
+      ["caigen", "财根认领"],
+      ["zhifa", "直发热销"],
+      ["diaoyan", "选品调研"],
+      ["beihuo", "备货申请"],
+      ["daohuo", "到货通知"],
+      ["shichang", "二次市场调研"],
+      ["tuipin", "推品复盘"]
+    ];
+
+    function field(name, owner, status, note) {
+      return { name, owner, status, note: note || "" };
+    }
+
+    const DEFAULT_TABLES = [
+      {
+        id: "dev",
+        name: "海外仓开发部门开发新品认领-反馈",
+        cadence: "每周二更新",
+        upstream: "开发发布新品",
+        downstream: "备货申请表",
+        judgement: "当前最明确：练玉君先按主SKU整组分配主店铺运营；店铺运营再填是否认领、认领单销、不认领理由、销售反馈总结。",
+        questions: [
+          "主管复核是否必须在平台点确认？",
+          "销售反馈总结里的截图放附件、链接还是文本？",
+          "时间口径按周二发布/周三截止，还是流程总表周四口径？"
+        ],
+        fields: [
+          field("主店铺运营（表头：主销售员）", "练玉君/组长", "已确认", "均匀分配；主SKU连子SKU整组不可拆"),
+          field("是否认领", "店铺运营", "已确认", "看完产品、竞品、利润后判断"),
+          field("认领单销", "店铺运营", "已确认", "日销 n，默认首批备货量 n * 30"),
+          field("不认领理由", "店铺运营", "已确认", "不认领时必填"),
+          field("销售反馈总结", "店铺运营", "已确认", "写调研实情、为什么不认领，可附截图/链接"),
+          field("备注", "店铺运营", "已确认", "补充说明"),
+          field("开发是否接受核价结果", "开发", "已确认", "供应链核价返回后开发确认"),
+          field("采购建议报价 / 核价意见 / 核价人 / 核价时间", "供应链", "已确认", "核价侧字段"),
+          field("认领复核 / 异常处理意见", "运营主管/部门负责人", "待确认", "SOP有部门负责人核对无误后统一反馈")
+        ]
+      },
+      {
+        id: "caigen",
+        name: "海外仓财根团队开发新品认领-反馈",
+        cadence: "不定时更新",
+        upstream: "财根团队开发/核价新品",
+        downstream: "备货申请表",
+        judgement: "结构接近开发部门认领表，但支持多个店铺运营认领同一SKU；责任口径先待定。",
+        questions: [
+          "是否也由练玉君先分配主店铺运营？",
+          "多人认领时，谁是后续备货和推品主负责人？",
+          "认领单销/不认领原因混列是否要拆成两个字段？"
+        ],
+        fields: [
+          field("开发表格认领情况--主店铺运营(AL，表头：主销售员)", "待确认", "待确认", "疑似练玉君/主管分配"),
+          field("是否认领(AM)", "店铺运营", "待确认", ""),
+          field("认领单销(AN)", "店铺运营", "待确认", ""),
+          field("店铺运营1 / 认领单销或不认领原因(AO/AP，表头：销售员1)", "店铺运营", "待确认", "多人认领同一SKU"),
+          field("店铺运营2 / 认领单销或不认领原因(AQ/AR，表头：销售员2)", "店铺运营", "待确认", ""),
+          field("店铺运营3 / 认领单销(AS/AT，表头：销售员3)", "店铺运营", "待确认", ""),
+          field("店铺运营4 / 认领单销(AU/AV，表头：销售员4)", "店铺运营", "待确认", ""),
+          field("供应链核价后采购链接/采购价/核价意见/核价人/核价时间(AG-AK)", "供应链", "待确认", "")
+        ]
+      },
+      {
+        id: "zhifa",
+        name: "直发热销转海外仓销售确认",
+        cadence: "每2周一期",
+        upstream: "系统筛直发热销SKU",
+        downstream: "备货申请表",
+        judgement: "具体需求先待定，暂时作为独立选品来源保留。",
+        questions: [
+          "这张表是否继续保留独立入口？",
+          "直发热销筛选由系统自动、数据人员还是店铺运营发起？",
+          "店铺运营能否修改备货数量、国家、仓库？"
+        ],
+        fields: [
+          field("本地子SKU / 本地主SKU / 单销 / 站点 / 成本 / 销量", "系统带出", "系统带出", "来自直发热销筛选结果"),
+          field("备货数量", "待确认", "待确认", "当前表 J；可能由系统按单销生成"),
+          field("备货国家 / 备货仓库", "待确认", "待确认", "当前表 M/N"),
+          field("销售确认单销", "店铺运营", "待确认", "当前表 O"),
+          field("不备货原因", "店铺运营", "待确认", "当前表 P；不转时必填"),
+          field("备注", "店铺运营", "待确认", "当前表 B")
+        ]
+      },
+      {
+        id: "diaoyan",
+        name: "销售选品备货海外仓-销售调研",
+        cadence: "每月复盘/分配调研",
+        upstream: "老品货盘/竞品机会",
+        downstream: "备货申请表",
+        judgement: "具体需求先待定，暂时按选品调研入口保留；通过后可能进入备货。",
+        questions: [
+          "这是店铺运营主动选品，还是系统/主管分配调研任务？",
+          "是否通过后是否自动流入备货申请？",
+          "复核人是谁，复核不通过是否退回销售修改？"
+        ],
+        fields: [
+          field("调研时间 / 来源类型 / 国家 / 店铺运营 / 主SKU / 子SKU / 商品信息", "系统带出", "系统带出", "当前 PH/TH/VN 表头存在"),
+          field("销售备注(L)", "店铺运营", "待确认", ""),
+          field("是否通过(M)", "店铺运营", "待确认", "各站点口径需统一"),
+          field("拒绝原因 / 调研结论(N)", "店铺运营", "待确认", ""),
+          field("竞品链接1-3 / 单价 / 月销(O-W)", "店铺运营", "待确认", ""),
+          field("竞对参考单销 / 参考售价 / 毛利率(X-Z)", "待确认", "待确认", "系统计算还是销售填"),
+          field("备货单销(AA)", "店铺运营", "待确认", ""),
+          field("复核人 / 复核结果(AB/AC)", "运营主管/部门负责人", "待确认", "")
+        ]
+      },
+      {
+        id: "beihuo",
+        name: "海外仓备货申请表",
+        cadence: "每周四17:00截止",
+        upstream: "认领/调研/直发确认结果",
+        downstream: "采购下单",
+        judgement: "当前先按店铺运营填写备货申请理解；练玉君/集团负责人汇总提交的边界待定。",
+        questions: [
+          "店铺运营是否直接填备货表，还是平台自动生成草稿？",
+          "练玉君是否负责改备货数量、国家、仓库？",
+          "本地表和模板字段不一致时，以哪个为准？"
+        ],
+        fields: [
+          field("操作状态", "待确认", "待确认", "已备货、未操作、绑定sku不备货等"),
+          field("时间", "系统带出", "系统带出", "每周四17:00截止"),
+          field("备货类型", "待确认", "待确认", "首次备货/补货"),
+          field("选品数据源", "系统带出", "系统带出", "开发认领、财根、直发热销、销售调研等"),
+          field("店铺运营 / 主SKU / 子SKU / 成本价 / 单个体积", "系统带出", "系统带出", "不建议人工重复填"),
+          field("备货单销 / 销售确认单销", "店铺运营", "待确认", "字段名以最终表为准"),
+          field("备货数量", "待确认", "待确认", "店铺运营还是练玉君待定"),
+          field("备货国家 / 备货仓库", "待确认", "待确认", ""),
+          field("货值 / 体积", "系统带出", "系统带出", "成本 * 数量，单体积 * 数量"),
+          field("不备货原因 / 补货原因", "店铺运营", "待确认", "当前表和模板字段不一致")
+        ]
+      },
+      {
+        id: "daohuo",
+        name: "【到货通知】认领制度到货子SKU",
+        cadence: "到货后按批次",
+        upstream: "采购到仓",
+        downstream: "市场监控二次调研",
+        judgement: "已确认图四位置：店铺运营填认领销售、销售操作；其他到货基础字段系统带出。",
+        questions: [
+          "销售操作标准值是什么？",
+          "是否还要运营确认库存同步、刊登覆盖、售价调整？",
+          "到货后调价是在这张表处理，还是进市场监控/计价表？"
+        ],
+        fields: [
+          field("子SKU / 主SKU / 商品名称 / 产品定位名称 / 海外仓 / 国家", "系统带出", "系统带出", "当前表 A-F"),
+          field("单销 / 成本 / 头程 / 库存 / 首次上架时间 / 产品定义", "系统带出", "系统带出", "当前表 G-V"),
+          field("认领集团", "系统带出", "系统带出", "当前表 W"),
+          field("认领销售", "店铺运营", "已确认", "当前表 X，图四位置"),
+          field("销售操作", "店铺运营", "已确认", "当前表 Y，图四位置"),
+          field("库存确认 / 刊登覆盖 / 售价调整状态", "待确认", "待确认", "流程上需要承接")
+        ]
+      },
+      {
+        id: "shichang",
+        name: "【市场监控】海外仓精品市场调研",
+        cadence: "到货后二次调研",
+        upstream: "到货通知",
+        downstream: "推品精品流程",
+        judgement: "到货后店铺运营/运营可能要二次确认市场、重新调价；上次定价已经是到货前的旧口径。",
+        questions: [
+          "二次调研由店铺运营填还是运营/店铺负责人填？",
+          "重新调价字段落在哪里？",
+          "产品定位由谁最终拍板，是否需要主管复核？"
+        ],
+        fields: [
+          field("产品信息 / 国家 / 店铺运营 / 主SKU / 子SKU / 成本 / 关键词", "系统带出", "系统带出", "当前表 A-Q"),
+          field("首次竞品调研：最低价/最热销/新晋 链接+单价+月销(R-Z)", "店铺运营", "待确认", ""),
+          field("竞对参考单销 / 参考售价 / 毛利率(AA-AC)", "待确认", "待确认", "系统计算还是销售填"),
+          field("开发新品填写：产品类型/稳定期定价/推广期定价/认领单销/调研结论(AD-AK)", "待确认", "待确认", ""),
+          field("二次调研时间(AL)", "待确认", "待确认", ""),
+          field("二次竞对链接(AM)", "待确认", "待确认", ""),
+          field("二次调研结论(AN)", "待确认", "待确认", "没变化填“无变化”"),
+          field("产品定位(AO)", "待确认", "待确认", "引流款/利润款/淘汰款"),
+          field("到货通知 / 单销 / 在途 / 可发 / 库存(AP-AZ)", "系统带出", "系统带出", "")
+        ]
+      },
+      {
+        id: "tuipin",
+        name: "【推品】海外仓精品流程",
+        cadence: "上架后周度",
+        upstream: "市场监控",
+        downstream: "成功率复盘",
+        judgement: "推品表是上架后执行销售策略和周度复盘；数据跟进建议系统带出，不让人工填指标。",
+        questions: [
+          "销售策略由店铺运营填还是运营填？",
+          "周度数据是否全部从 ERP/数据复盘带出？",
+          "复盘按自然周，还是到货后第7/14/21天？"
+        ],
+        fields: [
+          field("操作日期 / 主SKU / 国家 / 店铺运营 / 店铺 / Item", "系统带出", "系统带出", "当前表 A-F，可由系统预填或店铺运营补充Item"),
+          field("优化 / 刷单 / 广告 / 联盟 / 活动 / 其他(G-L)", "待确认", "待确认", "销售策略"),
+          field("第一至第四周订单量、总收入、一次毛利额、毛利率", "系统带出", "系统带出", "当前表 M-P、T-W、AA-AD、AH-AK"),
+          field("一至三次复盘时间 / 产品定位 / 优化操作", "待确认", "待确认", "当前表 Q-S、X-Z、AE-AG"),
+          field("总结(AL)", "待确认", "待确认", "")
+        ]
+      }
+    ];
+
+    const STORAGE_KEY = "ow_codex_field_owner_20260626_v2";
+    let tables = loadTables();
+    let activeId = tables[0].id;
+    let pendingOnly = false;
+
+    const $ = (id) => document.getElementById(id);
+
+    function loadTables() {
+      try {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (raw) return normalizeTables(JSON.parse(raw));
+      } catch (error) {}
+      return normalizeTables(JSON.parse(JSON.stringify(DEFAULT_TABLES)));
+    }
+
+    function normalizeTables(input) {
+      input.forEach((table) => {
+        table.fields.forEach((item) => {
+          if (item.owner === "销售员") item.owner = "店铺运营";
+          if (item.owner === "销售主管/部门负责人") item.owner = "运营主管/部门负责人";
+        });
+      });
+      return input;
+    }
+
+    function saveTables() {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(tables));
+    }
+
+    function esc(value) {
+      return String(value == null ? "" : value).replace(/[&<>"]/g, (ch) => ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;"
+      }[ch]));
+    }
+
+    function activeTable() {
+      return tables.find((item) => item.id === activeId) || tables[0];
+    }
+
+    function isSystem(field) {
+      return field.owner === "系统带出" || field.status === "系统带出";
+    }
+
+    function visibleField(field) {
+      const role = $("roleFilter").value;
+      const status = $("statusFilter").value;
+      const term = $("searchInput").value.trim().toLowerCase();
+      if (pendingOnly && field.status !== "待确认") return false;
+      if (role && field.owner !== role) return false;
+      if (status && field.status !== status) return false;
+      if (term) {
+        return field.name.toLowerCase().includes(term) || field.note.toLowerCase().includes(term);
+      }
+      return true;
+    }
+
+    function tableMatches(table) {
+      const term = $("searchInput").value.trim().toLowerCase();
+      if (!term) return true;
+      if (table.name.toLowerCase().includes(term)) return true;
+      return table.fields.some((field) =>
+        field.name.toLowerCase().includes(term) ||
+        field.note.toLowerCase().includes(term)
+      );
+    }
+
+    function statusClass(status) {
+      if (status === "已确认") return "ok";
+      if (status === "系统带出") return "info";
+      return "tbd";
+    }
+
+    function renderRoleOptions() {
+      $("roleFilter").innerHTML = '<option value="">全部角色</option>' +
+        ROLES.filter((role) => role !== "待确认").map((role) => `<option value="${esc(role)}">${esc(role)}</option>`).join("");
+      $("addOwner").innerHTML = ROLES.map((role) =>
+        `<option value="${esc(role)}" ${role === "待确认" ? "selected" : ""}>${esc(role)}</option>`
+      ).join("");
+    }
+
+    function renderList() {
+      const html = tables
+        .filter(tableMatches)
+        .map((table) => {
+          const manual = table.fields.filter((field) => !isSystem(field));
+          const pending = manual.filter((field) => field.status === "待确认").length;
+          const ok = manual.filter((field) => field.status === "已确认").length;
+          return `
+            <button class="table-item ${table.id === activeId ? "active" : ""}" data-id="${esc(table.id)}">
+              <div class="table-name">${esc(table.name)}</div>
+              <div class="table-meta">
+                <span>${esc(table.cadence)}</span>
+                <span class="pill ${pending ? "tbd" : "ok"}">${pending ? `待确认 ${pending}` : "已确认"}</span>
+                <span class="pill info">人工 ${manual.length}</span>
+                ${ok ? `<span class="pill ok">已定 ${ok}</span>` : ""}
+              </div>
+            </button>
+          `;
+        }).join("");
+      $("tableList").innerHTML = html || '<div style="padding:14px;color:var(--muted)">没有匹配项</div>';
+      $("tableList").querySelectorAll("[data-id]").forEach((button) => {
+        button.onclick = () => {
+          activeId = button.dataset.id;
+          render();
+        };
+      });
+    }
+
+    function renderSummary() {
+      const table = activeTable();
+      const manual = table.fields.filter((field) => !isSystem(field));
+      const pending = manual.filter((field) => field.status === "待确认").length;
+      const system = table.fields.filter(isSystem).length;
+      $("tableTitle").textContent = table.name;
+      $("tableSub").innerHTML = `
+        <span>频率：${esc(table.cadence)}</span>
+        <span>上游：${esc(table.upstream)}</span>
+        <span>下游：${esc(table.downstream)}</span>
+      `;
+      $("metricFields").textContent = manual.length;
+      $("metricPending").textContent = pending;
+      $("metricSystem").textContent = system;
+      $("flow").innerHTML = FLOW.map(([id, label]) =>
+        `<button class="step ${id === activeId ? "active" : ""}" data-id="${esc(id)}">${esc(label)}</button>`
+      ).join("");
+      $("flow").querySelectorAll("[data-id]").forEach((button) => {
+        button.onclick = () => {
+          activeId = button.dataset.id;
+          render();
+        };
+      });
+    }
+
+    function renderFields() {
+      const table = activeTable();
+      const rows = table.fields
+        .map((field, index) => ({ field, index }))
+        .filter(({ field }) => visibleField(field))
+        .map(({ field, index }) => {
+          const ownerOptions = ROLES.map((role) =>
+            `<option value="${esc(role)}" ${role === field.owner ? "selected" : ""}>${esc(role)}</option>`
+          ).join("");
+          const statusOptions = ["待确认", "已确认", "系统带出"].map((status) =>
+            `<option value="${esc(status)}" ${status === field.status ? "selected" : ""}>${esc(status)}</option>`
+          ).join("");
+          const systemClass = isSystem(field) ? "system-row" : "";
+          const pendingClass = field.status === "待确认" ? "pending" : "";
+          return `
+            <tr class="${systemClass}">
+              <td><div class="field-name">${esc(field.name)}</div></td>
+              <td>
+                <select class="owner-select ${pendingClass}" data-owner="${index}">
+                  ${ownerOptions}
+                </select>
+              </td>
+              <td>
+                <select class="status-select ${pendingClass}" data-status="${index}">
+                  ${statusOptions}
+                </select>
+              </td>
+              <td>
+                <textarea class="note-input" data-note="${index}" rows="1">${esc(field.note)}</textarea>
+              </td>
+            </tr>
+          `;
+        }).join("");
+      $("fieldRows").innerHTML = rows || '<tr><td colspan="4" style="color:var(--muted)">当前筛选下没有字段</td></tr>';
+      $("fieldRows").querySelectorAll("[data-owner]").forEach((select) => {
+        select.onchange = () => {
+          const item = activeTable().fields[Number(select.dataset.owner)];
+          item.owner = select.value;
+          if (select.value === "系统带出") item.status = "系统带出";
+          if (select.value !== "待确认" && item.status === "待确认") item.status = "已确认";
+          saveTables();
+          render();
+        };
+      });
+      $("fieldRows").querySelectorAll("[data-status]").forEach((select) => {
+        select.onchange = () => {
+          const item = activeTable().fields[Number(select.dataset.status)];
+          item.status = select.value;
+          if (select.value === "系统带出") item.owner = "系统带出";
+          if (select.value === "待确认" && item.owner !== "系统带出") item.owner = item.owner || "待确认";
+          saveTables();
+          render();
+        };
+      });
+      $("fieldRows").querySelectorAll("[data-note]").forEach((textarea) => {
+        autoGrow(textarea);
+        textarea.oninput = () => {
+          activeTable().fields[Number(textarea.dataset.note)].note = textarea.value;
+          saveTables();
+          autoGrow(textarea);
+        };
+      });
+    }
+
+    function autoGrow(textarea) {
+      textarea.style.height = "0px";
+      textarea.style.height = Math.max(38, textarea.scrollHeight) + "px";
+    }
+
+    function renderRight() {
+      const table = activeTable();
+      $("currentJudgement").innerHTML = `<span>${esc(table.judgement)}</span>`;
+      $("questionList").innerHTML = table.questions.map((question) => `<li>${esc(question)}</li>`).join("");
+      $("handoff").innerHTML = `
+        <span>上游：${esc(table.upstream)}</span>
+        <span>提交后流向：${esc(table.downstream)}</span>
+      `;
+    }
+
+    function render() {
+      renderList();
+      renderSummary();
+      renderFields();
+      renderRight();
+      $("showPendingBtn").textContent = pendingOnly ? "显示全部字段" : "只看待确认";
+    }
+
+    function exportText() {
+      const lines = [
+        "海外仓字段责任确认结果 - Codex版",
+        "导出时间：" + new Date().toLocaleString("zh-CN"),
+        ""
+      ];
+      tables.forEach((table) => {
+        lines.push("【" + table.name + "】");
+        lines.push("频率：" + table.cadence);
+        lines.push("上游：" + table.upstream + "；下游：" + table.downstream);
+        lines.push("当前判断：" + table.judgement);
+        lines.push("字段：");
+        table.fields.forEach((field) => {
+          lines.push("  - " + field.name + "｜" + field.owner + "｜" + field.status + (field.note ? "｜" + field.note : ""));
+        });
+        lines.push("确认点：");
+        table.questions.forEach((question) => lines.push("  - " + question));
+        lines.push("");
+      });
+      const blob = new Blob(["\ufeff" + lines.join("\n")], { type: "text/plain;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "海外仓字段责任确认结果-Codex版.txt";
+      a.click();
+      URL.revokeObjectURL(url);
+      toast("已导出确认结果");
+    }
+
+    function toast(message) {
+      const box = $("toast");
+      box.textContent = message;
+      box.classList.add("show");
+      clearTimeout(window.__toastTimer);
+      window.__toastTimer = setTimeout(() => box.classList.remove("show"), 2200);
+    }
+
+    $("searchInput").oninput = render;
+    $("roleFilter").onchange = render;
+    $("statusFilter").onchange = render;
+    $("showPendingBtn").onclick = () => {
+      pendingOnly = !pendingOnly;
+      render();
+    };
+    $("resetBtn").onclick = () => {
+      if (!confirm("确认重置本地修改？")) return;
+      localStorage.removeItem(STORAGE_KEY);
+      tables = loadTables();
+      activeId = tables[0].id;
+      render();
+      toast("已重置");
+    };
+    $("exportBtn").onclick = exportText;
+    function addFieldFromForm() {
+      const name = $("addName").value.trim();
+      if (!name) return;
+      const owner = $("addOwner").value;
+      const status = owner === "系统带出" ? "系统带出" : $("addStatus").value;
+      const note = $("addNote").value.trim();
+      activeTable().fields.push(field(name, owner, status, note));
+      $("addName").value = "";
+      $("addOwner").value = "待确认";
+      $("addStatus").value = "待确认";
+      $("addNote").value = "";
+      saveTables();
+      render();
+      toast("已添加字段");
+      $("addName").focus();
+    }
+    $("addFieldBtn").onclick = addFieldFromForm;
+    $("addName").addEventListener("keydown", (event) => {
+      if (event.key === "Enter") addFieldFromForm();
+    });
+    $("addOwner").onchange = () => {
+      if ($("addOwner").value === "系统带出") $("addStatus").value = "系统带出";
+    };
+
+    renderRoleOptions();
+    render();
+  </script>
+</body>
+</html>

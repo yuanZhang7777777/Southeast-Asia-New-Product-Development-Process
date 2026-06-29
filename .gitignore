@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.venv/
+venv/
+
+# Node
+node_modules/
+dist/
+.vite/
+
+# Env/secrets
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+
+# Runtime data
+data/
+logs/
+backups/
+*.db
+.codex_tmp/
+
+# Local business source files stay in the workspace for analysis, not in Git.
+*.xlsx
+*.xls
+*.xlsm
+*.docx
+*.pptx
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

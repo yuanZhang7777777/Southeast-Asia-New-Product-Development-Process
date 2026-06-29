@@ -1,0 +1,1537 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>海外仓开发新品认领工作台 - 一屏紧凑版</title>
+  <style>
+    :root {
+      --bg: #eef5ff;
+      --panel: #ffffff;
+      --panel-soft: #f7fbff;
+      --ink: #102033;
+      --muted: #64748b;
+      --faint: #91a4bc;
+      --line: #d8e4f2;
+      --line-strong: #bad0ea;
+      --blue: #2563eb;
+      --blue-deep: #1d4ed8;
+      --blue-soft: #e8f1ff;
+      --sky: #0ea5e9;
+      --green: #0f9f6e;
+      --green-soft: #e8f8f1;
+      --amber: #b7791f;
+      --amber-soft: #fff4dc;
+      --red: #c2413a;
+      --red-soft: #fff0ef;
+      --shadow: 0 12px 28px rgba(30, 64, 175, .10);
+      --radius: 8px;
+    }
+
+    * { box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; overflow: hidden; }
+    body {
+      margin: 0;
+      background:
+        radial-gradient(circle at 20% -10%, rgba(147,197,253,.35), transparent 34%),
+        linear-gradient(180deg, #eef6ff 0, #f8fbff 46%, #eef5ff 100%);
+      color: var(--ink);
+      font-family: "Microsoft YaHei", "PingFang SC", "Segoe UI", Arial, sans-serif;
+      font-size: 13px;
+      line-height: 1.42;
+    }
+    button, input, select, textarea { font: inherit; }
+    button { cursor: pointer; }
+    button:disabled { cursor: not-allowed; opacity: .55; }
+
+    .topbar {
+      height: 58px;
+      border-bottom: 1px solid rgba(186,208,234,.9);
+      background: rgba(242,247,255,.95);
+      backdrop-filter: blur(12px);
+    }
+    .top-inner {
+      height: 100%;
+      max-width: 1600px;
+      margin: 0 auto;
+      padding: 8px 18px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .brand {
+      min-width: 300px;
+      display: grid;
+      gap: 1px;
+    }
+    .brand strong {
+      font-size: 19px;
+      line-height: 1.15;
+      letter-spacing: 0;
+    }
+    .brand span {
+      color: var(--muted);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+    .top-controls {
+      margin-left: auto;
+      flex: 1 1 auto;
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 7px;
+      min-width: 0;
+      overflow: hidden;
+    }
+
+    .control, .btn, .seg-btn {
+      min-height: 34px;
+      border: 1px solid var(--line-strong);
+      border-radius: var(--radius);
+      background: var(--panel);
+      color: var(--ink);
+      padding: 7px 10px;
+      white-space: nowrap;
+    }
+    .control {
+      min-width: 112px;
+      max-width: 190px;
+    }
+    #periodSelect { width: 170px; }
+    #operatorSelect { width: 118px; }
+    .control:focus, .btn:hover, .seg-btn:hover {
+      border-color: var(--blue);
+      outline: none;
+    }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 5px;
+      font-weight: 800;
+    }
+    .btn.primary {
+      border-color: var(--blue);
+      background: var(--blue);
+      color: #fff;
+      box-shadow: 0 8px 18px rgba(37,99,235,.18);
+    }
+    .btn.primary:hover { background: var(--blue-deep); }
+    .btn.blue {
+      border-color: #abd2ff;
+      background: var(--blue-soft);
+      color: var(--blue-deep);
+    }
+    .btn.warn {
+      border-color: #f3d38d;
+      background: var(--amber-soft);
+      color: var(--amber);
+    }
+    .btn.danger {
+      border-color: #f3b8b2;
+      background: var(--red-soft);
+      color: var(--red);
+    }
+    .btn.ghost { background: rgba(255,255,255,.55); }
+    .seg {
+      flex: 0 0 auto;
+      display: inline-flex;
+      overflow: hidden;
+      border: 1px solid var(--line-strong);
+      border-radius: var(--radius);
+      background: var(--panel);
+    }
+    .seg-btn {
+      min-width: 76px;
+      border: 0;
+      border-radius: 0;
+      border-right: 1px solid var(--line);
+      color: #40566f;
+    }
+    .seg-btn:last-child { border-right: 0; }
+    .seg-btn.active {
+      background: var(--blue-soft);
+      color: var(--blue-deep);
+      font-weight: 900;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 22px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 1px 8px;
+      font-size: 12px;
+      font-weight: 900;
+      color: var(--muted);
+      background: #f8fbff;
+      white-space: nowrap;
+    }
+    .pill.blue { border-color: #aed3ff; background: var(--blue-soft); color: var(--blue-deep); }
+    .pill.sky { border-color: #b7e7ff; background: #e7f7ff; color: #0369a1; }
+    .pill.green { border-color: #b8ead6; background: var(--green-soft); color: #08724f; }
+    .pill.amber { border-color: #f2d38e; background: var(--amber-soft); color: var(--amber); }
+    .pill.red { border-color: #f0b3ad; background: var(--red-soft); color: var(--red); }
+
+    .app {
+      max-width: 1600px;
+      height: calc(100vh - 58px);
+      margin: 0 auto;
+      padding: 10px 18px 14px;
+      display: grid;
+      grid-template-rows: 54px 50px minmax(0, 1fr);
+      gap: 9px;
+      min-height: 0;
+    }
+    .command {
+      min-height: 0;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 12px;
+      align-items: center;
+      padding: 9px 13px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: linear-gradient(135deg, rgba(255,255,255,.98), rgba(234,244,255,.96));
+      box-shadow: var(--shadow);
+    }
+    .command h1 {
+      margin: 0 0 1px;
+      font-size: 18px;
+      line-height: 1.18;
+      letter-spacing: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .command p {
+      margin: 0;
+      color: var(--muted);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .command-actions {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      flex-wrap: nowrap;
+      gap: 7px;
+    }
+
+    .stage-line {
+      display: grid;
+      grid-template-columns: repeat(6, minmax(0, 1fr));
+      gap: 8px;
+      min-height: 0;
+    }
+    .stage {
+      min-width: 0;
+      padding: 7px 9px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: rgba(255,255,255,.9);
+      overflow: hidden;
+    }
+    .stage-top {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 6px;
+      min-width: 0;
+    }
+    .stage b {
+      font-size: 18px;
+      line-height: 1;
+    }
+    .stage span {
+      color: var(--muted);
+      font-size: 12px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .track, .workload-bar {
+      height: 5px;
+      margin-top: 7px;
+      border-radius: 999px;
+      background: #e8eef6;
+      overflow: hidden;
+    }
+    .track i, .workload-bar i {
+      display: block;
+      height: 100%;
+      border-radius: inherit;
+      background: linear-gradient(90deg, var(--blue), var(--sky));
+    }
+
+    .workspace {
+      display: grid;
+      grid-template-columns: 305px minmax(0, 1fr) 324px;
+      gap: 10px;
+      align-items: stretch;
+      min-height: 0;
+      overflow: hidden;
+    }
+    .panel, .side-card {
+      min-width: 0;
+      min-height: 0;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: rgba(255,255,255,.97);
+      box-shadow: 0 10px 24px rgba(15,23,42,.06);
+      overflow: hidden;
+    }
+    .panel {
+      display: grid;
+      grid-template-rows: 45px minmax(0, 1fr);
+    }
+    .panel-head, .side-head {
+      min-height: 0;
+      padding: 9px 11px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      border-bottom: 1px solid var(--line);
+      background: linear-gradient(180deg, #fff, #f7fbff);
+    }
+    .panel-head h2, .side-head h3 {
+      margin: 0;
+      font-size: 15px;
+      letter-spacing: 0;
+    }
+    .panel-body {
+      min-height: 0;
+      padding: 9px;
+      overflow: hidden;
+    }
+
+    .inbox {
+      display: grid;
+      grid-auto-rows: min-content;
+      align-content: start;
+      gap: 7px;
+      height: 100%;
+      overflow-x: hidden;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      padding-right: 2px;
+    }
+    .group {
+      display: grid;
+      gap: 4px;
+      min-width: 0;
+    }
+    .group-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      color: #334155;
+      font-size: 12px;
+      font-weight: 900;
+      line-height: 1.1;
+    }
+    .task {
+      width: 100%;
+      min-width: 0;
+      min-height: 36px;
+      text-align: left;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: #fff;
+      padding: 5px 7px;
+      color: var(--ink);
+    }
+    .task:hover {
+      border-color: #93c5fd;
+      box-shadow: 0 8px 18px rgba(37,99,235,.09);
+    }
+    .task.active {
+      border-color: var(--blue);
+      box-shadow: inset 3px 0 0 var(--blue), 0 8px 16px rgba(37,99,235,.12);
+      background: #f8fbff;
+    }
+    .task-line {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 7px;
+      min-width: 0;
+    }
+    .sku {
+      display: block;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 13px;
+      font-weight: 900;
+      line-height: 1.2;
+    }
+    .task-meta, .muted-row {
+      display: flex;
+      gap: 5px;
+      flex-wrap: nowrap;
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 11px;
+      min-width: 0;
+      overflow: hidden;
+    }
+    .task-meta span, .muted-row span {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      border-radius: 999px;
+      background: #f1f6fd;
+      padding: 0 6px;
+    }
+    .empty {
+      padding: 14px 10px;
+      text-align: center;
+      color: var(--muted);
+      border: 1px dashed var(--line-strong);
+      border-radius: var(--radius);
+      background: var(--panel-soft);
+    }
+
+    .decision {
+      display: grid;
+      grid-template-rows: 94px 48px minmax(0, 1fr) 142px;
+      min-height: 0;
+    }
+    .selected-head {
+      min-height: 0;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 178px;
+      gap: 10px;
+      align-items: stretch;
+      padding: 9px 13px;
+      border-bottom: 1px solid var(--line);
+      background: linear-gradient(135deg, rgba(232,241,255,.98), rgba(255,255,255,.98));
+      overflow: hidden;
+    }
+    .selected-head h2 {
+      margin: 0 0 3px;
+      font-size: 24px;
+      line-height: 1.05;
+      letter-spacing: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .selected-head p {
+      margin: 0;
+      color: var(--muted);
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+    .sku-tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      margin-top: 5px;
+      max-height: 42px;
+      overflow: hidden;
+    }
+    .sku-tags span {
+      min-width: 0;
+      max-width: 160px;
+      border-radius: 999px;
+      background: #eef6ff;
+      color: #365473;
+      padding: 1px 7px;
+      font-size: 11px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .priority-note {
+      min-width: 0;
+      padding: 7px 9px;
+      border: 1px solid #b7d5ff;
+      border-radius: var(--radius);
+      background: #f6faff;
+      overflow: hidden;
+      align-self: stretch;
+      display: grid;
+      align-content: center;
+    }
+    .priority-note b {
+      display: block;
+      color: var(--blue-deep);
+      font-size: 15px;
+      line-height: 1.2;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .priority-note span {
+      display: block;
+      color: var(--muted);
+      font-size: 11px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .detail-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 7px;
+      padding: 7px 13px;
+      border-bottom: 1px solid var(--line);
+      min-height: 0;
+    }
+    .metric {
+      min-width: 0;
+      padding: 6px 8px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: #fff;
+      overflow: hidden;
+    }
+    .metric b {
+      display: block;
+      font-size: 16px;
+      line-height: 1.1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .metric span {
+      display: block;
+      margin-top: 3px;
+      color: var(--muted);
+      font-size: 11px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .decision-main {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 275px;
+      gap: 9px;
+      padding: 9px 13px;
+      min-height: 0;
+      overflow: hidden;
+    }
+    .info-stack {
+      display: grid;
+      grid-template-rows: 86px minmax(0, 1fr);
+      gap: 8px;
+      min-height: 0;
+      overflow: hidden;
+    }
+    .insight-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 7px;
+      min-height: 0;
+    }
+    .insight {
+      min-width: 0;
+      min-height: 0;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 8px;
+      background: var(--panel-soft);
+      overflow-x: hidden;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+    }
+    .insight h4 {
+      margin: 0 0 4px;
+      font-size: 12px;
+      color: #1e3a5f;
+      line-height: 1.2;
+    }
+    .insight p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 12px;
+      overflow-wrap: anywhere;
+    }
+    .data-card {
+      min-height: 0;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: #fff;
+      overflow: hidden;
+      display: grid;
+      grid-template-rows: 31px minmax(0, 1fr);
+    }
+    .data-title {
+      padding: 7px 9px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      border-bottom: 1px solid var(--line);
+      font-weight: 900;
+    }
+    .data-title span {
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 700;
+    }
+    .table-wrap {
+      min-height: 0;
+      overflow: auto;
+      overscroll-behavior: contain;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      table-layout: auto;
+      font-size: 11px;
+      min-width: 720px;
+    }
+    th, td {
+      border-bottom: 1px solid var(--line);
+      padding: 5px 7px;
+      text-align: left;
+      white-space: normal;
+      vertical-align: top;
+      overflow-wrap: anywhere;
+    }
+    th {
+      color: #33506e;
+      background: #f4f8ff;
+      font-weight: 900;
+    }
+    td { color: #334155; }
+    .asset-grid {
+      min-height: 0;
+      display: grid;
+      grid-template-rows: 31px minmax(0, 1fr);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: #fff;
+      overflow: hidden;
+    }
+    .asset-list {
+      min-height: 0;
+      padding: 7px;
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      grid-auto-rows: minmax(108px, 1fr);
+      gap: 7px;
+      overflow-x: hidden;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+    }
+    .asset {
+      min-width: 0;
+      min-height: 0;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      overflow: hidden;
+      background: #f8fbff;
+      display: grid;
+      grid-template-rows: minmax(0, 1fr) 31px;
+      min-height: 108px;
+    }
+    .mock-image {
+      position: relative;
+      min-height: 0;
+      background:
+        linear-gradient(135deg, rgba(37,99,235,.18), rgba(14,165,233,.08)),
+        repeating-linear-gradient(45deg, rgba(37,99,235,.08) 0 8px, rgba(255,255,255,.22) 8px 16px);
+    }
+    .mock-image::before {
+      content: "";
+      position: absolute;
+      inset: 12% 16%;
+      border-radius: 8px;
+      background: rgba(255,255,255,.72);
+      box-shadow:
+        18px 18px 0 rgba(37,99,235,.16),
+        -12px 22px 0 rgba(14,165,233,.13);
+    }
+    .mock-image::after {
+      content: attr(data-label);
+      position: absolute;
+      left: 8px;
+      bottom: 7px;
+      right: 8px;
+      color: #1e3a5f;
+      font-size: 11px;
+      font-weight: 900;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .asset div:last-child {
+      padding: 5px 7px;
+      color: var(--muted);
+      font-size: 11px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      background: #fff;
+      border-top: 1px solid var(--line);
+    }
+
+    .action-section {
+      min-height: 0;
+      padding: 9px 13px;
+      border-top: 1px solid var(--line);
+      overflow-x: hidden;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+    }
+    .section-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 7px;
+    }
+    .section-title h3 {
+      margin: 0;
+      font-size: 14px;
+    }
+    .action-box {
+      min-height: 0;
+      border: 1px solid #b7d5ff;
+      border-radius: var(--radius);
+      background: #f8fbff;
+      padding: 8px;
+      overflow: hidden;
+    }
+    .form-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 7px;
+      min-height: 0;
+    }
+    .field {
+      display: grid;
+      gap: 4px;
+      min-width: 0;
+    }
+    label {
+      color: #475569;
+      font-size: 11px;
+      font-weight: 900;
+      line-height: 1.1;
+    }
+    input, select, textarea {
+      width: 100%;
+      min-width: 0;
+      border: 1px solid var(--line-strong);
+      border-radius: var(--radius);
+      background: #fff;
+      color: var(--ink);
+      padding: 6px 8px;
+    }
+    textarea {
+      min-height: 54px;
+      resize: none;
+    }
+    input:focus, select:focus, textarea:focus {
+      border-color: var(--blue);
+      outline: 3px solid rgba(37,99,235,.12);
+    }
+    .action-row {
+      display: flex;
+      gap: 7px;
+      flex-wrap: nowrap;
+      margin-top: 7px;
+      overflow: hidden;
+    }
+    .action-row .btn {
+      min-width: 0;
+      flex: 1 1 auto;
+      padding-left: 8px;
+      padding-right: 8px;
+    }
+    .notice {
+      padding: 8px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: #fff;
+      color: var(--muted);
+      white-space: pre-line;
+      max-height: 88px;
+      overflow-x: hidden;
+      overflow-y: auto;
+    }
+
+    .side-stack {
+      display: grid;
+      grid-template-rows: minmax(0, 1fr) minmax(0, 1.55fr);
+      gap: 10px;
+      min-height: 0;
+      overflow: hidden;
+    }
+    .side-card {
+      display: grid;
+      grid-template-rows: 39px minmax(0, 1fr);
+    }
+    .side-body {
+      min-height: 0;
+      padding: 7px;
+      display: grid;
+      gap: 6px;
+      align-content: start;
+      overflow-x: hidden;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+    }
+    .person-row, .side-row, .flow-row {
+      min-width: 0;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: #fff;
+      padding: 6px 7px;
+      overflow: hidden;
+    }
+    .person-row { min-height: 31px; }
+    .row-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      font-weight: 900;
+      min-width: 0;
+    }
+    .row-top span:first-child {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .row-sub {
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 11px;
+      overflow-wrap: anywhere;
+      white-space: normal;
+    }
+    .flow-row {
+      position: relative;
+      padding-left: 29px;
+      min-height: 33px;
+    }
+    .flow-row.warn-step::before {
+      background: var(--amber-soft);
+      color: var(--amber);
+    }
+    .flow-row.warn-step {
+      border-color: #f2d38e;
+      background: #fffaf0;
+    }
+    .flow-row::before {
+      content: attr(data-step);
+      position: absolute;
+      left: 7px;
+      top: 7px;
+      width: 16px;
+      height: 16px;
+      display: grid;
+      place-items: center;
+      border-radius: 999px;
+      background: var(--blue-soft);
+      color: var(--blue-deep);
+      font-size: 10px;
+      font-weight: 900;
+    }
+
+    .hidden { display: none !important; }
+
+    .inbox::-webkit-scrollbar,
+    .side-body::-webkit-scrollbar,
+    .table-wrap::-webkit-scrollbar,
+    .asset-list::-webkit-scrollbar,
+    .action-section::-webkit-scrollbar,
+    .insight::-webkit-scrollbar,
+    .notice::-webkit-scrollbar {
+      width: 7px;
+      height: 7px;
+    }
+    .inbox::-webkit-scrollbar-thumb,
+    .side-body::-webkit-scrollbar-thumb,
+    .table-wrap::-webkit-scrollbar-thumb,
+    .asset-list::-webkit-scrollbar-thumb,
+    .action-section::-webkit-scrollbar-thumb,
+    .insight::-webkit-scrollbar-thumb,
+    .notice::-webkit-scrollbar-thumb {
+      background: #bfd3eb;
+      border-radius: 999px;
+    }
+    .status-strip {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 5px;
+    }
+    .status-chip {
+      min-width: 0;
+      padding: 5px 6px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: #f8fbff;
+      overflow: hidden;
+    }
+    .status-chip b {
+      display: block;
+      font-size: 14px;
+      line-height: 1.1;
+    }
+    .status-chip span {
+      display: block;
+      margin-top: 2px;
+      color: var(--muted);
+      font-size: 11px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    @media (max-width: 1180px) {
+      html, body { overflow: auto; height: auto; }
+      .topbar { height: auto; min-height: 58px; }
+      .top-inner { flex-wrap: wrap; height: auto; }
+      .top-controls { margin-left: 0; flex-wrap: wrap; width: 100%; justify-content: stretch; }
+      .brand { min-width: 100%; }
+      .app {
+        height: auto;
+        min-height: calc(100vh - 58px);
+        grid-template-rows: auto auto auto;
+      }
+      .command { grid-template-columns: 1fr; }
+      .command h1, .command p { white-space: normal; }
+      .stage-line { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+      .workspace { grid-template-columns: 1fr; overflow: visible; }
+      .panel, .side-card, .decision, .side-stack { min-height: 0; }
+      .decision { grid-template-rows: auto auto auto auto; }
+      .decision-main { grid-template-columns: 1fr; }
+      .info-stack { grid-template-rows: auto auto; }
+      .side-stack { grid-template-rows: auto; }
+      .inbox, .side-body { overflow: visible; }
+    }
+    @media (max-width: 720px) {
+      .top-inner, .app { padding-left: 10px; padding-right: 10px; }
+      .stage-line, .detail-grid, .insight-grid, .form-grid, .asset-list { grid-template-columns: 1fr 1fr; }
+      .selected-head { grid-template-columns: 1fr; }
+      .command-actions, .action-row { flex-wrap: wrap; }
+      .control, .btn, .seg { flex: 1 1 auto; }
+      .seg-btn { min-width: 0; flex: 1 1 0; }
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="top-inner">
+      <div class="brand">
+        <strong>海外仓开发新品认领工作台</strong>
+        <span>一屏看完任务、SKU、表格字段、图片附件、预警和流转</span>
+      </div>
+      <div class="top-controls">
+        <select class="control" id="periodSelect">
+          <option>开发0623期</option>
+          <option>开发0630期</option>
+        </select>
+        <div class="seg" id="roleSeg">
+          <button class="seg-btn active" data-role="lead">组长</button>
+          <button class="seg-btn" data-role="operator">店铺运营</button>
+          <button class="seg-btn" data-role="manager">主管</button>
+        </div>
+        <select class="control hidden" id="operatorSelect"></select>
+        <span class="pill amber" id="deadlinePill">周三18:00截止</span>
+        <button class="btn ghost" id="resetBtn">重置</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="app">
+    <section class="command">
+      <div>
+        <h1 id="commandTitle">先确定负责人，再让认领结果进入复核和备货</h1>
+        <p id="commandDesc">左侧任务池，中间当前SKU的字段、图片和操作，右侧看均衡、预警和流转。</p>
+      </div>
+      <div class="command-actions">
+        <button class="btn primary" id="autoAssignBtn">生成预分配</button>
+        <button class="btn blue" id="notifyBtn">确认并通知</button>
+        <button class="btn warn" id="reassignBtn">重分未锁定</button>
+      </div>
+    </section>
+
+    <section class="stage-line" id="stageLine"></section>
+
+    <section class="workspace">
+      <aside class="panel">
+        <div class="panel-head">
+          <h2 id="inboxTitle">任务收件箱</h2>
+          <span class="pill blue" id="inboxCount">0项</span>
+        </div>
+        <div class="panel-body inbox" id="inboxGroups"></div>
+      </aside>
+
+      <section class="panel decision">
+        <div class="selected-head" id="selectedHead"></div>
+        <div class="detail-grid" id="detailGrid"></div>
+        <div class="decision-main">
+          <div class="info-stack">
+            <div class="insight-grid" id="insightGrid"></div>
+            <div class="data-card">
+              <div class="data-title">表格字段预览 <span id="tableSource">开发认领表</span></div>
+              <div class="table-wrap" id="tablePreview"></div>
+            </div>
+          </div>
+          <div class="asset-grid">
+            <div class="data-title">图片 / 附件 <span id="assetCount">0张</span></div>
+            <div class="asset-list" id="assetList"></div>
+          </div>
+        </div>
+        <div class="action-section">
+          <div class="section-title">
+            <h3 id="actionTitle">操作区</h3>
+            <span class="pill" id="actionPill">按角色显示</span>
+          </div>
+          <div id="actionArea"></div>
+        </div>
+      </section>
+
+      <aside class="side-stack" id="sideStack"></aside>
+    </section>
+  </main>
+
+  <script>
+    const operators = ["庞莹莹", "陆俊全", "陈丽妹", "赵钰婷", "李干", "江琴", "李桂敏", "饶培丽"];
+    const baseAttachments = [
+      { label: "产品主图", note: "表格图片字段" },
+      { label: "竞品截图", note: "销售反馈附件" },
+      { label: "价格截图", note: "调研截图" },
+      { label: "备注附件", note: "链接/图片" }
+    ];
+    const initialItems = [
+      { id: "HZC029", mainSku: "HZC029", subSkuCount: 4, country: "越南", category: "家居厨卫", productName: "家居小件组合", source: "开发认领新品", dev: "陆俊全", cost: 1.81, refDaily: 1.2, margin: "16.8%", competitor: "蓝色最热销链接，价格略高但评价稳定", historyOwner: "陆俊全", risk: "新链接需要确认定价", assignee: "", locked: false, notified: false, status: "待分配", claim: null },
+      { id: "FR027", mainSku: "FR027", subSkuCount: 3, country: "越南", category: "运动娱乐", productName: "车头篮收纳", source: "开发认领新品", dev: "江琴", cost: 6.2, refDaily: 2.1, margin: "18.4%", competitor: "同款热销，转化集中在低价区间", historyOwner: "江琴", risk: "参考单销高，需关注补货节奏", assignee: "", locked: false, notified: false, status: "待分配", claim: null },
+      { id: "BGQHC18", mainSku: "BGQHC18", subSkuCount: 6, country: "菲律宾", category: "收纳清洁", productName: "垃圾收纳盒", source: "开发认领新品", dev: "庞莹莹", cost: 4.15, refDaily: 0.8, margin: "12.7%", competitor: "收纳类价格分层明显", historyOwner: "庞莹莹", risk: "子SKU多，建议整组给同一负责人", assignee: "", locked: false, notified: false, status: "待分配", claim: null },
+      { id: "FFJ321", mainSku: "FFJ321", subSkuCount: 5, country: "菲律宾", category: "宠物用品", productName: "宠物防滑垫", source: "开发认领新品", dev: "陆伟豪", cost: 3.55, refDaily: 1.5, margin: "14.2%", competitor: "宠物垫同图款竞争多", historyOwner: "陆伟豪", risk: "需确认是否已有店铺重复铺货", assignee: "", locked: false, notified: false, status: "待分配", claim: null },
+      { id: "GFPH13", mainSku: "GFPH13", subSkuCount: 2, country: "菲律宾", category: "家居厨卫", productName: "厨房清洁刷", source: "开发认领新品", dev: "陈丽妹", cost: 2.4, refDaily: 0.6, margin: "10.5%", competitor: "低价款跑量但利润薄", historyOwner: "陈丽妹", risk: "毛利偏低", assignee: "", locked: false, notified: false, status: "待分配", claim: null },
+      { id: "GQ49", mainSku: "GQ49", subSkuCount: 4, country: "菲律宾", category: "园艺用品", productName: "艺术花瓶", source: "开发认领新品", dev: "郑纯华", cost: 5.1, refDaily: 1.1, margin: "13.1%", competitor: "园艺瓶同款评价分化", historyOwner: "郑纯华", risk: "季节性不确定", assignee: "", locked: false, notified: false, status: "待分配", claim: null },
+      { id: "HC051", mainSku: "HC051", subSkuCount: 3, country: "菲律宾", category: "卫浴用品", productName: "卫浴置物架", source: "开发认领新品", dev: "陈丽妹", cost: 2.75, refDaily: 1.4, margin: "14.5%", competitor: "卫浴小件搜索热度稳定", historyOwner: "陈丽妹", risk: "需补充竞品截图", assignee: "", locked: false, notified: false, status: "待分配", claim: null },
+      { id: "HWSQ03", mainSku: "HWSQ03", subSkuCount: 1, country: "菲律宾", category: "宠物用品", productName: "宠物小配件", source: "开发认领新品", dev: "陈丽妹", cost: 1.35, refDaily: 0.4, margin: "引流款", competitor: "单件小货，适合试水", historyOwner: "", risk: "单销低于0.5", assignee: "", locked: false, notified: false, status: "待分配", claim: null },
+      { id: "WPBB195", mainSku: "WPBB195", subSkuCount: 2, country: "菲律宾", category: "汽车配件", productName: "车载配件", source: "直发转海外仓", dev: "陈丽妹", cost: 2.0, refDaily: 1.0, margin: "15.6%", competitor: "直发转海外仓候选", historyOwner: "陈丽妹", risk: "确认车型适配", assignee: "", locked: false, notified: false, status: "待分配", claim: null },
+      { id: "CDHG0344", mainSku: "CDHG0344", subSkuCount: 2, country: "菲律宾", category: "消费电子", productName: "电子配件", source: "直发转海外仓", dev: "陈丽妹", cost: 10.65, refDaily: 0.7, margin: "11.9%", competitor: "同款热销但价格波动大", historyOwner: "", risk: "成本高，首备谨慎", assignee: "", locked: false, notified: false, status: "待分配", claim: null },
+      { id: "CMOD049", mainSku: "CMOD049", subSkuCount: 3, country: "马来西亚", category: "家居配件", productName: "家居装饰件", source: "开发认领新品", dev: "潘露英", cost: 15.23, refDaily: 1.8, margin: "17.3%", competitor: "同款销量稳定，评论数较多", historyOwner: "潘露英", risk: "成本占用较高", assignee: "", locked: false, notified: false, status: "待分配", claim: null },
+      { id: "WYOD1789", mainSku: "WYOD1789", subSkuCount: 1, country: "马来西亚", category: "服饰配件", productName: "服饰小配件", source: "直发转海外仓", dev: "颜佳文", cost: 23.0, refDaily: 0.5, margin: "9.8%", competitor: "服饰配件款式风险高", historyOwner: "颜佳文", risk: "利润低，需确认是否值得备货", assignee: "", locked: false, notified: false, status: "待分配", claim: null }
+    ].map((item) => ({ ...item, attachments: baseAttachments }));
+
+    const key = "ow_claim_one_screen_blue_v1";
+    let state = loadState();
+    let currentRole = "lead";
+    let activeOperator = operators[0];
+    let selectedId = chooseDefaultItem()?.id || initialItems[0].id;
+    const $ = (id) => document.getElementById(id);
+
+    function cloneInitialItems() { return JSON.parse(JSON.stringify(initialItems)); }
+    function freshState() { return { items: cloneInitialItems(), notifiedAt: "" }; }
+    function normalizeState(candidate) {
+      const fresh = freshState();
+      if (!candidate || !Array.isArray(candidate.items) || !candidate.items.length) return fresh;
+      const freshById = Object.fromEntries(fresh.items.map((item) => [item.id, item]));
+      const merged = candidate.items
+        .filter((item) => item && item.id && freshById[item.id])
+        .map((item) => ({ ...freshById[item.id], ...item, claim: item.claim || null, attachments: item.attachments || freshById[item.id].attachments, locked: Boolean(item.locked), notified: Boolean(item.notified) }));
+      return merged.length ? { items: merged, notifiedAt: candidate.notifiedAt || "" } : fresh;
+    }
+    function loadState() {
+      try {
+        const raw = localStorage.getItem(key);
+        if (raw) return normalizeState(JSON.parse(raw));
+      } catch (error) {}
+      return freshState();
+    }
+    function ensureState() {
+      state = normalizeState(state);
+      if (!state.items.some((item) => item.id === selectedId)) selectedId = chooseDefaultItem()?.id || state.items[0]?.id || "";
+    }
+    function saveState() {
+      ensureState();
+      localStorage.setItem(key, JSON.stringify(state));
+    }
+    function itemById(id) { return state.items.find((item) => item.id === id) || null; }
+    function ownerOptions(selected) {
+      return ['<option value="">未分配</option>'].concat(operators.map((op) => `<option value="${op}" ${op === selected ? "selected" : ""}>${op}</option>`)).join("");
+    }
+    function statusClass(status) {
+      if (["待认领", "意向中", "待主管复核"].includes(status)) return "blue";
+      if (["已认领", "主管通过", "已流转备货"].includes(status)) return "green";
+      if (["待分配", "系统预分配", "手动调整", "放弃回池", "待补充反馈"].includes(status)) return "amber";
+      return "red";
+    }
+    function stageOf(item) {
+      if (item.status === "放弃回池") return "放弃回池";
+      if (item.status === "待主管复核") return "待主管复核";
+      if (item.status === "意向中") return "意向中";
+      if (item.status === "已流转备货") return "已流转";
+      if (item.status === "主管通过" || item.status === "已认领") return "已认领";
+      if (item.assignee && item.notified) return "待认领";
+      return "待分配";
+    }
+    function visibleItems() {
+      if (currentRole === "operator") {
+        return state.items.filter((item) =>
+          (item.assignee === activeOperator && item.notified) ||
+          item.claim?.operator === activeOperator ||
+          item.lastOperator === activeOperator
+        );
+      }
+      if (currentRole === "manager") return state.items.filter((item) => ["待主管复核", "主管通过", "待补充反馈", "放弃回池", "已流转备货"].includes(item.status) || item.claim);
+      return state.items;
+    }
+    function chooseDefaultItem() {
+      const rows = visibleItems();
+      if (!rows.length) return state.items[0] || null;
+      const priority = currentRole === "lead"
+        ? ["放弃回池", "待分配", "系统预分配", "手动调整", "待认领", "意向中", "待主管复核", "已认领", "已流转"]
+        : currentRole === "operator"
+          ? ["待认领", "意向中", "待补充反馈", "待主管复核", "已认领", "已流转"]
+          : ["待主管复核", "待补充反馈", "放弃回池", "主管通过", "已流转"];
+      return rows.slice().sort((a, b) => priority.indexOf(stageOf(a)) - priority.indexOf(stageOf(b)) || b.subSkuCount - a.subSkuCount)[0] || rows[0];
+    }
+    function stats() {
+      const s = { total: state.items.length, assigned: 0, notified: 0, intent: 0, review: 0, confirmed: 0, abandoned: 0, flowed: 0 };
+      state.items.forEach((item) => {
+        if (item.assignee) s.assigned += 1;
+        if (item.assignee && item.notified) s.notified += 1;
+        if (item.status === "意向中") s.intent += 1;
+        if (item.status === "待主管复核") s.review += 1;
+        if (["已认领", "主管通过"].includes(item.status)) s.confirmed += 1;
+        if (item.status === "放弃回池") s.abandoned += 1;
+        if (item.status === "已流转备货") s.flowed += 1;
+      });
+      return s;
+    }
+    function calcLoad() {
+      const load = Object.fromEntries(operators.map((op) => [op, { main: 0, sub: 0, todo: 0, intent: 0, review: 0 }]));
+      state.items.forEach((item) => {
+        if (!item.assignee || !load[item.assignee]) return;
+        load[item.assignee].main += 1;
+        load[item.assignee].sub += item.subSkuCount;
+        if (item.notified && !["待主管复核", "主管通过", "已流转备货"].includes(item.status)) load[item.assignee].todo += 1;
+        if (item.status === "意向中") load[item.assignee].intent += 1;
+        if (item.status === "待主管复核") load[item.assignee].review += 1;
+      });
+      return load;
+    }
+    function warnings() {
+      const rows = [];
+      const unassigned = state.items.filter((item) => !item.assignee).length;
+      const waitNotify = state.items.filter((item) => item.assignee && !item.notified && item.status !== "已流转备货").length;
+      const abandoned = state.items.filter((item) => item.status === "放弃回池").length;
+      const missing = state.items.filter((item) => item.claim && item.claim.decision === "放弃" && !item.claim.reason).length;
+      if (unassigned) rows.push({ title: `${unassigned}组未分配`, sub: "店铺运营还收不到任务。", level: "red" });
+      if (waitNotify) rows.push({ title: `${waitNotify}组待通知`, sub: "已有负责人但未进入认领队列。", level: "amber" });
+      if (abandoned) rows.push({ title: `${abandoned}组放弃回池`, sub: "需要重新转派或补充规则。", level: "amber" });
+      if (missing) rows.push({ title: `${missing}组原因缺失`, sub: "放弃认领必须留下依据。", level: "red" });
+      if (!rows.length) rows.push({ title: "暂无异常", sub: "分配、认领、复核都在正常流转。", level: "green" });
+      return rows;
+    }
+
+    function autoAssign(onlyUnlocked) {
+      const load = calcLoad();
+      const targetRows = state.items
+        .filter((item) => {
+          if (item.status === "已流转备货") return false;
+          if (item.locked) return false;
+          if (onlyUnlocked) return !item.locked && (!item.notified || item.status === "放弃回池" || item.status === "待分配");
+          return !item.assignee || item.status === "放弃回池";
+        })
+        .sort((a, b) => b.subSkuCount - a.subSkuCount);
+      targetRows.forEach((item) => {
+        if (item.assignee && load[item.assignee]) {
+          load[item.assignee].main -= 1;
+          load[item.assignee].sub -= item.subSkuCount;
+        }
+        const owner = operators.slice().sort((a, b) => load[a].sub - load[b].sub || load[a].main - load[b].main)[0];
+        item.assignee = owner;
+        item.notified = false;
+        item.status = "系统预分配";
+        item.claim = null;
+        load[owner].main += 1;
+        load[owner].sub += item.subSkuCount;
+      });
+      saveState();
+      render();
+    }
+    function notifyAssigned() {
+      state.items.forEach((item) => {
+        if (item.assignee && !item.notified && item.status !== "已流转备货") {
+          item.notified = true;
+          if (["系统预分配", "手动调整", "待分配"].includes(item.status)) item.status = "待认领";
+        }
+      });
+      state.notifiedAt = new Date().toLocaleString("zh-CN");
+      saveState();
+      render();
+    }
+    function saveLead(item) {
+      item.assignee = $("leadOwner").value;
+      item.locked = $("leadLock").value === "是";
+      item.notified = false;
+      item.claim = null;
+      item.status = item.assignee ? "手动调整" : "待分配";
+      saveState();
+      render();
+    }
+    function notifyOne(item) {
+      if (!item.assignee) return;
+      item.notified = true;
+      item.status = "待认领";
+      saveState();
+      render();
+    }
+    function releaseItem(item) {
+      if (item.assignee) item.lastOperator = item.assignee;
+      item.assignee = "";
+      item.notified = false;
+      item.locked = false;
+      item.status = "放弃回池";
+      saveState();
+      render();
+    }
+    function saveClaim(item, action) {
+      const daily = Number($("claimDaily")?.value || 0);
+      const reason = $("claimReason")?.value.trim() || "";
+      const summary = $("claimSummary")?.value.trim() || "";
+      item.claim = { decision: action, daily, reason, summary, stockQty: Math.round(daily * 30), operator: activeOperator, updatedAt: new Date().toLocaleString("zh-CN") };
+      item.lastOperator = activeOperator;
+      if (action === "意向认领") item.status = "意向中";
+      if (action === "确认认领") item.status = "待主管复核";
+      if (action === "补充调研") item.status = "待补充反馈";
+      if (action === "放弃") {
+        item.status = "放弃回池";
+        item.assignee = "";
+        item.notified = false;
+        item.locked = false;
+      }
+      saveState();
+      render();
+    }
+    function updateStatus(item, status) {
+      item.status = status;
+      saveState();
+      render();
+    }
+
+    function renderTopCopy() {
+      const copy = {
+        lead: ["先确定负责人，再让认领结果进入复核和备货", "左侧处理待分配和回池，中间改负责人，右侧看负载、预警和流转。"],
+        operator: ["只处理自己的认领队列，每条SKU留下可追踪决策", "中间直接看图片、表格字段、竞品依据，并提交意向/确认/放弃。"],
+        manager: ["只看需要复核和异常闭环的SKU", "重点确认认领是否能备货，不认领是否有充分理由和附件依据。"]
+      };
+      $("commandTitle").textContent = copy[currentRole][0];
+      $("commandDesc").textContent = copy[currentRole][1];
+      $("autoAssignBtn").classList.toggle("hidden", currentRole !== "lead");
+      $("notifyBtn").classList.toggle("hidden", currentRole !== "lead");
+      $("reassignBtn").classList.toggle("hidden", currentRole !== "lead");
+      $("operatorSelect").classList.toggle("hidden", currentRole !== "operator");
+    }
+    function renderStageLine() {
+      const s = stats();
+      const data = [
+        ["待分配", s.total - s.assigned, s.total],
+        ["待认领", s.notified - s.intent - s.review - s.confirmed - s.flowed, s.total],
+        ["意向中", s.intent, s.total],
+        ["待主管复核", s.review, s.total],
+        ["放弃回池", s.abandoned, s.total],
+        ["已流转备货", s.flowed, s.total]
+      ];
+      $("stageLine").innerHTML = data.map(([label, value, total]) => {
+        const pct = Math.max(0, Math.min(100, Math.round(value / Math.max(1, total) * 100)));
+        return `<div class="stage"><div class="stage-top"><b>${value}</b><span>${label}</span></div><div class="track"><i style="width:${pct}%"></i></div></div>`;
+      }).join("");
+    }
+    function renderInbox() {
+      const rows = visibleItems();
+      const groupDefs = [
+        ["待分配", "待分配"],
+        ["待认领", "待认领"],
+        ["意向中", "意向中"],
+        ["放弃回池", "放弃回池"],
+        ["待主管复核", "待主管复核"],
+        ["已完成", "已流转"]
+      ];
+      $("inboxCount").textContent = `${rows.length}项`;
+      $("inboxTitle").textContent = currentRole === "operator" ? `${activeOperator}的收件箱` : currentRole === "manager" ? "复核收件箱" : "任务收件箱";
+      if (!rows.length) {
+        $("inboxGroups").innerHTML = '<div class="empty">当前角色没有待处理任务。</div>';
+        selectedId = state.items[0]?.id || "";
+        return;
+      }
+      if (!rows.some((item) => item.id === selectedId)) selectedId = chooseDefaultItem()?.id || rows[0].id;
+      $("inboxGroups").innerHTML = groupDefs.map(([label, group]) => {
+        const groupRows = rows.filter((item) => stageOf(item) === group || (label === "待分配" && ["系统预分配", "手动调整"].includes(item.status)));
+        if (!groupRows.length) return "";
+        const cards = groupRows.map((item) => `
+          <button class="task ${item.id === selectedId ? "active" : ""}" data-pick="${item.id}">
+            <div class="task-line">
+              <span class="sku">${item.mainSku}</span>
+              <span class="pill ${statusClass(item.status)}">${item.status}</span>
+            </div>
+            <div class="task-meta"><span>${item.country}</span><span>${item.subSkuCount}子</span><span>${item.assignee || "未分配"}</span><span>单销${item.refDaily}</span></div>
+          </button>
+        `).join("");
+        return `<div class="group"><div class="group-title"><span>${label}</span><span>${groupRows.length}</span></div>${cards}</div>`;
+      }).join("");
+      document.querySelectorAll("[data-pick]").forEach((button) => {
+        button.onclick = () => {
+          selectedId = button.dataset.pick;
+          render();
+        };
+      });
+    }
+    function renderDecision() {
+      const item = itemById(selectedId) || chooseDefaultItem();
+      if (!item) {
+        $("selectedHead").innerHTML = '<div><h2>暂无任务</h2><p>当前角色没有可处理的SKU。</p></div>';
+        $("detailGrid").innerHTML = "";
+        $("insightGrid").innerHTML = "";
+        $("tablePreview").innerHTML = "";
+        $("assetList").innerHTML = "";
+        $("actionArea").innerHTML = '<div class="empty">没有可操作内容。</div>';
+        return;
+      }
+      selectedId = item.id;
+      const stockQty = Math.round((item.claim?.daily || item.refDaily) * 30);
+      $("selectedHead").innerHTML = `
+        <div>
+          <h2>${item.mainSku}</h2>
+          <p>${item.productName} · ${item.country} · ${item.category} · ${item.subSkuCount}个子SKU · 开发 ${item.dev}</p>
+          <div class="sku-tags">
+            <span>来源：${item.source}</span>
+            <span>当前负责人：${item.assignee || "未分配"}</span>
+            <span>历史负责人：${item.historyOwner || "无"}</span>
+            <span>国家：${item.country}</span>
+            <span>类目：${item.category}</span>
+            <span>${item.locked ? "已锁定" : "未锁定"}</span>
+          </div>
+        </div>
+        <div class="priority-note">
+          <span>当前状态</span>
+          <b>${item.status}</b>
+          <span>${nextStepText(item)}</span>
+        </div>
+      `;
+      $("detailGrid").innerHTML = [
+        [`${item.cost}`, "成本价"],
+        [`${item.refDaily}`, "参考单销"],
+        [`${stockQty}`, "30天首备"],
+        [`${item.margin}`, "稳定期毛利"]
+      ].map(([value, label]) => `<div class="metric"><b>${value}</b><span>${label}</span></div>`).join("");
+      $("insightGrid").innerHTML = `
+        <div class="insight"><h4>开发信息</h4><p>${item.source}，${item.dev}发布，主SKU整组流转。</p></div>
+        <div class="insight"><h4>竞品依据</h4><p>${item.competitor}</p></div>
+        <div class="insight"><h4>风险提示</h4><p>${item.risk}</p></div>
+      `;
+      renderTablePreview(item, stockQty);
+      renderAssets(item);
+      renderActionArea(item);
+    }
+    function renderTablePreview(item, stockQty) {
+      $("tableSource").textContent = item.source;
+      const rows = [
+        ["主SKU", item.mainSku, "子SKU数", item.subSkuCount],
+        ["商品名称", item.productName, "国家", item.country],
+        ["成本价", item.cost, "参考单销", item.refDaily],
+        ["主销售员", item.assignee || "未分配", "首备估算", stockQty],
+        ["认领结果", item.claim?.decision || "-", "反馈附件", `${item.attachments.length}张`]
+      ];
+      $("tablePreview").innerHTML = `<table><thead><tr><th>字段</th><th>值</th><th>字段</th><th>值</th></tr></thead><tbody>${rows.map((r) => `<tr><td>${r[0]}</td><td>${r[1]}</td><td>${r[2]}</td><td>${r[3]}</td></tr>`).join("")}</tbody></table>`;
+    }
+    function renderAssets(item) {
+      $("assetCount").textContent = `${item.attachments.length}张`;
+      $("assetList").innerHTML = item.attachments.map((asset) => `
+        <div class="asset">
+          <div class="mock-image" data-label="${asset.label}"></div>
+          <div>${asset.note}</div>
+        </div>
+      `).join("");
+    }
+    function nextStepText(item) {
+      if (!item.assignee) return "等待组长分配";
+      if (!item.notified) return "等待通知运营";
+      if (item.status === "待认领") return "运营提交决策";
+      if (item.status === "意向中") return "可确认或放弃";
+      if (item.status === "放弃回池") return "组长重新转派";
+      if (item.status === "待主管复核") return "主管复核";
+      if (item.status === "已流转备货") return "已进备货草稿";
+      if (item.status === "待补充反馈") return "补充调研依据";
+      return "继续处理";
+    }
+    function renderActionArea(item) {
+      $("actionTitle").textContent = currentRole === "lead" ? "组长分配" : currentRole === "operator" ? "认领决策" : "主管复核";
+      $("actionPill").textContent = currentRole === "lead" ? "分配/锁定/通知" : currentRole === "operator" ? "意向/确认/放弃" : "通过/退回/流转";
+      if (currentRole === "lead") {
+        $("actionArea").innerHTML = `
+          <div class="action-box">
+            <div class="form-grid">
+              <div class="field"><label>负责人</label><select id="leadOwner">${ownerOptions(item.assignee)}</select></div>
+              <div class="field"><label>锁定</label><select id="leadLock"><option value="否" ${!item.locked ? "selected" : ""}>不锁定</option><option value="是" ${item.locked ? "selected" : ""}>锁定</option></select></div>
+              <div class="field"><label>建议</label><input value="${nextStepText(item)}" readonly></div>
+            </div>
+            <div class="action-row">
+              <button class="btn primary" id="saveLeadBtn">保存</button>
+              <button class="btn blue" id="notifyOneBtn">通知</button>
+              <button class="btn danger" id="releaseBtn">回池</button>
+            </div>
+          </div>`;
+        $("saveLeadBtn").onclick = () => saveLead(item);
+        $("notifyOneBtn").onclick = () => notifyOne(item);
+        $("releaseBtn").onclick = () => releaseItem(item);
+        return;
+      }
+      if (currentRole === "operator") {
+        const canOperate = item.assignee === activeOperator && item.notified && !["待主管复核", "主管通过", "已流转备货", "放弃回池"].includes(item.status);
+        if (!canOperate) {
+          $("actionArea").innerHTML = `<div class="notice">${item.assignee === activeOperator ? "这个任务已提交或已释放，等待后续流转。" : "当前SKU不属于你，无法操作。"}</div>`;
+          return;
+        }
+        $("actionArea").innerHTML = `
+          <div class="action-box">
+            <div class="form-grid">
+              <div class="field"><label>认领单销</label><input id="claimDaily" type="number" min="0" step="0.1" value="${item.claim?.daily ?? item.refDaily}"></div>
+              <div class="field"><label>原因/变化</label><input id="claimReason" value="${item.claim?.reason || ""}" placeholder="放弃或调整时必填"></div>
+              <div class="field"><label>销售反馈总结</label><textarea id="claimSummary" placeholder="调研实情、截图/链接、价格判断">${item.claim?.summary || ""}</textarea></div>
+            </div>
+            <div class="action-row">
+              <button class="btn blue" id="intentBtn">意向</button>
+              <button class="btn primary" id="confirmBtn">确认</button>
+              <button class="btn warn" id="researchBtn">补充</button>
+              <button class="btn danger" id="abandonBtn">放弃</button>
+            </div>
+          </div>`;
+        $("intentBtn").onclick = () => saveClaim(item, "意向认领");
+        $("confirmBtn").onclick = () => saveClaim(item, "确认认领");
+        $("researchBtn").onclick = () => saveClaim(item, "补充调研");
+        $("abandonBtn").onclick = () => saveClaim(item, "放弃");
+        return;
+      }
+      $("actionArea").innerHTML = `
+        <div class="action-box">
+          <div class="notice">${item.claim ? `动作：${item.claim.decision}  单销：${item.claim.daily || "-"}  首备：${item.claim.stockQty || 0}\n原因：${item.claim.reason || "-"}\n反馈：${item.claim.summary || "-"}` : "还没有提交认领结果。"}</div>
+          <div class="action-row">
+            <button class="btn primary" id="approveBtn">通过</button>
+            <button class="btn warn" id="returnBtn">退回</button>
+            <button class="btn blue" id="flowBtn">流转备货</button>
+          </div>
+        </div>`;
+      $("approveBtn").onclick = () => updateStatus(item, "主管通过");
+      $("returnBtn").onclick = () => updateStatus(item, "待补充反馈");
+      $("flowBtn").onclick = () => updateStatus(item, "已流转备货");
+    }
+    function renderSide() {
+      const load = calcLoad();
+      const warn = warnings();
+      const maxSub = Math.max(1, ...operators.map((op) => load[op].sub));
+      const loadRows = operators.map((op) => `
+        <div class="person-row">
+          <div class="row-top"><span>${op}</span><span>${load[op].main}组/${load[op].sub}子</span></div>
+          <div class="workload-bar"><i style="width:${Math.round(load[op].sub / maxSub * 100)}%"></i></div>
+        </div>
+      `).join("");
+      const s = stats();
+      const flowRows = [
+        ["开发发布", `${s.total}组入池`],
+        ["组长分配", `${s.assigned}/${s.total}`],
+        ["运营认领", `${s.intent}意向 / ${s.review}复核`],
+        ["放弃回池", `${s.abandoned}组`],
+        ["备货草稿", `${s.flowed}组`]
+      ].map(([title, sub], index) => `<div class="flow-row" data-step="${index + 1}"><div class="row-top"><span>${title}</span></div><div class="row-sub">${sub}</div></div>`).join("");
+      const warningFlowRows = warn.map((item, index) => `
+        <div class="flow-row warn-step" data-step="!">
+          <div class="row-top"><span>${item.title}</span><span class="pill ${item.level}">${item.level === "green" ? "正常" : item.level === "red" ? "预警" : "关注"}</span></div>
+          <div class="row-sub">${item.sub}</div>
+        </div>
+      `).join("");
+      const operatorRows = state.items
+        .filter((item) => item.assignee === activeOperator || item.claim?.operator === activeOperator || item.lastOperator === activeOperator)
+        .map((item) => `<div class="side-row"><div class="row-top"><span>${item.mainSku}</span><span class="pill ${statusClass(item.status)}">${item.status}</span></div><div class="row-sub">${item.country} · ${item.subSkuCount}子 · ${nextStepText(item)}</div></div>`)
+        .join("") || '<div class="empty">当前没有分给你的SKU。</div>';
+      const operatorItems = state.items.filter((item) => item.assignee === activeOperator || item.claim?.operator === activeOperator || item.lastOperator === activeOperator);
+      const operatorSummary = [
+        ["待处理", operatorItems.filter((item) => stageOf(item) === "待认领" || item.status === "待补充反馈").length],
+        ["意向中", operatorItems.filter((item) => item.status === "意向中").length],
+        ["待复核", operatorItems.filter((item) => item.status === "待主管复核").length],
+        ["已通过", operatorItems.filter((item) => ["主管通过", "已认领"].includes(item.status)).length],
+        ["已流转", operatorItems.filter((item) => item.status === "已流转备货").length],
+        ["已回池", operatorItems.filter((item) => item.status === "放弃回池").length]
+      ].map(([label, value]) => `<div class="status-chip"><b>${value}</b><span>${label}</span></div>`).join("");
+      const reviewRows = state.items
+        .filter((item) => ["待主管复核", "待补充反馈", "放弃回池"].includes(item.status))
+        .slice(0, 6)
+        .map((item) => `<div class="side-row"><div class="row-top"><span>${item.mainSku}</span><span class="pill ${statusClass(item.status)}">${item.status}</span></div><div class="row-sub">${item.assignee || "未分配"} · ${item.claim?.decision || "无提交"}</div></div>`)
+        .join("") || '<div class="empty">暂无复核或异常。</div>';
+      const roleCard = currentRole === "operator"
+        ? `<div class="side-card"><div class="side-head"><h3>我的认领状态</h3><span class="pill blue">${activeOperator}</span></div><div class="side-body"><div class="status-strip">${operatorSummary}</div>${operatorRows}</div></div>`
+        : currentRole === "manager"
+          ? `<div class="side-card"><div class="side-head"><h3>复核队列</h3><span class="pill amber">${s.review}项</span></div><div class="side-body">${reviewRows}</div></div>`
+          : `<div class="side-card"><div class="side-head"><h3>分配均衡度</h3><span class="pill blue">子SKU</span></div><div class="side-body">${loadRows}</div></div>`;
+      $("sideStack").innerHTML = `
+        ${roleCard}
+        <div class="side-card"><div class="side-head"><h3>流转与预警</h3><span class="pill ${warn.some((x) => x.level !== "green") ? "amber" : "sky"}">${warn.filter((x) => x.level !== "green").length}项预警</span></div><div class="side-body">${warningFlowRows}${flowRows}</div></div>
+      `;
+    }
+    function renderDeadline() {
+      const now = new Date();
+      const target = new Date(now);
+      const day = target.getDay();
+      const diffToWed = (3 - day + 7) % 7;
+      target.setDate(target.getDate() + diffToWed);
+      target.setHours(18, 0, 0, 0);
+      if (target < now) target.setDate(target.getDate() + 7);
+      const diff = target - now;
+      const hours = Math.floor(diff / 3600000);
+      const mins = Math.floor(diff % 3600000 / 60000);
+      $("deadlinePill").textContent = `周三18:00 · ${hours}h${mins}m`;
+    }
+    function render() {
+      ensureState();
+      renderTopCopy();
+      renderDeadline();
+      renderStageLine();
+      renderInbox();
+      renderDecision();
+      renderSide();
+    }
+
+    $("operatorSelect").innerHTML = operators.map((op) => `<option>${op}</option>`).join("");
+    $("roleSeg").querySelectorAll("[data-role]").forEach((button) => {
+      button.onclick = () => {
+        currentRole = button.dataset.role;
+        $("roleSeg").querySelectorAll("[data-role]").forEach((b) => b.classList.toggle("active", b === button));
+        selectedId = chooseDefaultItem()?.id || selectedId;
+        render();
+      };
+    });
+    $("operatorSelect").onchange = () => {
+      activeOperator = $("operatorSelect").value;
+      selectedId = chooseDefaultItem()?.id || selectedId;
+      render();
+    };
+    $("autoAssignBtn").onclick = () => autoAssign(false);
+    $("notifyBtn").onclick = notifyAssigned;
+    $("reassignBtn").onclick = () => autoAssign(true);
+    $("resetBtn").onclick = () => {
+      if (!confirm("确认重置演示数据？")) return;
+      localStorage.removeItem(key);
+      state = loadState();
+      selectedId = chooseDefaultItem()?.id || initialItems[0].id;
+      render();
+    };
+    setInterval(renderDeadline, 60000);
+    render();
+  </script>
+</body>
+</html>

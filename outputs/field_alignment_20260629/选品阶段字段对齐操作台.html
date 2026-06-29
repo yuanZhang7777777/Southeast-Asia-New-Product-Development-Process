@@ -1,0 +1,508 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>选品阶段字段对齐操作台</title>
+  <style>
+    :root {
+      --bg: #f6f7f9;
+      --panel: #ffffff;
+      --line: #d8dee8;
+      --text: #172033;
+      --muted: #687385;
+      --blue: #2563eb;
+      --green: #0f766e;
+      --amber: #b45309;
+      --red: #b91c1c;
+      --purple: #6d28d9;
+      --slate: #334155;
+      --chip: #eef2f7;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: "Microsoft YaHei", "PingFang SC", Arial, sans-serif;
+      line-height: 1.45;
+    }
+
+    header {
+      background: var(--panel);
+      border-bottom: 1px solid var(--line);
+      padding: 18px 24px 14px;
+      position: sticky;
+      top: 0;
+      z-index: 5;
+    }
+
+    h1 {
+      margin: 0 0 8px;
+      font-size: 22px;
+      letter-spacing: 0;
+    }
+
+    .subtitle {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: 280px minmax(0, 1fr);
+      min-height: calc(100vh - 77px);
+    }
+
+    aside {
+      border-right: 1px solid var(--line);
+      background: #fbfcfe;
+      padding: 16px;
+      position: sticky;
+      top: 77px;
+      height: calc(100vh - 77px);
+      overflow: auto;
+    }
+
+    main {
+      padding: 18px 22px 36px;
+      overflow: hidden;
+    }
+
+    .section-title {
+      font-size: 12px;
+      color: var(--muted);
+      margin: 18px 0 8px;
+      font-weight: 700;
+    }
+
+    .nav-button {
+      width: 100%;
+      border: 1px solid transparent;
+      background: transparent;
+      color: var(--text);
+      text-align: left;
+      padding: 9px 10px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 13px;
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .nav-button:hover { background: #eef4ff; }
+    .nav-button.active {
+      background: #e8f0ff;
+      border-color: #bdd0ff;
+      color: #1746a2;
+      font-weight: 700;
+    }
+
+    .count {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .toolbar {
+      display: grid;
+      grid-template-columns: minmax(180px, 1fr) 180px 180px;
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+
+    input, select {
+      width: 100%;
+      border: 1px solid var(--line);
+      background: var(--panel);
+      color: var(--text);
+      border-radius: 6px;
+      padding: 9px 10px;
+      font-size: 13px;
+    }
+
+    .summary {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+
+    .metric {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 12px;
+      min-height: 72px;
+    }
+
+    .metric b {
+      display: block;
+      font-size: 22px;
+      margin-bottom: 4px;
+    }
+
+    .metric span {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      overflow-x: auto;
+      overflow-y: hidden;
+    }
+
+    table {
+      width: 100%;
+      min-width: 1160px;
+      border-collapse: collapse;
+      table-layout: fixed;
+    }
+
+    th, td {
+      border-bottom: 1px solid var(--line);
+      padding: 12px 12px;
+      vertical-align: top;
+      font-size: 13px;
+      line-height: 1.55;
+      overflow-wrap: anywhere;
+    }
+
+    th {
+      background: #eef2f7;
+      text-align: left;
+      font-size: 12px;
+      color: #334155;
+    }
+
+    tr:last-child td { border-bottom: 0; }
+
+    .col-range {
+      font-family: Consolas, "Courier New", monospace;
+      font-weight: 700;
+      color: #0f172a;
+      white-space: normal;
+      overflow-wrap: anywhere;
+    }
+
+    .logic-table {
+      display: inline-block;
+      max-width: 100%;
+      font-family: Consolas, "Courier New", monospace;
+      font-weight: 700;
+      color: #0f172a;
+      line-height: 1.35;
+      overflow-wrap: anywhere;
+    }
+
+    .tag {
+      display: inline-block;
+      border-radius: 999px;
+      padding: 3px 8px;
+      font-size: 12px;
+      font-weight: 700;
+      background: var(--chip);
+      color: var(--slate);
+      white-space: nowrap;
+      margin-bottom: 4px;
+    }
+
+    .tag.main { background: #dbeafe; color: var(--blue); }
+    .tag.detail { background: #ccfbf1; color: var(--green); }
+    .tag.snapshot { background: #fef3c7; color: var(--amber); }
+    .tag.task { background: #ede9fe; color: var(--purple); }
+    .tag.defer { background: #fee2e2; color: var(--red); }
+
+    .source {
+      color: var(--muted);
+      font-size: 12px;
+      margin-top: 3px;
+    }
+
+    .note {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .checklist {
+      margin: 12px 0 0;
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+    }
+
+    .check {
+      background: #fbfcfe;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 9px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .check b {
+      color: var(--text);
+      display: block;
+      margin-bottom: 3px;
+    }
+
+    .empty {
+      padding: 22px;
+      color: var(--muted);
+      text-align: center;
+    }
+
+    @media (max-width: 980px) {
+      .layout { grid-template-columns: 1fr; }
+      aside {
+        position: static;
+        height: auto;
+        border-right: 0;
+        border-bottom: 1px solid var(--line);
+      }
+      .toolbar, .summary, .checklist { grid-template-columns: 1fr; }
+      th { position: static; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>选品阶段字段对齐操作台</h1>
+    <div class="subtitle">按 Excel 列段确认：建主表字段、建子表明细、保存快照、任务表单字段、暂缓。</div>
+  </header>
+
+  <div class="layout">
+    <aside>
+      <div class="section-title">源表</div>
+      <div id="tableNav"></div>
+      <div class="section-title">确认方法</div>
+      <div class="checklist" style="grid-template-columns:1fr">
+        <div class="check"><b>1. 先说列段</b>例如 PH 表 `A:L`。</div>
+        <div class="check"><b>2. 再定处理</b>建主表、拆明细、快照、任务字段、暂缓。</div>
+        <div class="check"><b>3. 最后定责任</b>谁维护、是否必填、是否写回在线表。</div>
+      </div>
+    </aside>
+
+    <main>
+      <div class="toolbar">
+        <input id="searchInput" type="search" placeholder="搜索列段、字段、逻辑表或确认重点" />
+        <select id="actionFilter">
+          <option value="">全部处理方式</option>
+          <option value="建主表字段">建主表字段</option>
+          <option value="建子表明细">建子表明细</option>
+          <option value="保存快照">保存快照</option>
+          <option value="任务表单字段">任务表单字段</option>
+          <option value="暂缓">暂缓</option>
+        </select>
+        <select id="targetFilter">
+          <option value="">全部逻辑表</option>
+        </select>
+      </div>
+
+      <div class="summary">
+        <div class="metric"><b id="metricRows">0</b><span>当前列段</span></div>
+        <div class="metric"><b id="metricTask">0</b><span>任务表单字段</span></div>
+        <div class="metric"><b id="metricDetail">0</b><span>需拆明细</span></div>
+        <div class="metric"><b id="metricQuestions">0</b><span>待确认重点</span></div>
+      </div>
+
+      <div class="panel">
+        <table>
+          <thead>
+            <tr>
+              <th style="width: 170px;">Excel 列段</th>
+              <th style="width: 260px;">源表字段/含义</th>
+              <th style="width: 150px;">建议处理</th>
+              <th style="width: 230px;">目标逻辑表</th>
+              <th>确认重点</th>
+            </tr>
+          </thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </div>
+    </main>
+  </div>
+
+  <script>
+    const groups = [
+      {
+        id: "site-new-products",
+        name: "PH/TH/VN 分站点新品表",
+        rows: [
+          ["PH A:L / TH A:L / VN A:L", "站点/国家、开发部门、开发员、类目、关键词、图片、主/子 SKU、产品类型、开品理由", "建主表字段", "new_product_opportunity", "统一成一套新品机会表；确认粒度是否到子 SKU，主 SKU 用于整组分配。"],
+          ["PH M:Y / TH M:Y / VN M:Y", "产品规格、包装、供应商、成本、重量、长宽高、体积", "保存快照", "new_product_supply_snapshot", "确认开发是否在平台维护，还是只从源表同步。"],
+          ["PH Z:AH / TH Z:AH / VN Z:AH", "Shopee 竞品链接、售价、月销", "建子表明细", "new_product_market_research", "最低价、最热销、新晋链接统一拆成调研类型。"],
+          ["PH AI:AP / TH AI:AP / VN AI:AP", "参考单销、定价、毛利、预估单销、推广期定价", "保存快照", "new_product_pricing_snapshot", "销售认领应另填认领单销，源表参考单销只作依据。"],
+          ["PH AQ:BH / TH AQ:BH / VN AQ:BH", "站点成本、头程、汇率、平台佣金、手续费、基础设施费", "保存快照", "new_product_pricing_snapshot", "第一版建议展示，不做公式配置页面。"],
+          ["PH BI:BM / TH BI:BM / VN BI:BM", "总预估单销/销售备货单销、备货金额、备货量、备货天数、体积", "保存快照", "new_product_stocking_estimate", "确认备货量是否按认领单销 * 30 重算。"],
+          ["PH BN:BR / TH BN:BR / VN BN:BR", "空运头程费、空海运差额、物流方式、空运备货量", "保存快照", "new_product_stocking_estimate", "把 PH物流方式 统一成通用字段 物流方式。"],
+          ["PH BS:BV / TH BS:BV / VN BS:BV", "采购核价人、核价意见、采购建议报价、开发是否接受核价结果", "任务表单字段", "supply_chain_quote", "核价是后置流程；确认 MVP 是否纳入。"],
+          ["VN BW", "胥总最终审批", "暂缓", "approval_record", "确认是否必审；若必审则进入审批记录。"],
+          ["PH BW:DK / TH BW:DK / VN BX:DL", "各集团、平台、销售员、预估单销", "建子表明细", "sales_claim_forecast", "不要横向建销售员1、销售员2；拆成多行销售认领明细。"]
+        ]
+      },
+      {
+        id: "caigen-dev",
+        name: "财根团队新品开发表",
+        rows: [
+          ["A:M", "开品周期、站点、开发部门、开发员、类目、关键词、图片、主/子 SKU、产品类型、开品理由", "建主表字段", "new_product_opportunity", "确认是否和 PH/TH/VN 统一入口。"],
+          ["N:Z", "产品规格、包装、供应商、成本、重量、长宽高、体积", "保存快照", "new_product_supply_snapshot", "同分站点新品表。"],
+          ["AA:AO", "Shopee 菲律宾竞品链接、售价、月销、参考单销", "建子表明细", "new_product_market_research", "目前看偏 PH，确认是否还有其他站点。"],
+          ["AP:AW", "稳定期定价、毛利、预估单销、推广期定价", "保存快照", "new_product_pricing_snapshot", "公式快照。"],
+          ["AX:BO", "成本、头程、汇率、佣金、手续费等", "保存快照", "new_product_pricing_snapshot", "第一版只同步展示。"],
+          ["BP:BT", "总预估单销、预估备货金额、备货量、备货天数、体积", "保存快照", "new_product_stocking_estimate", "是否用认领单销重算。"],
+          ["BU:BY", "空运头程费、空海运差额、物流方式、空运备货量", "保存快照", "new_product_stocking_estimate", "同分站点新品表。"],
+          ["BZ:CC", "采购核价人、核价意见、采购建议报价、开发是否接受核价结果", "任务表单字段", "supply_chain_quote", "供应链/开发维护。"],
+          ["CD:DR", "各集团、平台、销售员、预估单销", "建子表明细", "sales_claim_forecast", "确认和财根认领反馈表如何合并。"]
+        ]
+      },
+      {
+        id: "reconsideration",
+        name: "复议表",
+        rows: [
+          ["A:M", "开品周期、国家、开发部门、开发员、类目、关键词、图片、主/子 SKU、产品类型、开品理由", "建主表字段", "new_product_opportunity", "确认复议是新建机会还是关联原机会。"],
+          ["N:Z", "产品规格、包装、供应商、成本、重量、长宽高、体积", "保存快照", "new_product_supply_snapshot", "同新品表。"],
+          ["AA:AI", "Shopee 市场调研", "建子表明细", "new_product_market_research", "平台=Shopee。"],
+          ["AJ:AQ", "Shopee 定价、毛利、推广期信息", "保存快照", "new_product_pricing_snapshot", "同新品表。"],
+          ["AR:BI", "Shopee 成本参数", "保存快照", "new_product_pricing_snapshot", "同新品表。"],
+          ["BJ:BR", "TK 市场调研", "建子表明细", "new_product_market_research", "平台=TK；确认是否进入 MVP。"],
+          ["BS:BX", "TK 定价、毛利、预估单销", "保存快照", "new_product_pricing_snapshot", "确认是否进入 MVP。"],
+          ["BY:CO", "TK 成本参数", "保存快照", "new_product_pricing_snapshot", "确认是否进入 MVP。"],
+          ["CP:CY", "预估备货、空海运、物流方式", "保存快照", "new_product_stocking_estimate", "同新品表。"],
+          ["CZ:DC", "采购核价人、核价意见、采购建议报价、开发是否接受核价结果", "任务表单字段", "supply_chain_quote", "同新品表。"],
+          ["DD", "开发复议理由", "任务表单字段", "new_product_reconsideration", "复议必填。"],
+          ["DE 起", "各集团不认领理由、合计单销、销售员预估单销", "建子表明细", "sales_claim_forecast", "不认领理由和复议后单销拆行保存。"]
+        ]
+      },
+      {
+        id: "claim-feedback",
+        name: "认领反馈表",
+        rows: [
+          ["选品1 A:BV", "新品基础、开发询价、市场调研、成本、备货、核价", "保存快照", "多个快照表", "可从分站点新品表同步，不重复维护。"],
+          ["选品1 BY:CB", "采购核价人、核价意见、采购建议报价、开发是否接受核价结果", "任务表单字段", "supply_chain_quote", "供应链/开发维护。"],
+          ["选品1 CC", "不认领理由", "任务表单字段", "sales_claim_forecast", "不认领时必填。"],
+          ["选品1 CD", "主销售员", "任务表单字段", "flow_task", "组长分配，按主 SKU 整组。"],
+          ["选品1 CE:CH", "是否认领、认领单销、销售反馈总结、备注", "任务表单字段", "sales_claim_forecast", "销售待办提交字段。"],
+          ["选品2 A:AF", "日期、SPU/SKU、产品、价格、利润、竞品、首备金额/体积", "保存快照", "多个快照表", "与财根新品开发表是否重复。"],
+          ["选品2 AG:AK", "采购链接、采购价、核价意见、核价人、核价时间", "任务表单字段", "supply_chain_quote", "比其他表多核价时间。"],
+          ["选品2 AL:AN", "主销售员、是否认领、认领单销", "任务表单字段", "sales_claim_forecast", "确认是否也由练玉君分配。"],
+          ["选品2 AO:AV", "销售员1-4、认领单销/不认领原因", "建子表明细", "sales_claim_forecast", "多人认领时必须确认主负责人。"]
+        ]
+      },
+      {
+        id: "other-sourcing",
+        name: "销售调研/直发热销/备货申请",
+        rows: [
+          ["选品3 A:J", "调研时间、来源类型、国家、销售员、主/子 SKU、商品、类目、成本", "建主表字段", "new_product_opportunity", "确认销售主动发起还是主管分配。"],
+          ["选品3 K:N", "关键词、销售备注、是否通过、拒绝原因/调研结论", "任务表单字段", "sales_research_task", "通过后是否自动进备货。"],
+          ["选品3 O:W", "竞品链接1-3、竞品单价、竞品月销", "建子表明细", "new_product_market_research", "同竞品明细。"],
+          ["选品3 X:Z", "竞对参考单销、参考售价、毛利率", "保存快照", "new_product_pricing_snapshot", "公式快照。"],
+          ["选品3 AA:AC", "备货单销、复核人、复核结果", "任务表单字段", "sales_claim_forecast / approval_record", "是否必须主管复核。"],
+          ["选品4 A:H", "时间、备注、本地子 SKU、本地主 SKU、单销、站点、体积、成本", "建主表字段", "new_product_opportunity", "是否继续保留独立入口。"],
+          ["选品4 I:N", "单销量、备货数量、金额、体积、国家、仓库", "保存快照", "new_product_stocking_estimate", "销售能否修改数量、国家、仓库。"],
+          ["选品4 O:P", "销售确认单销、不备货原因", "任务表单字段", "sales_claim_forecast", "不备货原因必填。"],
+          ["选品4 Q:AA", "销售员、店铺、产品 ID、SKU、评分、销量、7/14/30 天销量", "保存快照", "product_sales_snapshot", "系统带出展示。"],
+          ["备货 A:D", "操作状态、时间、备货类型、选品数据源", "任务表单字段", "stocking_request", "平台生成草稿还是人工填写。"],
+          ["备货 E:K", "销售员、主/子 SKU、成本、体积、备货单销、备货数量", "任务表单字段", "stocking_request", "默认单销 * 30，是否允许改。"],
+          ["备货 L:P", "备货国家、仓库、货值、体积、补货原因", "任务表单字段", "stocking_request", "谁最终确认国家和仓库。"]
+        ]
+      }
+    ];
+
+    const actionClass = {
+      "建主表字段": "main",
+      "建子表明细": "detail",
+      "保存快照": "snapshot",
+      "任务表单字段": "task",
+      "暂缓": "defer"
+    };
+
+    let activeGroup = groups[0].id;
+
+    const nav = document.getElementById("tableNav");
+    const rowsEl = document.getElementById("rows");
+    const searchInput = document.getElementById("searchInput");
+    const actionFilter = document.getElementById("actionFilter");
+    const targetFilter = document.getElementById("targetFilter");
+
+    function initTargets() {
+      const targets = new Set();
+      groups.forEach(group => group.rows.forEach(row => targets.add(row[3])));
+      Array.from(targets).sort().forEach(target => {
+        const option = document.createElement("option");
+        option.value = target;
+        option.textContent = target;
+        targetFilter.appendChild(option);
+      });
+    }
+
+    function renderNav() {
+      nav.innerHTML = groups.map(group => `
+        <button class="nav-button ${group.id === activeGroup ? "active" : ""}" data-group="${group.id}">
+          <span>${group.name}</span>
+          <span class="count">${group.rows.length}</span>
+        </button>
+      `).join("");
+      nav.querySelectorAll("button").forEach(btn => {
+        btn.addEventListener("click", () => {
+          activeGroup = btn.dataset.group;
+          render();
+        });
+      });
+    }
+
+    function currentRows() {
+      const group = groups.find(item => item.id === activeGroup);
+      const q = searchInput.value.trim().toLowerCase();
+      const action = actionFilter.value;
+      const target = targetFilter.value;
+      return group.rows.filter(row => {
+        const blob = row.join(" ").toLowerCase();
+        if (q && !blob.includes(q)) return false;
+        if (action && row[2] !== action) return false;
+        if (target && row[3] !== target) return false;
+        return true;
+      });
+    }
+
+    function renderRows() {
+      const list = currentRows();
+      if (!list.length) {
+        rowsEl.innerHTML = `<tr><td colspan="5"><div class="empty">没有匹配的列段。</div></td></tr>`;
+        return;
+      }
+      rowsEl.innerHTML = list.map(row => `
+        <tr>
+          <td><span class="col-range">${row[0]}</span></td>
+          <td>${row[1]}</td>
+          <td><span class="tag ${actionClass[row[2]] || ""}">${row[2]}</span></td>
+          <td><span class="logic-table">${row[3]}</span></td>
+          <td>${row[4]}<div class="source">确认口径：维护人 / 必填 / 是否写回在线表</div></td>
+        </tr>
+      `).join("");
+    }
+
+    function renderMetrics() {
+      const list = currentRows();
+      document.getElementById("metricRows").textContent = list.length;
+      document.getElementById("metricTask").textContent = list.filter(row => row[2] === "任务表单字段").length;
+      document.getElementById("metricDetail").textContent = list.filter(row => row[2] === "建子表明细").length;
+      document.getElementById("metricQuestions").textContent = list.length;
+    }
+
+    function render() {
+      renderNav();
+      renderRows();
+      renderMetrics();
+    }
+
+    [searchInput, actionFilter, targetFilter].forEach(el => el.addEventListener("input", render));
+    initTargets();
+    render();
+  </script>
+</body>
+</html>
