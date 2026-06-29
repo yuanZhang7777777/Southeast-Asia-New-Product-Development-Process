@@ -14,83 +14,21 @@ body {
   margin: 0;
 }
 
-button,
-input,
-select,
-textarea {
-  font: inherit;
-}
-
-button {
-  align-items: center;
-  background: #166f73;
-  border: 0;
-  border-radius: 6px;
-  color: #fff;
-  cursor: pointer;
-  display: inline-flex;
-  gap: 8px;
-  min-height: 36px;
-  padding: 0 14px;
-}
-
-button:hover {
-  background: #105b5f;
-}
-
-input,
-select,
-textarea {
-  background: #fff;
-  border: 1px solid #cfd8e3;
-  border-radius: 6px;
-  color: #18202f;
-  min-height: 36px;
-  padding: 7px 10px;
-  width: 100%;
-}
-
-textarea {
-  min-height: 96px;
-  resize: vertical;
-}
-
-label {
-  color: #536176;
-  display: grid;
-  gap: 6px;
-  font-weight: 600;
-}
-
-.shell {
-  display: grid;
-  grid-template-columns: 232px minmax(0, 1fr);
+.app-shell {
   min-height: 100vh;
 }
 
-.sidebar {
-  background: #17202e;
+.app-sider {
   border-right: 1px solid #0d1420;
-  color: #e8eef6;
-  padding: 20px 16px;
+  min-height: 100vh;
 }
 
-.brand {
+.brand-block {
   align-items: center;
   display: flex;
   gap: 12px;
-  margin-bottom: 24px;
-}
-
-.brand strong,
-.brand span {
-  display: block;
-}
-
-.brand span {
-  color: #9eabbc;
-  font-size: 12px;
-  margin-top: 4px;
+  min-height: 72px;
+  padding: 16px;
 }
 
 .brand-mark {
@@ -105,145 +43,106 @@ label {
   width: 36px;
 }
 
-.nav {
-  display: grid;
-  gap: 6px;
+.brand-title {
+  color: #f8fafc;
+  display: block;
+  font-weight: 700;
+  margin-bottom: 4px;
 }
 
-.nav button {
-  background: transparent;
-  color: #cbd5e1;
-  justify-content: flex-start;
-  width: 100%;
+.app-header {
+  align-items: center;
+  border-bottom: 1px solid #dde5ef;
+  display: flex;
+  height: 72px;
+  justify-content: space-between;
+  padding: 0 20px;
 }
 
-.nav button.active,
-.nav button:hover {
-  background: #263246;
-  color: #fff;
+.app-header h3 {
+  letter-spacing: 0;
+  margin: 0;
 }
 
-.workspace {
+.app-content {
   min-width: 0;
   padding: 18px;
 }
 
-.topbar {
-  align-items: center;
-  display: flex;
-  justify-content: space-between;
+.page-alert {
   margin-bottom: 16px;
 }
 
-.topbar h1 {
-  font-size: 22px;
-  letter-spacing: 0;
-  margin: 0;
+.full-width {
+  width: 100%;
 }
 
-.topbar p {
-  color: #64748b;
-  margin: 4px 0 0;
-}
-
-.icon-button {
-  justify-content: center;
-  padding: 0;
-  width: 40px;
-}
-
-.panel {
-  background: #fff;
-  border: 1px solid #d5deeb;
-  border-radius: 8px;
+.stat-grid {
   display: grid;
-  gap: 14px;
-  min-width: 0;
-  padding: 16px;
+  gap: 12px;
+  grid-template-columns: repeat(4, minmax(160px, 1fr));
 }
 
-.panel h2 {
-  font-size: 16px;
-  letter-spacing: 0;
-  margin: 0;
+.stat-grid .ant-card {
+  cursor: pointer;
 }
 
-.grid {
+.two-column {
   display: grid;
   gap: 16px;
-  grid-template-columns: repeat(2, minmax(280px, 1fr));
+  grid-template-columns: minmax(0, 1.4fr) minmax(320px, 0.8fr);
 }
 
-.wide {
-  grid-column: 1 / -1;
+.candidate-select {
+  min-width: 260px;
 }
 
-.toolbar {
+.assignee-select {
+  min-width: 180px;
+}
+
+.drawer-summary {
+  margin-bottom: 16px;
+}
+
+.ant-table-cell {
+  vertical-align: top;
+}
+
+.ant-menu-item,
+.ant-menu-submenu-title {
   align-items: center;
   display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
 }
 
-.toolbar input {
-  max-width: 220px;
+.ant-card {
+  border-radius: 8px;
 }
 
-.table-wrap {
-  overflow-x: auto;
-  width: 100%;
-}
+@media (max-width: 1100px) {
+  .stat-grid {
+    grid-template-columns: repeat(2, minmax(160px, 1fr));
+  }
 
-table {
-  border-collapse: collapse;
-  min-width: 760px;
-  width: 100%;
-}
-
-th,
-td {
-  border-bottom: 1px solid #e2e8f0;
-  padding: 10px 12px;
-  text-align: left;
-  vertical-align: top;
-  white-space: normal;
-  word-break: break-word;
-}
-
-th {
-  background: #f6f8fb;
-  color: #40516a;
-  font-size: 13px;
-  font-weight: 700;
-}
-
-tbody tr {
-  cursor: default;
-}
-
-tbody tr:hover {
-  background: #f9fbfd;
-}
-
-.empty {
-  color: #7a8798;
-  text-align: center;
-}
-
-@media (max-width: 820px) {
-  .shell {
+  .two-column {
     grid-template-columns: 1fr;
   }
+}
 
-  .sidebar {
-    position: static;
+@media (max-width: 720px) {
+  .app-header {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 8px;
+    height: auto;
+    padding: 14px 16px;
   }
 
-  .nav {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+  .app-content {
+    padding: 12px;
   }
 
-  .grid {
+  .stat-grid {
     grid-template-columns: 1fr;
   }
 }

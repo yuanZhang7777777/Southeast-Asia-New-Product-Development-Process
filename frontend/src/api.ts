@@ -2,11 +2,19 @@ export const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:8
 
 export type Opportunity = {
   id: string;
+  source_type?: string | null;
   country?: string | null;
   site?: string | null;
+  developer_department?: string | null;
+  developer_name?: string | null;
+  category_level1?: string | null;
   main_sku: string;
+  main_sku_name?: string | null;
   sub_sku: string;
+  sub_sku_name?: string | null;
+  product_type?: string | null;
   keyword?: string | null;
+  reason?: string | null;
   current_status: string;
   source_file?: string | null;
   source_sheet?: string | null;
