@@ -1,0 +1,309 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>新品流程字段责任确认操作台 · 20260629</title>
+<style>
+  :root{
+    --bg:#f5f6f8; --card:#ffffff; --ink:#1f2430; --muted:#6b7280;
+    --line:#e3e6eb; --accent:#3b5bdb; --accent-soft:#edf0fb;
+    --ok:#2f9e44; --warn:#e8590c; --star:#d6336c;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:14px/1.55 "Microsoft YaHei","PingFang SC",system-ui,sans-serif;}
+  header{padding:22px 26px 14px;}
+  header h1{margin:0 0 4px;font-size:21px;}
+  header .sub{color:var(--muted);font-size:13px;}
+  .wrap{max-width:1280px;margin:0 auto;padding:0 18px 60px;}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;
+    margin:14px 0;box-shadow:0 1px 2px rgba(0,0,0,.03);}
+  .context{padding:16px 20px;}
+  .context h2{margin:0 0 10px;font-size:15px;color:var(--accent);}
+  .context ul{margin:0;padding-left:18px;}
+  .context li{margin:3px 0;}
+  .tag{display:inline-block;padding:1px 7px;border-radius:6px;font-size:12px;
+    background:var(--accent-soft);color:var(--accent);margin-right:4px;}
+  .toolbar{position:sticky;top:0;z-index:9;display:flex;gap:8px;flex-wrap:wrap;
+    padding:10px 18px;background:rgba(245,246,248,.92);backdrop-filter:blur(4px);
+    border-bottom:1px solid var(--line);}
+  button{font:13px/1 inherit;padding:8px 13px;border-radius:7px;border:1px solid var(--line);
+    background:#fff;color:var(--ink);cursor:pointer;}
+  button:hover{border-color:var(--accent);color:var(--accent);}
+  button.primary{background:var(--accent);color:#fff;border-color:var(--accent);}
+  button.primary:hover{filter:brightness(1.06);color:#fff;}
+  button.danger:hover{border-color:var(--warn);color:var(--warn);}
+  .sec{padding:6px 16px 16px;}
+  .sec > h3{font-size:15px;margin:14px 6px 2px;}
+  .sec > .note{color:var(--muted);font-size:12.5px;margin:0 6px 10px;}
+  table{width:100%;border-collapse:collapse;font-size:13px;}
+  th,td{border:1px solid var(--line);padding:6px 8px;vertical-align:top;text-align:left;}
+  th{background:#fafbfc;color:var(--muted);font-weight:600;white-space:nowrap;}
+  td input[type=text]{width:100%;border:1px solid transparent;background:transparent;
+    font:inherit;color:inherit;padding:3px 4px;border-radius:5px;}
+  td input[type=text]:focus{border-color:var(--accent);background:#fff;outline:none;}
+  td select{width:100%;border:1px solid var(--line);background:#fff;font:inherit;
+    padding:3px 4px;border-radius:5px;}
+  .col-seg{width:128px;font-weight:600;}
+  .col-mean{min-width:220px;}
+  .col-proc{width:130px;} .col-who{width:150px;} .col-req{width:84px;}
+  .col-wb{width:70px;text-align:center;} .col-note{min-width:200px;} .col-del{width:40px;text-align:center;}
+  td.center{text-align:center;}
+  .addrow{margin:8px 6px 0;}
+  .addrow button{font-size:12.5px;padding:6px 10px;}
+  .del{color:var(--muted);border:none;background:none;font-size:15px;padding:0 4px;cursor:pointer;}
+  .del:hover{color:var(--warn);}
+  .star{color:var(--star);font-weight:700;}
+  footer{color:var(--muted);font-size:12px;text-align:center;padding:18px;}
+  .saved{color:var(--ok);font-size:12px;align-self:center;margin-left:auto;}
+  @media print{
+    body{background:#fff;}
+    .toolbar,.addrow,.col-del,.del{display:none !important;}
+    .card{box-shadow:none;break-inside:avoid;}
+    td select,td input[type=text]{border:none;-webkit-appearance:none;appearance:none;}
+    header{padding:0 0 8px;}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>新品流程字段责任确认操作台</h1>
+    <div class="sub">东南亚海外仓新品流程 · 会议用离线工具 · 版本 20260629 · 数据自动存浏览器本地</div>
+  </header>
+
+  <section class="card context">
+    <h2>一、已确认口径（会前对齐，逐行改下面表格即可）</h2>
+    <ul>
+      <li><span class="tag">框架</span>两段主流程 + 一座外部桥；<b>MVP = 前段「入池 → 认领 → 审核 → 出可备货清单」</b>，到此为止。</li>
+      <li><span class="tag">入池源表</span>5 张：①开发部门认领-反馈 ②财根团队认领-反馈 ③直发热销转海外仓销售确认 ④销售选品备货-销售调研 ⑤海外仓销售反推表-分站点。</li>
+      <li><span class="tag">入池粒度</span>子 SKU 为记录 + 主 SKU 分组。</li>
+      <li><span class="tag">角色口径</span><b>销售 = 运营</b>（同一拨人）；<b>主管 = 运营负责人</b>（同一角色）。</li>
+      <li><span class="tag">不认领原因</span>自定义文本（非枚举）。</li>
+      <li><span class="tag">开品邮件</span>条件性——仅部分货需领导写邮件给老板申请；平台只在可备货清单上做<b>状态标记</b>，不做流程。</li>
+      <li><span class="tag">可备货清单</span>对齐《海外仓备货申请表》，先导 Excel，写回在线表暂不做。</li>
+      <li><span class="tag">待定</span>认领必填字段、认领单销周期（日销?）、是否默认 ×30 —— 逐表确认时再定。</li>
+    </ul>
+  </section>
+
+  <div class="toolbar">
+    <button class="primary" onclick="exportJSON()">⬇ 导出 JSON</button>
+    <button onclick="copyTSV()">⧉ 复制为表格(TSV)</button>
+    <button onclick="window.print()">🖨 打印 / 导出 PDF</button>
+    <button class="danger" onclick="resetAll()">↺ 重置全部</button>
+    <span class="saved" id="savedHint"></span>
+  </div>
+
+  <main id="app"></main>
+
+  <footer>
+    填写说明：每行选「处理方式 / 谁填 / 是否必填」，勾选是否写回在线表，备注里写"填什么 / 待确认点"。<br>
+    处理方式：主表字段=进系统核心表；子表明细=拆成多行（如竞品、多销售员）；保存快照=只展示不维护；任务表单字段=人填且绑待办；暂缓不做=MVP 先不做。<br>
+    本工具不联网、不上传，数据仅存本机浏览器。带 <span class="star">★</span> 为新增确认项。
+  </footer>
+</div>
+
+<script>
+const PROCESS_OPTS = ['主表字段','子表明细','保存快照','任务表单字段','暂缓不做','待定'];
+const WHO_OPTS = ['系统带出','开发部门','销售=运营','主管=运营负责人','组长(练玉君)','供应链','待定'];
+const REQ_OPTS = ['必填','选填','不适用'];
+
+const DEFAULTS = [
+  {id:'src1', title:'源表①｜海外仓开发部门开发新品认领-反馈（选品1 · 开发提供数据）',
+   note:'开发部门提供产品候选，销售=运营 填认领反馈。字段段来自 docs/03 §6.1。', rows:[
+    {f:'A:BV', m:'新品基础/开发询价/市场调研/成本/备货/核价', p:'保存快照', w:'系统带出', r:'不适用', wb:false, n:'可从分站点新品表同步，不重复维护'},
+    {f:'BY:CB', m:'采购核价人/核价意见/采购建议报价/开发是否接受核价', p:'任务表单字段', w:'供应链', r:'选填', wb:false, n:'核价后置，MVP 是否纳入待确认'},
+    {f:'CC', m:'不认领理由', p:'任务表单字段', w:'销售=运营', r:'必填', wb:false, n:'不认领时必填，自定义文本'},
+    {f:'CD', m:'主销售员', p:'任务表单字段', w:'组长(练玉君)', r:'必填', wb:false, n:'按主SKU整组分配；也支持销售自领'},
+    {f:'CE', m:'是否认领', p:'任务表单字段', w:'销售=运营', r:'必填', wb:false, n:''},
+    {f:'CF', m:'认领单销', p:'任务表单字段', w:'销售=运营', r:'必填', wb:false, n:'周期(日销?)/是否默认×30 后面统一定'},
+    {f:'CG', m:'销售反馈总结', p:'任务表单字段', w:'销售=运营', r:'选填', wb:false, n:'可附截图/链接'},
+    {f:'CH', m:'备注', p:'任务表单字段', w:'销售=运营', r:'选填', wb:false, n:''},
+   ]},
+  {id:'src2', title:'源表②｜海外仓财根团队开发新品认领-反馈（选品2 · 第3张销售自填）',
+   note:'结构接近开发部门表，支持多销售员认领。字段段来自 docs/03 §6.2。', rows:[
+    {f:'A:AF', m:'日期/SPU·SKU/产品/价格/利润/竞品/首备金额体积', p:'保存快照', w:'系统带出', r:'不适用', wb:false, n:'与财根新品开发表是否重复待确认'},
+    {f:'AG:AK', m:'供应链核价后采购链接/采购价/核价意见/核价人/核价时间', p:'任务表单字段', w:'供应链', r:'选填', wb:false, n:'比分站点表多核价时间'},
+    {f:'AL', m:'开发表格认领情况--主销售员', p:'任务表单字段', w:'组长(练玉君)', r:'必填', wb:false, n:'是否也由组长分配待确认'},
+    {f:'AM:AN', m:'是否认领/认领单销', p:'任务表单字段', w:'销售=运营', r:'必填', wb:false, n:'主销售员口径'},
+    {f:'AO:AV', m:'销售员1-4/认领单销或不认领原因', p:'子表明细', w:'销售=运营', r:'选填', wb:false, n:'多销售员认领→拆行；谁是主负责人待定'},
+   ]},
+  {id:'src3', title:'源表③｜直发热销转海外仓销售确认（选品4 · 销售自填）',
+   note:'系统筛直发热销，销售=运营 确认是否转海外仓。字段段来自 docs/03 §7.2。', rows:[
+    {f:'A:H', m:'时间/备注/本地子SKU/本地主SKU/单销/站点/体积/成本', p:'主表字段', w:'系统带出', r:'不适用', wb:false, n:'来自直发热销筛选结果'},
+    {f:'I:N', m:'单销量/备货数量/备货金额/备货体积/备货国家/备货仓库', p:'保存快照', w:'系统带出', r:'不适用', wb:false, n:'默认值，销售能否改待定'},
+    {f:'O', m:'销售确认单销', p:'任务表单字段', w:'销售=运营', r:'必填', wb:false, n:''},
+    {f:'P', m:'不备货原因', p:'任务表单字段', w:'销售=运营', r:'必填', wb:false, n:'不转海外仓时必填，自定义文本'},
+    {f:'Q:V', m:'销售员/店铺/产品ID/主子SKU/子SKUID', p:'主表字段', w:'系统带出', r:'不适用', wb:false, n:'SKU 与 Item 映射'},
+    {f:'W:AA', m:'产品评分/销量/7·14·30天销量', p:'保存快照', w:'系统带出', r:'不适用', wb:false, n:'系统同步展示'},
+   ]},
+  {id:'src4', title:'源表④｜销售选品备货海外仓-销售调研（选品3 · 销售自填）',
+   note:'销售=运营 做竞品和备货调研。字段段来自 docs/03 §7.1。', rows:[
+    {f:'A:J', m:'调研时间/来源类型/国家/销售员/主子SKU/商品/类目/成本', p:'主表字段', w:'销售=运营', r:'必填', wb:false, n:'销售发起时带出'},
+    {f:'K:N', m:'关键词/销售备注/是否通过/拒绝原因·调研结论', p:'任务表单字段', w:'销售=运营', r:'选填', wb:false, n:'是否通过后是否自动进备货待定'},
+    {f:'O:W', m:'竞品链接1-3/竞品单价/竞品月销', p:'子表明细', w:'销售=运营', r:'选填', wb:false, n:'竞品明细拆行'},
+    {f:'X:Z', m:'竞对参考单销/参考售价/毛利率', p:'保存快照', w:'系统带出', r:'不适用', wb:false, n:'公式快照'},
+    {f:'AA', m:'备货单销', p:'任务表单字段', w:'销售=运营', r:'选填', wb:false, n:'是否等同认领单销待定'},
+    {f:'AB:AC', m:'复核人/复核结果', p:'任务表单字段', w:'主管=运营负责人', r:'选填', wb:false, n:'是否必复核待定'},
+    {f:'AD:AE', m:'公司单销/首次上架时间', p:'保存快照', w:'系统带出', r:'不适用', wb:false, n:''},
+   ]},
+  {id:'src5', title:'源表⑤｜海外仓销售反推表-分站点（开发提供数据 · 字段待抽取）',
+   note:'docs/03 未抽取此表，会上对着源表逐列段补。', rows:[
+    {f:'(待补充列段)', m:'会上对源表逐列段补', p:'待定', w:'待定', r:'不适用', wb:false, n:'开发提供数据；先占位'},
+   ]},
+  {id:'claim', title:'步骤·销售认领字段（汇总 · 业务最关心）',
+   note:'销售=运营 填写。认领单销周期 / 是否默认 ×30 后面逐表统一定。', rows:[
+    {f:'是否认领', m:'认领 / 不认领', p:'任务表单字段', w:'销售=运营', r:'必填', wb:false, n:''},
+    {f:'认领单销', m:'认领时填（日销?）', p:'任务表单字段', w:'销售=运营', r:'必填', wb:false, n:'周期 + 是否默认×30 后面定'},
+    {f:'不认领原因', m:'不认领时填', p:'任务表单字段', w:'销售=运营', r:'必填', wb:false, n:'自定义文本（已确认）'},
+    {f:'销售反馈总结', m:'调研实情 / 依据', p:'任务表单字段', w:'销售=运营', r:'选填', wb:false, n:'可附截图/链接'},
+    {f:'备注', m:'补充说明', p:'任务表单字段', w:'销售=运营', r:'选填', wb:false, n:''},
+   ]},
+  {id:'review', title:'步骤·审核字段（主管 = 运营负责人）',
+   note:'必审（已确认）。审核结果三选一。', rows:[
+    {f:'审核结果', m:'通过 / 驳回 / 退回补充', p:'任务表单字段', w:'主管=运营负责人', r:'必填', wb:false, n:'必审'},
+    {f:'审核意见', m:'结论说明', p:'任务表单字段', w:'主管=运营负责人', r:'选填', wb:false, n:'驳回/退回建议必填'},
+    {f:'审核人/时间', m:'留痕', p:'保存快照', w:'系统带出', r:'不适用', wb:false, n:'系统记录'},
+   ]},
+  {id:'output', title:'输出·可备货清单（对齐《海外仓备货申请表》）+ 开品邮件状态',
+   note:'MVP 唯一对外交接物，先导 Excel。字段段来自 docs/03 §8；末两行为开品邮件标记。', rows:[
+    {f:'操作状态', m:'已备货 / 未操作 / 绑定不备货', p:'主表字段', w:'系统带出', r:'不适用', wb:false, n:''},
+    {f:'时间', m:'每周四17点截止', p:'主表字段', w:'系统带出', r:'不适用', wb:false, n:''},
+    {f:'备货类型', m:'首次备货 / 补货', p:'主表字段', w:'系统带出', r:'不适用', wb:false, n:''},
+    {f:'选品数据源', m:'5张源表之一', p:'主表字段', w:'系统带出', r:'不适用', wb:false, n:''},
+    {f:'销售员/主SKU/子SKU', m:'从认领结果带出', p:'主表字段', w:'系统带出', r:'不适用', wb:false, n:''},
+    {f:'成本价/单个体积', m:'从机会带出', p:'保存快照', w:'系统带出', r:'不适用', wb:false, n:''},
+    {f:'备货单销', m:'认领单销', p:'任务表单字段', w:'销售=运营', r:'选填', wb:false, n:'默认×30 待确认'},
+    {f:'备货数量', m:'默认 单销×30', p:'任务表单字段', w:'销售=运营', r:'选填', wb:false, n:'最终拍板 = 外部'},
+    {f:'备货国家/仓库', m:'目标仓', p:'任务表单字段', w:'待定', r:'选填', wb:false, n:'谁最终确认待定'},
+    {f:'货值/体积', m:'系统计算', p:'保存快照', w:'系统带出', r:'不适用', wb:false, n:'成本×数量、单体积×数量'},
+    {f:'补货原因', m:'首次可空', p:'任务表单字段', w:'销售=运营', r:'选填', wb:false, n:''},
+    {f:'★是否需要开品邮件', m:'部分货需领导写邮件给老板', p:'任务表单字段', w:'主管=运营负责人', r:'选填', wb:false, n:'条件性（已确认）'},
+    {f:'★开品邮件状态', m:'不需要 / 待发 / 已发 / 已批 / 已驳', p:'任务表单字段', w:'主管=运营负责人', r:'选填', wb:false, n:'邮件由领导线下写'},
+   ]},
+];
+
+const LS_KEY = 'field_confirm_20260629';
+let state = load();
+
+function load(){
+  try{
+    const raw = localStorage.getItem(LS_KEY);
+    if(raw){ return JSON.parse(raw); }
+  }catch(e){}
+  return clone(DEFAULTS);
+}
+function clone(o){ return JSON.parse(JSON.stringify(o)); }
+function persist(){
+  try{ localStorage.setItem(LS_KEY, JSON.stringify(state)); flashSaved(); }catch(e){}
+}
+let savedTimer;
+function flashSaved(){
+  const el = document.getElementById('savedHint');
+  el.textContent = '✓ 已自动保存';
+  clearTimeout(savedTimer);
+  savedTimer = setTimeout(()=>{ el.textContent=''; }, 1400);
+}
+
+function opt(list, val){
+  return list.map(o=>`<option${o===val?' selected':''}>${esc(o)}</option>`).join('');
+}
+function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function star(s){ return String(s).replace('★','<span class="star">★</span>'); }
+
+function render(){
+  const app = document.getElementById('app');
+  app.innerHTML = state.map((sec, si)=>`
+    <section class="card sec" data-si="${si}">
+      <h3>${esc(sec.title)}</h3>
+      <p class="note">${esc(sec.note||'')}</p>
+      <table>
+        <thead><tr>
+          <th class="col-seg">列段 / 字段</th>
+          <th class="col-mean">原表含义</th>
+          <th class="col-proc">处理方式</th>
+          <th class="col-who">谁填</th>
+          <th class="col-req">是否必填</th>
+          <th class="col-wb">写回</th>
+          <th class="col-note">备注 / 填什么</th>
+          <th class="col-del"></th>
+        </tr></thead>
+        <tbody>
+          ${sec.rows.map((row, ri)=>`
+            <tr data-si="${si}" data-ri="${ri}">
+              <td class="col-seg"><input type="text" data-k="f" value="${esc(row.f)}"></td>
+              <td class="col-mean"><input type="text" data-k="m" value="${esc(row.m)}"></td>
+              <td class="col-proc"><select data-k="p">${opt(PROCESS_OPTS,row.p)}</select></td>
+              <td class="col-who"><select data-k="w">${opt(WHO_OPTS,row.w)}</select></td>
+              <td class="col-req"><select data-k="r">${opt(REQ_OPTS,row.r)}</select></td>
+              <td class="col-wb center"><input type="checkbox" data-k="wb" ${row.wb?'checked':''}></td>
+              <td class="col-note"><input type="text" data-k="n" value="${esc(row.n)}"></td>
+              <td class="col-del center"><button class="del" title="删除此行" onclick="delRow(${si},${ri})">✕</button></td>
+            </tr>`).join('')}
+        </tbody>
+      </table>
+      <div class="addrow"><button onclick="addRow(${si})">+ 添加字段行</button></div>
+    </section>
+  `).join('');
+
+  // 让带 ★ 的列段渲染红星（input 不能放 html，故标题保留文本，仅在含义无影响）
+  document.querySelectorAll('#app input[data-k="f"]').forEach(inp=>{
+    if(inp.value.includes('★')){ inp.style.color = 'var(--star)'; inp.style.fontWeight='700'; }
+  });
+
+  app.querySelectorAll('input,select').forEach(el=>{
+    const ev = (el.type==='checkbox'||el.tagName==='SELECT')?'change':'input';
+    el.addEventListener(ev, onEdit);
+  });
+}
+
+function onEdit(e){
+  const tr = e.target.closest('tr');
+  const si = +tr.dataset.si, ri = +tr.dataset.ri, k = e.target.dataset.k;
+  state[si].rows[ri][k] = (e.target.type==='checkbox') ? e.target.checked : e.target.value;
+  persist();
+}
+function addRow(si){
+  state[si].rows.push({f:'',m:'',p:'待定',w:'待定',r:'选填',wb:false,n:''});
+  persist(); render();
+}
+function delRow(si,ri){
+  if(!confirm('删除这一行？')) return;
+  state[si].rows.splice(ri,1);
+  persist(); render();
+}
+function resetAll(){
+  if(!confirm('重置为默认内容？你填写的所有改动会清空。')) return;
+  state = clone(DEFAULTS); persist(); render();
+}
+
+function exportJSON(){
+  const blob = new Blob([JSON.stringify(state,null,2)],{type:'application/json'});
+  download(blob, '字段责任确认_20260629.json');
+}
+function copyTSV(){
+  const head = ['分节','列段/字段','原表含义','处理方式','谁填','是否必填','写回在线表','备注'];
+  const lines = [head.join('\t')];
+  state.forEach(sec=>{
+    sec.rows.forEach(r=>{
+      lines.push([sec.title, r.f, r.m, r.p, r.w, r.r, (r.wb?'是':'否'), r.n]
+        .map(x=>String(x==null?'':x).replace(/\t/g,' ').replace(/\n/g,' ')).join('\t'));
+    });
+  });
+  const tsv = lines.join('\n');
+  navigator.clipboard.writeText(tsv).then(
+    ()=>alert('已复制为表格（TSV）。可直接粘进 Excel / 钉钉在线表。'),
+    ()=>{ const ta=document.createElement('textarea'); ta.value=tsv; document.body.appendChild(ta);
+          ta.select(); document.execCommand('copy'); ta.remove(); alert('已复制为表格（TSV）。'); }
+  );
+}
+function download(blob, name){
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=name;
+  document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(a.href);
+}
+
+render();
+</script>
+</body>
+</html>
