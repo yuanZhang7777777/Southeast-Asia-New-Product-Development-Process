@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+from io import BytesIO
 from collections import defaultdict
 from datetime import datetime, timezone
 
+from openpyxl import Workbook
+from openpyxl.styles import Font, PatternFill
+from openpyxl.utils import get_column_letter
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -110,6 +114,7 @@ def submit_claim(db: Session, payload: schemas.ClaimCreate) -> models.SalesClaim
         claim_daily_sales=payload.claim_daily_sales,
         reject_reason=payload.reject_reason,
         feedback_summary=payload.feedback_summary,
+        source_column="platform",
     )
     db.add(claim)
     opportunity = db.get(models.NewProductOpportunity, payload.opportunity_id)
@@ -165,7 +170,7 @@ def submit_review(db: Session, payload: schemas.ReviewCreate) -> models.ReviewRe
     db.add(record)
     opportunity = db.get(models.NewProductOpportunity, payload.opportunity_id)
     if opportunity:
-        opportunity.current_status = f"review_{payload.review_status}"
+        opportunity.current_status = "ready_for_stocking" if payload.review_status == "approved" else f"review_{payload.review_status}"
     task = db.scalar(
         select(models.FlowTask)
         .join(models.FlowInstance)
@@ -180,7 +185,7 @@ def submit_review(db: Session, payload: schemas.ReviewCreate) -> models.ReviewRe
         task.status = "completed"
         task.completed_at = datetime.now(timezone.utc)
     if payload.review_status == "approved":
-        create_stocking_draft_from_claim(db, payload.opportunity_id, payload.reviewer_name)
+        audit(db, "opportunity.ready_for_stocking", "new_product_opportunity", payload.opportunity_id, {}, payload.reviewer_name)
     audit(db, "review.submitted", "review_record", record.id, payload.model_dump(), payload.reviewer_name)
     return record
 
@@ -211,6 +216,147 @@ def create_stocking_draft_from_claim(db: Session, opportunity_id: str, actor_nam
     db.add(request)
     audit(db, "stocking.draft_created", "stocking_request", request.id, {"quantity": quantity}, actor_name)
     return request
+
+
+def list_available_stocking_items(db: Session) -> list[schemas.AvailableStockingItem]:
+    opportunities = list(
+        db.scalars(
+            select(models.NewProductOpportunity)
+            .where(models.NewProductOpportunity.current_status == "ready_for_stocking")
+            .order_by(models.NewProductOpportunity.updated_at.desc())
+        )
+    )
+    items: list[schemas.AvailableStockingItem] = []
+    for opportunity in opportunities:
+        claim = latest_claim(db, opportunity.id)
+        if not claim or claim.claim_daily_sales is None:
+            continue
+        review = latest_approved_review(db, opportunity.id)
+        quantity = int(round(claim.claim_daily_sales * 30))
+        items.append(
+            schemas.AvailableStockingItem(
+                time=review.created_at if review else datetime.now(timezone.utc),
+                selection_source=selection_source_label(opportunity),
+                salesperson_name=claim.salesperson_name or claim_prefill_salesperson(opportunity),
+                main_sku=opportunity.main_sku,
+                sub_sku=opportunity.sub_sku,
+                site=opportunity.site,
+                claim_daily_sales=claim.claim_daily_sales,
+                quantity=quantity,
+            )
+        )
+    return items
+
+
+def build_available_stocking_workbook(items: list[schemas.AvailableStockingItem]) -> bytes:
+    headers = [
+        "操作状态",
+        "时间",
+        "备货类型",
+        "选品数据源",
+        "销售员",
+        "主SKU",
+        "子SKU",
+        "站点",
+        "认领单销",
+        "备货量",
+        "备货国家",
+        "仓库",
+        "成本价",
+        "单个体积",
+        "货值",
+        "补货原因",
+        "★是否需要开品邮件",
+        "★开品邮件状态",
+    ]
+    workbook = Workbook()
+    worksheet = workbook.active
+    worksheet.title = "可备货清单"
+    worksheet.append(headers)
+    for item in items:
+        worksheet.append(
+            [
+                item.operation_status,
+                item.time.replace(tzinfo=None),
+                item.stocking_type,
+                item.selection_source,
+                item.salesperson_name,
+                item.main_sku,
+                item.sub_sku,
+                item.site,
+                item.claim_daily_sales,
+                item.quantity,
+                item.stocking_country,
+                item.warehouse,
+                item.cost_price,
+                item.unit_volume,
+                item.amount,
+                item.replenishment_reason,
+                item.needs_launch_email,
+                item.launch_email_status,
+            ]
+        )
+
+    header_fill = PatternFill("solid", fgColor="D9EAF7")
+    for cell in worksheet[1]:
+        cell.font = Font(bold=True)
+        cell.fill = header_fill
+    worksheet.freeze_panes = "A2"
+    worksheet.auto_filter.ref = worksheet.dimensions
+    for column_cells in worksheet.columns:
+        width = min(max(len(str(cell.value or "")) for cell in column_cells) + 2, 32)
+        worksheet.column_dimensions[get_column_letter(column_cells[0].column)].width = width
+    for cell in worksheet["B"][1:]:
+        cell.number_format = "yyyy-mm-dd hh:mm"
+
+    buffer = BytesIO()
+    workbook.save(buffer)
+    return buffer.getvalue()
+
+
+def latest_claim(db: Session, opportunity_id: str) -> models.SalesClaimForecast | None:
+    return db.scalar(
+        select(models.SalesClaimForecast)
+        .where(
+            models.SalesClaimForecast.opportunity_id == opportunity_id,
+            models.SalesClaimForecast.claim_result == "claim",
+            models.SalesClaimForecast.source_column == "platform",
+        )
+        .order_by(models.SalesClaimForecast.created_at.desc())
+    )
+
+
+def latest_approved_review(db: Session, opportunity_id: str) -> models.ReviewRecord | None:
+    return db.scalar(
+        select(models.ReviewRecord)
+        .where(
+            models.ReviewRecord.opportunity_id == opportunity_id,
+            models.ReviewRecord.review_status == "approved",
+        )
+        .order_by(models.ReviewRecord.created_at.desc())
+    )
+
+
+def selection_source_label(opportunity: models.NewProductOpportunity) -> str:
+    sheet = opportunity.source_sheet
+    if opportunity.source_type == "selection1_developer_claim_feedback":
+        label = "选品1-开发部门认领反馈"
+    else:
+        label = opportunity.source_type
+    return f"{label} + {sheet}" if sheet else label
+
+
+def claim_prefill_salesperson(opportunity: models.NewProductOpportunity) -> str | None:
+    snapshot = opportunity.snapshot or {}
+    claim = snapshot.get("claim_prefill") if isinstance(snapshot, dict) else None
+    if isinstance(claim, dict):
+        value = claim.get("salesperson_name")
+        return str(value) if value else None
+    cells = snapshot.get("cells") if isinstance(snapshot, dict) else None
+    if isinstance(cells, dict):
+        value = cells.get("CD")
+        return str(value) if value else None
+    return None
 
 
 def create_notification_log(db: Session, payload: schemas.NotificationTestRequest) -> models.NotificationLog:

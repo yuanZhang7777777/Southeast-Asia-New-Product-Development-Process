@@ -1,4 +1,4 @@
-const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
+export const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
 
 export type Opportunity = {
   id: string;
@@ -36,6 +36,39 @@ export type StockingRequest = {
   warehouse?: string | null;
   status: string;
   created_at: string;
+};
+
+export type AvailableStockingItem = {
+  operation_status: string;
+  time: string;
+  stocking_type: string;
+  selection_source: string;
+  salesperson_name?: string | null;
+  main_sku: string;
+  sub_sku: string;
+  site?: string | null;
+  claim_daily_sales: number;
+  quantity: number;
+  stocking_country?: string | null;
+  warehouse?: string | null;
+  cost_price?: number | null;
+  unit_volume?: number | null;
+  amount?: number | null;
+  replenishment_reason?: string | null;
+  needs_launch_email?: string | null;
+  launch_email_status?: string | null;
+};
+
+export type Selection1ImportResponse = {
+  source_file: string;
+  source_sheet: string;
+  imported_count: number;
+  created_count: number;
+  updated_count: number;
+  skipped_count: number;
+  market_research_count: number;
+  prefill_claim_count: number;
+  task_count: number;
 };
 
 export type NotificationLog = {
@@ -76,6 +109,11 @@ export const api = {
   opportunities: () => request<Opportunity[]>("/opportunities"),
   importOpportunities: (items: unknown[]) =>
     request<Opportunity[]>("/opportunities/import", { method: "POST", body: JSON.stringify({ items }) }),
+  importSelection1: (source_sheet = "开发0623期") =>
+    request<Selection1ImportResponse>("/opportunities/import/selection1", {
+      method: "POST",
+      body: JSON.stringify({ source_sheet })
+    }),
   assignmentPreview: (opportunity_ids: string[], candidates: string[]) =>
     request<{ items: { main_sku: string; sub_sku_count: number; suggested_assignee?: string | null }[] }>(
       "/assignments/preview",
@@ -87,6 +125,8 @@ export const api = {
   claim: (payload: unknown) => request<{ message: string; id: string }>("/claims", { method: "POST", body: JSON.stringify(payload) }),
   review: (payload: unknown) => request<{ message: string; id: string }>("/reviews", { method: "POST", body: JSON.stringify(payload) }),
   stocking: () => request<StockingRequest[]>("/stocking/requests"),
+  availableStocking: () => request<AvailableStockingItem[]>("/stocking/available-list"),
+  availableStockingExportUrl: () => `${API_BASE}/stocking/available-list/export`,
   arrival: (payload: unknown) => request<unknown>("/arrival/records", { method: "POST", body: JSON.stringify(payload) }),
   summary: (payload: unknown) => request<unknown>("/summary/four-week", { method: "POST", body: JSON.stringify(payload) }),
   notify: (payload: unknown) => request<NotificationLog>("/notifications/test", { method: "POST", body: JSON.stringify(payload) }),

@@ -66,6 +66,24 @@ class OpportunityImportRequest(BaseModel):
     items: list[OpportunityCreate]
 
 
+class Selection1ImportRequest(BaseModel):
+    source_file: str | None = None
+    source_sheet: str = "开发0623期"
+    max_rows: int | None = None
+
+
+class Selection1ImportResponse(BaseModel):
+    source_file: str
+    source_sheet: str
+    imported_count: int
+    created_count: int
+    updated_count: int
+    skipped_count: int
+    market_research_count: int
+    prefill_claim_count: int
+    task_count: int
+
+
 class AssignmentPreviewItem(BaseModel):
     main_sku: str
     sub_sku_count: int
@@ -148,6 +166,27 @@ class StockingRequestRead(BaseModel):
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class AvailableStockingItem(BaseModel):
+    operation_status: str = "未操作"
+    time: datetime
+    stocking_type: str = "首次备货"
+    selection_source: str
+    salesperson_name: str | None
+    main_sku: str
+    sub_sku: str
+    site: str | None
+    claim_daily_sales: float
+    quantity: int
+    stocking_country: str | None = None
+    warehouse: str | None = None
+    cost_price: float | None = None
+    unit_volume: float | None = None
+    amount: float | None = None
+    replenishment_reason: str | None = None
+    needs_launch_email: str | None = None
+    launch_email_status: str | None = None
 
 
 class ArrivalRecordCreate(BaseModel):

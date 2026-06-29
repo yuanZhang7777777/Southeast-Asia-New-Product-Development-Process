@@ -12,7 +12,7 @@ import {
   UserPlus
 } from "lucide-react";
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { api, NotificationLog, Opportunity, RoleMapping, StockingRequest, Task } from "./api";
+import { api, AvailableStockingItem, NotificationLog, Opportunity, RoleMapping, Task } from "./api";
 
 type TabKey = "tasks" | "opportunities" | "assignments" | "claimReview" | "stocking" | "arrivalSummary" | "admin";
 
@@ -21,7 +21,7 @@ const tabs: { key: TabKey; label: string; icon: typeof ClipboardList }[] = [
   { key: "opportunities", label: "新品机会池", icon: Upload },
   { key: "assignments", label: "分配台", icon: UserPlus },
   { key: "claimReview", label: "认领审核", icon: CheckCircle2 },
-  { key: "stocking", label: "备货草稿", icon: PackageCheck },
+  { key: "stocking", label: "可备货清单", icon: PackageCheck },
   { key: "arrivalSummary", label: "到货总结", icon: Truck },
   { key: "admin", label: "管理后台", icon: Settings }
 ];
@@ -59,7 +59,7 @@ function App() {
   const [message, setMessage] = useState("");
   const [opportunities, setOpportunities] = useState<Opportunity[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
-  const [stocking, setStocking] = useState<StockingRequest[]>([]);
+  const [availableStocking, setAvailableStocking] = useState<AvailableStockingItem[]>([]);
   const [notifications, setNotifications] = useState<NotificationLog[]>([]);
   const [roles, setRoles] = useState<RoleMapping[]>([]);
   const [assigneeFilter, setAssigneeFilter] = useState("");
@@ -78,18 +78,18 @@ function App() {
 
   async function refresh() {
     try {
-      const [health, opportunityList, taskList, stockingList, noticeList, roleList] = await Promise.all([
+      const [health, opportunityList, taskList, availableStockingList, noticeList, roleList] = await Promise.all([
         api.health(),
         api.opportunities(),
         api.tasks(assigneeFilter),
-        api.stocking(),
+        api.availableStocking(),
         api.notifications(),
         api.roleMappings()
       ]);
       setStatus(health.status);
       setOpportunities(opportunityList);
       setTasks(taskList);
-      setStocking(stockingList);
+      setAvailableStocking(availableStockingList);
       setNotifications(noticeList);
       setRoles(roleList);
       setMessage("已刷新");
@@ -184,6 +184,10 @@ function App() {
                 <Upload size={16} />
                 导入样例
               </button>
+              <button onClick={() => runAction("导入选品1", () => api.importSelection1())}>
+                <Upload size={16} />
+                导入选品1
+              </button>
             </div>
             <OpportunityTable opportunities={opportunities} onPick={setSelectedOpportunityId} />
           </section>
@@ -275,17 +279,23 @@ function App() {
 
         {activeTab === "stocking" && (
           <section className="panel">
+            <div className="toolbar">
+              <button onClick={() => window.open(api.availableStockingExportUrl(), "_blank")}>
+                <PackageCheck size={16} />
+                导出 Excel
+              </button>
+            </div>
             <DataTable
-              columns={["主 SKU", "子 SKU", "销售", "单销", "建议数量", "国家", "仓库", "状态"]}
-              rows={stocking.map((item) => [
+              columns={["主 SKU", "子 SKU", "销售", "单销", "备货量", "站点", "开品邮件", "状态"]}
+              rows={availableStocking.map((item) => [
                 item.main_sku || "-",
                 item.sub_sku || "-",
                 item.salesperson_name || "-",
-                item.daily_sales ?? "-",
+                item.claim_daily_sales ?? "-",
                 item.quantity,
-                item.country || "-",
-                item.warehouse || "-",
-                item.status
+                item.site || "-",
+                item.launch_email_status || "-",
+                item.operation_status
               ])}
             />
           </section>
