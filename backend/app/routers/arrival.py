@@ -3,9 +3,10 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app import models, schemas, services
+from app.auth import require_roles
 from app.db import get_db
 
-router = APIRouter(prefix="/arrival", tags=["arrival"])
+router = APIRouter(prefix="/arrival", tags=["arrival"], dependencies=[Depends(require_roles("manager"))])
 
 
 @router.get("/records", response_model=list[schemas.ArrivalRecordRead])

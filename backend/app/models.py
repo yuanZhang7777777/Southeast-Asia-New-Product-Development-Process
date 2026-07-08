@@ -31,6 +31,14 @@ class User(TimestampMixin, Base):
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
 
 
+class UserPassword(TimestampMixin, Base):
+    __tablename__ = "user_password"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), unique=True)
+    password_hash: Mapped[str] = mapped_column(String(255))
+
+
 class RoleMapping(TimestampMixin, Base):
     __tablename__ = "role_mapping"
 
@@ -45,6 +53,21 @@ class RoleMapping(TimestampMixin, Base):
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
 
 
+class OperatorAssignmentProfile(TimestampMixin, Base):
+    __tablename__ = "operator_assignment_profile"
+    __table_args__ = (UniqueConstraint("operator_name", name="uq_operator_assignment_profile_name"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    operator_name: Mapped[str] = mapped_column(String(128), index=True)
+    role: Mapped[str | None] = mapped_column(String(64))
+    operator_level: Mapped[str | None] = mapped_column(String(64))
+    business_type: Mapped[str | None] = mapped_column(String(128))
+    key_site: Mapped[str | None] = mapped_column(String(32))
+    key_category1: Mapped[str | None] = mapped_column(String(128))
+    key_category2: Mapped[str | None] = mapped_column(String(128))
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
 class NewProductOpportunity(TimestampMixin, Base):
     __tablename__ = "new_product_opportunity"
     __table_args__ = (
@@ -52,6 +75,7 @@ class NewProductOpportunity(TimestampMixin, Base):
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    import_batch_id: Mapped[str | None] = mapped_column(ForeignKey("import_batch.id"))
     source_type: Mapped[str] = mapped_column(String(64))
     source_file: Mapped[str | None] = mapped_column(String(255))
     source_sheet: Mapped[str | None] = mapped_column(String(128))
@@ -73,19 +97,41 @@ class NewProductOpportunity(TimestampMixin, Base):
     current_status: Mapped[str] = mapped_column(String(64), default="pending_assignment")
     snapshot: Mapped[dict] = mapped_column(JSON, default=dict)
 
+    import_batch: Mapped["ImportBatch | None"] = relationship(back_populates="opportunities")
     flow_instances: Mapped[list["FlowInstance"]] = relationship(back_populates="opportunity")
+
+
+class ImportBatch(TimestampMixin, Base):
+    __tablename__ = "import_batch"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    source_type: Mapped[str] = mapped_column(String(64))
+    source_file: Mapped[str | None] = mapped_column(String(255))
+    source_sheet: Mapped[str | None] = mapped_column(String(128))
+    imported_by: Mapped[str | None] = mapped_column(String(128))
+    imported_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    created_count: Mapped[int] = mapped_column(Integer, default=0)
+    updated_count: Mapped[int] = mapped_column(Integer, default=0)
+    skipped_count: Mapped[int] = mapped_column(Integer, default=0)
+    status: Mapped[str] = mapped_column(String(64), default="completed")
+
+    opportunities: Mapped[list[NewProductOpportunity]] = relationship(back_populates="import_batch")
+    source_snapshots: Mapped[list["SourceRecordSnapshot"]] = relationship(back_populates="import_batch")
 
 
 class SourceRecordSnapshot(TimestampMixin, Base):
     __tablename__ = "source_record_snapshot"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    import_batch_id: Mapped[str | None] = mapped_column(ForeignKey("import_batch.id"))
     opportunity_id: Mapped[str] = mapped_column(ForeignKey("new_product_opportunity.id"))
     source_file: Mapped[str | None] = mapped_column(String(255))
     source_sheet: Mapped[str | None] = mapped_column(String(128))
     source_row: Mapped[int | None] = mapped_column(Integer)
     column_range: Mapped[str | None] = mapped_column(String(64))
     payload: Mapped[dict] = mapped_column(JSON, default=dict)
+
+    import_batch: Mapped["ImportBatch | None"] = relationship(back_populates="source_snapshots")
 
 
 class MarketResearchItem(TimestampMixin, Base):
@@ -134,12 +180,17 @@ class FlowTask(TimestampMixin, Base):
 
     flow_instance: Mapped[FlowInstance] = relationship(back_populates="tasks")
 
+    @property
+    def opportunity_id(self) -> str | None:
+        return self.flow_instance.opportunity_id if self.flow_instance else None
+
 
 class SalesClaimForecast(TimestampMixin, Base):
     __tablename__ = "sales_claim_forecast"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     opportunity_id: Mapped[str] = mapped_column(ForeignKey("new_product_opportunity.id"))
+    task_id: Mapped[str | None] = mapped_column(ForeignKey("flow_task.id"))
     platform: Mapped[str | None] = mapped_column(String(64))
     group_name: Mapped[str | None] = mapped_column(String(128))
     salesperson_name: Mapped[str | None] = mapped_column(String(128))
@@ -148,6 +199,10 @@ class SalesClaimForecast(TimestampMixin, Base):
     reject_reason: Mapped[str | None] = mapped_column(Text)
     feedback_summary: Mapped[str | None] = mapped_column(Text)
     source_column: Mapped[str | None] = mapped_column(String(32))
+    claim_source: Mapped[str] = mapped_column(String(64), default="assigned_task")
+    first_submitted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    last_updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    note: Mapped[str | None] = mapped_column(Text)
 
 
 class ReviewRecord(TimestampMixin, Base):
@@ -192,6 +247,38 @@ class StockingRequest(TimestampMixin, Base):
     volume: Mapped[float | None] = mapped_column(Float)
     reason: Mapped[str | None] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(64), default="draft")
+
+
+class ExportBatch(TimestampMixin, Base):
+    __tablename__ = "export_batch"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    exported_by: Mapped[str | None] = mapped_column(String(128))
+    exported_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    file_name: Mapped[str] = mapped_column(String(255))
+    scope: Mapped[str] = mapped_column(String(64))
+    row_count: Mapped[int] = mapped_column(Integer, default=0)
+    status: Mapped[str] = mapped_column(String(64), default="completed")
+
+    rows: Mapped[list["ExportRow"]] = relationship(back_populates="export_batch")
+
+
+class ExportRow(TimestampMixin, Base):
+    __tablename__ = "export_row"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    export_batch_id: Mapped[str] = mapped_column(ForeignKey("export_batch.id"))
+    opportunity_id: Mapped[str] = mapped_column(ForeignKey("new_product_opportunity.id"))
+    claim_record_id: Mapped[str | None] = mapped_column(ForeignKey("sales_claim_forecast.id"))
+    salesperson_name: Mapped[str | None] = mapped_column(String(128))
+    main_sku: Mapped[str] = mapped_column(String(128))
+    sub_sku: Mapped[str] = mapped_column(String(128))
+    claim_daily_sales: Mapped[float] = mapped_column(Float)
+    stocking_quantity: Mapped[int] = mapped_column(Integer)
+    country: Mapped[str | None] = mapped_column(String(64))
+    warehouse: Mapped[str | None] = mapped_column(String(128))
+
+    export_batch: Mapped[ExportBatch] = relationship(back_populates="rows")
 
 
 class ArrivalRecord(TimestampMixin, Base):

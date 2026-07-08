@@ -1,0 +1,19 @@
+OPPORTUNITY_PENDING_ASSIGNMENT = "pending_assignment"
+OPPORTUNITY_OPEN_CLAIM_POOL = "open_claim_pool"
+OPPORTUNITY_ASSIGNED = "assigned"
+OPPORTUNITY_CLAIM_SUBMITTED = "claim_submitted"
+OPPORTUNITY_CLAIM_REJECTED = "claim_rejected"
+OPPORTUNITY_READY_FOR_STOCKING = "ready_for_stocking"
+OPPORTUNITY_CONFIRMED_NOT_CLAIM = "已确认不认领"
+OPPORTUNITY_RETURNED_FOR_SUPPLEMENT = "returned_for_supplement"
+
+CLAIM_RESULT_CLAIM = "claim"
+CLAIM_RESULT_REJECT = "reject"
+
+REVIEW_PENDING = "review_pending"
+REVIEW_APPROVED = "approved"
+REVIEW_CONFIRMED_NOT_CLAIM = "confirmed_not_claim"
+REVIEW_RETURNED_FOR_SUPPLEMENT = "returned_for_supplement"
+
+TASK_PENDING = "pending"
+TASK_COMPLETED = "completed"

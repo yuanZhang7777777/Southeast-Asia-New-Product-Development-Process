@@ -3,9 +3,10 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app import models, schemas, services
+from app.auth import require_roles
 from app.db import get_db
 
-router = APIRouter(prefix="/summary", tags=["summary"])
+router = APIRouter(prefix="/summary", tags=["summary"], dependencies=[Depends(require_roles("manager"))])
 
 
 @router.get("/four-week", response_model=list[schemas.FourWeekSummaryRead])

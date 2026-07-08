@@ -2,15 +2,18 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from app.config import get_settings
 from app.db import init_db
+from app.excel_images import UPLOADED_SOURCES_ROOT
 from app.routers import (
     admin,
     arrival,
     assignments,
     auth,
     claims,
+    events,
     health,
     notifications,
     opportunities,
@@ -40,6 +43,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+product_image_root = UPLOADED_SOURCES_ROOT / "product-images"
+product_image_root.mkdir(parents=True, exist_ok=True)
+app.mount("/uploaded-sources/product-images", StaticFiles(directory=product_image_root), name="product_images")
+
 
 app.include_router(health.router)
 app.include_router(auth.router)
@@ -47,6 +54,7 @@ app.include_router(opportunities.router)
 app.include_router(assignments.router)
 app.include_router(tasks.router)
 app.include_router(claims.router)
+app.include_router(events.router)
 app.include_router(reviews.router)
 app.include_router(stocking.router)
 app.include_router(arrival.router)

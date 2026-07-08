@@ -4,11 +4,14 @@ from pathlib import Path
 from typing import Any
 
 from openpyxl import load_workbook
-from openpyxl.utils import column_index_from_string
+from openpyxl.utils import column_index_from_string, get_column_letter
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app import models, schemas, services
+from app.excel_images import images_by_row, save_product_image
+from app.field_mapping import normalize_header
+from app.site_codes import normalize_site_code
 
 
 SOURCE_TYPE = "selection1_developer_claim_feedback"
@@ -66,25 +69,18 @@ SNAPSHOT_COLUMNS = tuple(
 )
 MAX_SOURCE_COLUMN = column_index_from_string("CH")
 
-COUNTRY_BY_SITE = {
-    "菲律宾": "PH",
-    "菲": "PH",
-    "PH": "PH",
-    "泰国": "TH",
-    "泰": "TH",
-    "TH": "TH",
-    "越南": "VN",
-    "越": "VN",
-    "VN": "VN",
-    "马来西亚": "MY",
-    "马来": "MY",
-    "MY": "MY",
-}
-
-
 def import_selection1_workbook(db: Session, payload: schemas.Selection1ImportRequest) -> schemas.Selection1ImportResponse:
     source_path = resolve_source_file(payload.source_file)
-    workbook = load_workbook(source_path, read_only=True, data_only=True)
+    import_batch = models.ImportBatch(
+        source_type=SOURCE_TYPE,
+        source_file=source_path.name,
+        source_sheet=payload.source_sheet,
+        status="running",
+    )
+    db.add(import_batch)
+    db.flush()
+
+    workbook = load_workbook(source_path, read_only=False, data_only=True)
     if payload.source_sheet not in workbook.sheetnames:
         available = ", ".join(workbook.sheetnames)
         raise ValueError(f"sheet not found: {payload.source_sheet}; available sheets: {available}")
@@ -94,6 +90,9 @@ def import_selection1_workbook(db: Session, payload: schemas.Selection1ImportReq
         worksheet.reset_dimensions()
     except AttributeError:
         pass
+    source_max_column = max(worksheet.max_column or 0, MAX_SOURCE_COLUMN)
+    product_images = images_by_row(worksheet, "F")
+    headers_by_column = source_headers_by_column(worksheet, source_max_column)
 
     created_count = 0
     updated_count = 0
@@ -103,16 +102,17 @@ def import_selection1_workbook(db: Session, payload: schemas.Selection1ImportReq
     task_count = 0
     processed_count = 0
 
-    for source_row, row in enumerate(worksheet.iter_rows(min_row=3, max_col=MAX_SOURCE_COLUMN, values_only=True), start=3):
+    for source_row, row in enumerate(worksheet.iter_rows(min_row=3, max_col=source_max_column, values_only=True), start=3):
         if payload.max_rows is not None and processed_count >= payload.max_rows:
             break
-        parsed = parse_selection1_row(row)
+        parsed = parse_selection1_row(row, headers_by_column)
         if parsed is None:
             skipped_count += 1
             continue
+        attach_product_image(parsed, product_images.get(source_row), source_row)
         processed_count += 1
 
-        opportunity, created = upsert_opportunity(db, parsed, source_path.name, payload.source_sheet, source_row)
+        opportunity, created = upsert_opportunity(db, parsed, source_path.name, payload.source_sheet, source_row, import_batch.id)
         created_count += int(created)
         updated_count += int(not created)
 
@@ -136,8 +136,13 @@ def import_selection1_workbook(db: Session, payload: schemas.Selection1ImportReq
             "skipped_count": skipped_count,
         },
     )
+    import_batch.created_count = created_count
+    import_batch.updated_count = updated_count
+    import_batch.skipped_count = skipped_count
+    import_batch.status = "completed"
 
     return schemas.Selection1ImportResponse(
+        import_batch_id=import_batch.id,
         source_file=source_path.name,
         source_sheet=payload.source_sheet,
         imported_count=created_count + updated_count,
@@ -148,6 +153,15 @@ def import_selection1_workbook(db: Session, payload: schemas.Selection1ImportReq
         prefill_claim_count=prefill_claim_count,
         task_count=task_count,
     )
+
+
+def attach_product_image(parsed: dict[str, Any], image: Any | None, source_row: int) -> None:
+    if parsed["main"].get("image_url"):
+        return
+    image_url = save_product_image(image, SOURCE_TYPE, source_row)
+    if image_url:
+        parsed["main"]["image_url"] = image_url
+        parsed["snapshot"]["extracted_image_url"] = image_url
 
 
 def resolve_source_file(source_file: str | None) -> Path:
@@ -167,13 +181,14 @@ def resolve_source_file(source_file: str | None) -> Path:
     raise FileNotFoundError("selection1 source workbook not found")
 
 
-def parse_selection1_row(row: tuple[Any, ...]) -> dict[str, Any] | None:
+def parse_selection1_row(row: tuple[Any, ...], headers_by_column: dict[str, list[str]] | None = None) -> dict[str, Any] | None:
+    raw_values = {get_column_letter(index): clean_cell(value) for index, value in enumerate(row, start=1)}
     values = {column: clean_cell(cell_value(row, column)) for column in SNAPSHOT_COLUMNS}
     main_sku = text_value(values["H"])
     sub_sku = text_value(values["J"])
     if not main_sku or not sub_sku:
         return None
-    if is_summary_row(values):
+    if is_summary_row(values) or is_repeated_header_row(values):
         return None
 
     site = text_value(values["A"])
@@ -196,8 +211,10 @@ def parse_selection1_row(row: tuple[Any, ...]) -> dict[str, Any] | None:
         "claim_prefill": claim_prefill,
         "snapshot": {
             "source_type": SOURCE_TYPE,
-            "allowed_columns": list(SNAPSHOT_COLUMNS),
+            "allowed_columns": list(raw_values),
             "cells": values,
+            "fields_by_column": fields_by_column(raw_values),
+            "fields_by_header": fields_by_header(headers_by_column or {}, raw_values),
             "pricing_snapshot": pricing_snapshot,
             "claim_prefill": claim_prefill,
         },
@@ -206,7 +223,7 @@ def parse_selection1_row(row: tuple[Any, ...]) -> dict[str, Any] | None:
 
 
 def upsert_opportunity(
-    db: Session, parsed: dict[str, Any], source_file: str, source_sheet: str, source_row: int
+    db: Session, parsed: dict[str, Any], source_file: str, source_sheet: str, source_row: int, import_batch_id: str | None = None
 ) -> tuple[models.NewProductOpportunity, bool]:
     existing = db.scalar(
         select(models.NewProductOpportunity).where(
@@ -222,6 +239,7 @@ def upsert_opportunity(
         "source_file": source_file,
         "source_sheet": source_sheet,
         "source_row": source_row,
+        "import_batch_id": import_batch_id,
         "batch": source_sheet,
         "country": parsed["country"],
         "snapshot": parsed["snapshot"],
@@ -230,22 +248,13 @@ def upsert_opportunity(
         for field, value in opportunity_data.items():
             if field != "current_status":
                 setattr(existing, field, value)
-        snapshot = db.scalar(
-            select(models.SourceRecordSnapshot).where(
-                models.SourceRecordSnapshot.opportunity_id == existing.id,
-                models.SourceRecordSnapshot.column_range == "A:L,Z:AN,AO:AV,CC:CH",
-            )
-        )
-        if snapshot:
-            snapshot.payload = parsed["snapshot"]
-        else:
-            add_source_snapshot(db, existing)
+        add_source_snapshot(db, existing, import_batch_id)
         return existing, False
 
     opportunity = models.NewProductOpportunity(**opportunity_data)
     db.add(opportunity)
     db.flush()
-    add_source_snapshot(db, opportunity)
+    add_source_snapshot(db, opportunity, import_batch_id)
     services.audit(
         db,
         "opportunity.created",
@@ -256,9 +265,10 @@ def upsert_opportunity(
     return opportunity, True
 
 
-def add_source_snapshot(db: Session, opportunity: models.NewProductOpportunity) -> None:
+def add_source_snapshot(db: Session, opportunity: models.NewProductOpportunity, import_batch_id: str | None = None) -> None:
     db.add(
         models.SourceRecordSnapshot(
+            import_batch_id=import_batch_id,
             opportunity_id=opportunity.id,
             source_file=opportunity.source_file,
             source_sheet=opportunity.source_sheet,
@@ -267,6 +277,35 @@ def add_source_snapshot(db: Session, opportunity: models.NewProductOpportunity) 
             payload=opportunity.snapshot,
         )
     )
+
+
+def source_headers_by_column(worksheet: Any, max_col: int) -> dict[str, list[str]]:
+    headers: dict[str, list[str]] = {}
+    for index in range(1, max_col + 1):
+        column = get_column_letter(index)
+        top = text_value(worksheet.cell(row=1, column=index).value)
+        sub = text_value(worksheet.cell(row=2, column=index).value)
+        candidates = [value for value in (top, sub, f"{top} / {sub}" if top and sub else None) if value]
+        if candidates:
+            headers[column] = candidates
+    return headers
+
+
+def fields_by_header(headers_by_column: dict[str, list[str]], values: dict[str, Any]) -> dict[str, Any]:
+    fields: dict[str, Any] = {}
+    for column, headers in headers_by_column.items():
+        value = values.get(column)
+        if value is None:
+            continue
+        for header in headers:
+            key = normalize_header(header)
+            if key and key not in fields:
+                fields[key] = value
+    return fields
+
+
+def fields_by_column(values: dict[str, Any]) -> dict[str, Any]:
+    return {column: value for column, value in values.items() if value not in (None, "")}
 
 
 def replace_market_research(db: Session, opportunity_id: str, parsed: dict[str, Any]) -> int:
@@ -314,44 +353,9 @@ def replace_source_claim_prefill(db: Session, opportunity_id: str, parsed: dict[
 
 
 def ensure_import_claim_task(db: Session, opportunity: models.NewProductOpportunity, parsed: dict[str, Any]) -> bool:
-    task = db.scalar(
-        select(models.FlowTask)
-        .join(models.FlowInstance)
-        .where(
-            models.FlowInstance.opportunity_id == opportunity.id,
-            models.FlowTask.task_type == "sales_claim",
-        )
-        .order_by(models.FlowTask.created_at.desc())
-    )
-    assignee_name = parsed["claim_prefill"]["salesperson_name"]
-    status = "assigned" if assignee_name else "open_claim_pool"
-    if task:
-        if task.status == "pending" and assignee_name and not task.assignee_name:
-            task.assignee_name = assignee_name
-        if opportunity.current_status in {"pending_assignment", "open_claim_pool", "assigned"}:
-            opportunity.current_status = status
-        return False
-
-    flow = models.FlowInstance(
-        opportunity_id=opportunity.id,
-        current_node="sales_claim",
-        current_status=status,
-        owner_role="sales",
-    )
-    db.add(flow)
-    db.flush()
-    db.add(
-        models.FlowTask(
-            flow_instance_id=flow.id,
-            node_code="sales_claim",
-            task_type="sales_claim",
-            assignee_name=assignee_name,
-            assignee_role="sales",
-        )
-    )
-    if opportunity.current_status in {"pending_assignment", "open_claim_pool", "assigned"}:
-        opportunity.current_status = status
-    return True
+    # Selection1 source claim columns are retained as reference/prefill only.
+    # Supervisor assignment is the only first-version entry to operator tasks.
+    return False
 
 
 def parse_market_items(values: dict[str, Any]) -> list[dict[str, Any]]:
@@ -377,11 +381,18 @@ def is_summary_row(values: dict[str, Any]) -> bool:
     return "小计" in joined or "合计" in joined
 
 
+def is_repeated_header_row(values: dict[str, Any]) -> bool:
+    main_sku = "".join((text_value(values.get("H")) or "").split()).upper()
+    sub_sku = "".join((text_value(values.get("J")) or "").split()).upper()
+    site = text_value(values.get("A"))
+    category = text_value(values.get("D"))
+    return main_sku in {"主SKU", "MAINSKU"} or sub_sku in {"子SKU", "SUBSKU"} or (
+        site in {"站点", "国家"} and category == "一级类目"
+    )
+
+
 def derive_country(site: str | None) -> str | None:
-    if not site:
-        return None
-    cleaned = site.strip().upper()
-    return COUNTRY_BY_SITE.get(site.strip()) or COUNTRY_BY_SITE.get(cleaned) or cleaned
+    return normalize_site_code(site)
 
 
 def normalize_claim_result(value: Any) -> str | None:
@@ -432,4 +443,3 @@ def number_value(value: Any) -> float | None:
         return float(number_text)
     except ValueError:
         return None
-

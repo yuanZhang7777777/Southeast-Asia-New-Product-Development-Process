@@ -33,6 +33,9 @@ services:
       - path: .env
         required: false
     environment:
+      APP_ENV: ${APP_ENV:-production}
+      AUTH_REQUIRED: ${AUTH_REQUIRED:-true}
+      AUTH_SECRET_KEY: ${AUTH_SECRET_KEY:?set AUTH_SECRET_KEY}
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-workflow}:${POSTGRES_PASSWORD:-change-me}@postgres:5432/${POSTGRES_DB:-workflow}
       REDIS_URL: redis://redis:6379/0
     depends_on:
@@ -53,6 +56,9 @@ services:
       - path: .env
         required: false
     environment:
+      APP_ENV: ${APP_ENV:-production}
+      AUTH_REQUIRED: ${AUTH_REQUIRED:-true}
+      AUTH_SECRET_KEY: ${AUTH_SECRET_KEY:?set AUTH_SECRET_KEY}
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-workflow}:${POSTGRES_PASSWORD:-change-me}@postgres:5432/${POSTGRES_DB:-workflow}
       REDIS_URL: redis://redis:6379/0
     depends_on:
@@ -68,6 +74,9 @@ services:
       - path: .env
         required: false
     environment:
+      APP_ENV: ${APP_ENV:-production}
+      AUTH_REQUIRED: ${AUTH_REQUIRED:-true}
+      AUTH_SECRET_KEY: ${AUTH_SECRET_KEY:?set AUTH_SECRET_KEY}
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-workflow}:${POSTGRES_PASSWORD:-change-me}@postgres:5432/${POSTGRES_DB:-workflow}
       REDIS_URL: redis://redis:6379/0
     depends_on:
@@ -81,6 +90,7 @@ services:
       context: ./frontend
       args:
         VITE_API_BASE_URL: /api
+        VITE_DINGTALK_CORP_ID: ${VITE_DINGTALK_CORP_ID:-}
     depends_on:
       api:
         condition: service_healthy
@@ -99,13 +109,13 @@ services:
       api:
         condition: service_healthy
 
-  hermes:
-    build: ./deploy/hermes
-    profiles: ["hermes"]
+  notification-adapter:
+    build: ./deploy/notification-adapter
+    profiles: ["notification"]
     environment:
       DINGTALK_WEBHOOK_URL: ${DINGTALK_WEBHOOK_URL:-}
     ports:
-      - "${HERMES_PORT:-8090}:8090"
+      - "${NOTIFICATION_ADAPTER_PORT:-8090}:8090"
 
 volumes:
   postgres-data:

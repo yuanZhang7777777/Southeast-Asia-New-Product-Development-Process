@@ -11,6 +11,8 @@ ENV PIP_INDEX_URL=$PIP_INDEX_URL \
     PIP_DEFAULT_TIMEOUT=120
 RUN pip install --no-cache-dir --upgrade pip && pip install --no-cache-dir -r requirements.txt
 
+COPY alembic.ini .
+COPY alembic ./alembic
 COPY app ./app
 
 EXPOSE 8000

@@ -1,5 +1,6 @@
 import os
 import sys
+from io import BytesIO
 from pathlib import Path
 
 os.environ["DATABASE_URL"] = f"sqlite:///{Path(__file__).with_name('test_workflow.db')}"
@@ -27,6 +28,122 @@ def test_health() -> None:
 
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
+
+
+def test_opportunities_default_limit_covers_assignment_batches() -> None:
+    with SessionLocal() as db:
+        db.add_all(
+            [
+                models.NewProductOpportunity(
+                    source_type="limit_test",
+                    source_file="source.xlsx",
+                    source_sheet="Sheet1",
+                    source_row=index,
+                    country="PH",
+                    site="PH",
+                    main_sku=f"MAIN-{index:03d}",
+                    sub_sku=f"SUB-{index:03d}",
+                    current_status="pending_assignment",
+                    snapshot={},
+                )
+                for index in range(205)
+            ]
+        )
+        db.commit()
+
+    assert len(client.get("/opportunities").json()) == 205
+    assert len(client.get("/opportunities?limit=10").json()) == 10
+
+
+def test_opportunities_can_filter_full_pool_by_period() -> None:
+    with SessionLocal() as db:
+        db.add_all(
+            [
+                models.NewProductOpportunity(
+                    source_type="selection1_developer_claim_feedback",
+                    source_file="选品1.xlsx",
+                    source_sheet="开发0623期",
+                    source_row=1,
+                    main_sku="MAIN-W27",
+                    sub_sku="SUB-W27",
+                ),
+                models.NewProductOpportunity(
+                    source_type="selection1_developer_claim_feedback",
+                    source_file="选品1.xlsx",
+                    source_sheet="开发0630期",
+                    source_row=2,
+                    main_sku="MAIN-W28",
+                    sub_sku="SUB-W28",
+                ),
+            ]
+        )
+        db.commit()
+
+    response = client.get("/opportunities?source_sheet=开发0623期")
+
+    assert response.status_code == 200
+    assert [item["main_sku"] for item in response.json()] == ["MAIN-W27"]
+
+
+def test_opportunities_export_full_source_rows_by_period() -> None:
+    with SessionLocal() as db:
+        first = models.NewProductOpportunity(
+            source_type="selection1_developer_claim_feedback",
+            source_file="selection1.xlsx",
+            source_sheet="开发0623期",
+            source_row=1,
+            import_batch_id="batch-0623",
+            main_sku="MAIN-W27",
+            sub_sku="SUB-W27",
+            current_status="pending_assignment",
+        )
+        second = models.NewProductOpportunity(
+            source_type="selection1_developer_claim_feedback",
+            source_file="selection1.xlsx",
+            source_sheet="开发0630期",
+            source_row=2,
+            import_batch_id="batch-0630",
+            main_sku="MAIN-W28",
+            sub_sku="SUB-W28",
+            current_status="pending_assignment",
+        )
+        db.add_all([first, second])
+        db.flush()
+        db.add_all(
+            [
+                models.SourceRecordSnapshot(
+                    opportunity_id=first.id,
+                    import_batch_id="batch-0623",
+                    source_file=first.source_file,
+                    source_sheet=first.source_sheet,
+                    source_row=first.source_row,
+                    column_range="A:CB",
+                    payload={"custom_field": "0623-keep", "source_only": "yes"},
+                ),
+                models.SourceRecordSnapshot(
+                    opportunity_id=second.id,
+                    import_batch_id="batch-0630",
+                    source_file=second.source_file,
+                    source_sheet=second.source_sheet,
+                    source_row=second.source_row,
+                    column_range="A:CB",
+                    payload={"custom_field": "0630-skip"},
+                ),
+            ]
+        )
+        db.commit()
+
+    response = client.get("/opportunities/export?source_sheet=开发0623期")
+
+    assert response.status_code == 200
+    workbook = load_workbook(BytesIO(response.content), data_only=True)
+    worksheet = workbook.active
+    headers = [cell.value for cell in worksheet[1]]
+    rows = list(worksheet.iter_rows(min_row=2, values_only=True))
+    assert len(rows) == 1
+    assert rows[0][headers.index("source_sheet")] == "开发0623期"
+    assert rows[0][headers.index("main_sku")] == "MAIN-W27"
+    assert rows[0][headers.index("custom_field")] == "0623-keep"
 
 
 def test_mvp_flow_and_notification_dedupe() -> None:
@@ -63,15 +180,26 @@ def test_mvp_flow_and_notification_dedupe() -> None:
     )
     assert import_response.status_code == 200
     opportunity_ids = [item["id"] for item in import_response.json()]
+    with SessionLocal() as db:
+        db.add(models.OperatorAssignmentProfile(operator_name="销售A", key_site="PH", enabled=True))
+        db.add(models.OperatorAssignmentProfile(operator_name="销售B", key_site="PH", enabled=True))
+        db.commit()
 
     preview_response = client.post(
         "/assignments/preview",
         json={"opportunity_ids": opportunity_ids, "candidates": ["销售A", "销售B"]},
     )
     assert preview_response.status_code == 200
-    assert preview_response.json()["items"] == [
-        {"main_sku": "MAIN-001", "sub_sku_count": 2, "suggested_assignee": "销售A"}
-    ]
+    preview_item = preview_response.json()["items"][0]
+    assert {
+        key: value for key, value in preview_item.items() if key != "opportunity_ids"
+    } == {
+        "main_sku": "MAIN-001",
+        "sub_sku_count": 2,
+        "suggested_assignee": "销售A",
+        "match_reason": "重点站点匹配；品类未匹配；负载均衡",
+    }
+    assert set(preview_item["opportunity_ids"]) == set(opportunity_ids)
 
     confirm_response = client.post(
         "/assignments/confirm",
@@ -128,7 +256,8 @@ def test_mvp_flow_and_notification_dedupe() -> None:
     assert first_notice.status_code == 200
     assert second_notice.status_code == 200
     assert first_notice.json()["id"] == second_notice.json()["id"]
-    assert len(client.get("/notifications/logs").json()) == 1
+    notice_logs = client.get("/notifications/logs").json()
+    assert len([item for item in notice_logs if item["dedupe_key"] == "notice:claim:1"]) == 1
 
 
 def test_selection1_import_is_idempotent_and_exportable(tmp_path: Path) -> None:
@@ -144,6 +273,7 @@ def test_selection1_import_is_idempotent_and_exportable(tmp_path: Path) -> None:
     assert first_import.json()["imported_count"] == 1
     assert first_import.json()["market_research_count"] == 2
     assert first_import.json()["prefill_claim_count"] == 1
+    assert first_import.json()["task_count"] == 0
     assert second_import.json()["created_count"] == 0
     assert second_import.json()["updated_count"] == 1
 
@@ -154,7 +284,7 @@ def test_selection1_import_is_idempotent_and_exportable(tmp_path: Path) -> None:
     assert opportunity["country"] == "TH"
     assert opportunity["main_sku"] == "MAIN-001"
     assert opportunity["sub_sku"] == "SUB-001"
-    assert opportunity["current_status"] == "assigned"
+    assert opportunity["current_status"] == "pending_assignment"
 
     with SessionLocal() as db:
         market_items = db.query(models.MarketResearchItem).all()
@@ -166,6 +296,12 @@ def test_selection1_import_is_idempotent_and_exportable(tmp_path: Path) -> None:
     assert "M" not in snapshots[0].payload["cells"]
     assert "AW" not in snapshots[0].payload["cells"]
     assert "CB" not in snapshots[0].payload["cells"]
+
+    assignment_response = client.post(
+        "/assignments/confirm",
+        json={"opportunity_ids": [opportunity["id"]], "assignee_name": "销售A"},
+    )
+    assert assignment_response.status_code == 200
 
     claim_response = client.post(
         "/claims",
@@ -195,20 +331,132 @@ def test_selection1_import_is_idempotent_and_exportable(tmp_path: Path) -> None:
     export_response = client.get("/stocking/available-list/export")
     export_path.write_bytes(export_response.content)
     exported = load_workbook(export_path, data_only=True)
-    sheet = exported["可备货清单"]
+    sheet = exported[exported.sheetnames[0]]
     headers = [cell.value for cell in sheet[1]]
+    assert headers == [
+        "操作状态",
+        "时间",
+        "备货类型",
+        "选品数据源",
+        "销售员",
+        "主SKU",
+        "子sku",
+        "成本价",
+        "单个体积",
+        "备货单销",
+        "备货数量",
+        "备货国家",
+        "备货仓库",
+        "货值",
+        "体积",
+        "补货原因",
+    ]
     values = [cell.value for cell in sheet[2]]
     row = dict(zip(headers, values))
     assert row["销售员"] == "销售A"
     assert row["主SKU"] == "MAIN-001"
-    assert row["子SKU"] == "SUB-001"
-    assert row["认领单销"] == 3
-    assert row["备货量"] == 90
+    assert row["子sku"] == "SUB-001"
+    assert row["备货单销"] == 3
+    assert row["备货数量"] == 90
     assert row["成本价"] is None
     assert row["单个体积"] is None
     assert row["货值"] is None
-    assert "★是否需要开品邮件" in headers
-    assert "★开品邮件状态" in headers
+    assert row["补货原因"] is None
+
+
+def test_rejected_claim_can_be_confirmed_as_not_claimed() -> None:
+    import_response = client.post(
+        "/opportunities/import",
+        json={
+            "items": [
+                {
+                    "source_type": "selection1_developer_claim_feedback",
+                    "source_file": "选品1.xlsx",
+                    "source_sheet": "开发0623期",
+                    "source_row": 2,
+                    "country": "TH",
+                    "site": "泰国",
+                    "main_sku": "MAIN-REJECT",
+                    "sub_sku": "SUB-REJECT",
+                    "snapshot": {"H": "MAIN-REJECT", "J": "SUB-REJECT"},
+                }
+            ]
+        },
+    )
+    assert import_response.status_code == 200
+    opportunity_id = import_response.json()[0]["id"]
+
+    claim_response = client.post(
+        "/claims",
+        json={
+            "opportunity_id": opportunity_id,
+            "salesperson_name": "销售A",
+            "claim_result": "reject",
+            "reject_reason": "市场容量不足",
+        },
+    )
+    assert claim_response.status_code == 200
+
+    review_response = client.post(
+        "/reviews",
+        json={
+            "opportunity_id": opportunity_id,
+            "reviewer_name": "练玉君",
+            "review_status": "confirmed_not_claim",
+            "review_comment": "确认不认领",
+        },
+    )
+    assert review_response.status_code == 200
+
+    opportunities = client.get("/opportunities").json()
+    opportunity = next(item for item in opportunities if item["id"] == opportunity_id)
+    assert opportunity["current_status"] == "已确认不认领"
+    assert client.get("/stocking/available-list").json() == []
+
+
+def test_review_can_return_not_claim_for_supplement() -> None:
+    import_response = client.post(
+        "/opportunities/import",
+        json={
+            "items": [
+                {
+                    "source_type": "selection1_developer_claim_feedback",
+                    "source_file": "选品1.xlsx",
+                    "source_sheet": "开发0623期",
+                    "source_row": 4,
+                    "country": "TH",
+                    "site": "泰国",
+                    "main_sku": "MAIN-RETURN",
+                    "sub_sku": "SUB-RETURN",
+                    "snapshot": {"H": "MAIN-RETURN", "J": "SUB-RETURN"},
+                }
+            ]
+        },
+    )
+    opportunity_id = import_response.json()[0]["id"]
+
+    client.post(
+        "/claims",
+        json={
+            "opportunity_id": opportunity_id,
+            "salesperson_name": "销售A",
+            "claim_result": "reject",
+            "reject_reason": "需要补充市场截图",
+        },
+    )
+    review_response = client.post(
+        "/reviews",
+        json={
+            "opportunity_id": opportunity_id,
+            "reviewer_name": "练玉君",
+            "review_status": "returned_for_supplement",
+            "review_comment": "补充理由",
+        },
+    )
+
+    assert review_response.status_code == 200
+    opportunity = next(item for item in client.get("/opportunities").json() if item["id"] == opportunity_id)
+    assert opportunity["current_status"] == "returned_for_supplement"
 
 
 def build_selection1_fixture(path: Path) -> None:

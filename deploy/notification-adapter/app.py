@@ -5,7 +5,7 @@ import urllib.request
 from fastapi import FastAPI
 from pydantic import BaseModel
 
-app = FastAPI(title="Hermes DingTalk Adapter")
+app = FastAPI(title="Notification Adapter")
 
 
 class TestMessage(BaseModel):
@@ -15,7 +15,7 @@ class TestMessage(BaseModel):
 
 @app.get("/health")
 def health() -> dict[str, str]:
-    return {"status": "ok", "service": "hermes-adapter"}
+    return {"status": "ok", "service": "notification-adapter"}
 
 
 @app.post("/dingtalk/test")

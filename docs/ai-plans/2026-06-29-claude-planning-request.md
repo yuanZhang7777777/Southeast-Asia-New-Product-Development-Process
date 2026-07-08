@@ -79,7 +79,7 @@ E:\Project\Hengzhe-New-Product-Workflow
 5. `docs/04-系统架构重新设计方案.md`
 6. `docs/05-分配任务规则设计草案.md`
 7. `docs/06-部署与服务器准备.md`
-8. `docs/07-Ponytail与Hermes使用边界.md`
+8. `docs/07-Ponytail与NotificationAdapter使用边界.md`
 9. `docs/08-端到端流程链路规划.md`
 
 另外可以参考：

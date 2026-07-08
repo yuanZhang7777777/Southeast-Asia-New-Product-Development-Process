@@ -1,13 +1,14 @@
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, Response
+from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app import models, schemas, services
+from app.auth import require_roles
 from app.db import get_db
 
-router = APIRouter(prefix="/stocking", tags=["stocking"])
+router = APIRouter(prefix="/stocking", tags=["stocking"], dependencies=[Depends(require_roles("manager"))])
 
 
 @router.get("/requests", response_model=list[schemas.StockingRequestRead])
@@ -16,20 +17,73 @@ def list_stocking_requests(db: Session = Depends(get_db)) -> list[models.Stockin
 
 
 @router.get("/available-list", response_model=list[schemas.AvailableStockingItem])
-def list_available_stocking_items(db: Session = Depends(get_db)) -> list[schemas.AvailableStockingItem]:
-    return services.list_available_stocking_items(db)
+def list_available_stocking_items(
+    source_sheet: str | None = Query(None),
+    import_batch_id: str | None = Query(None),
+    db: Session = Depends(get_db),
+) -> list[schemas.AvailableStockingItem]:
+    return services.list_available_stocking_items(db, source_sheet=source_sheet, import_batch_id=import_batch_id)
 
 
 @router.get("/available-list/export")
-def export_available_stocking_items(db: Session = Depends(get_db)) -> Response:
-    items = services.list_available_stocking_items(db)
-    content = services.build_available_stocking_workbook(items)
-    filename = quote("可备货清单.xlsx")
+def export_available_stocking_items(
+    source_sheet: str | None = Query(None),
+    import_batch_id: str | None = Query(None),
+    db: Session = Depends(get_db),
+) -> Response:
+    items = services.list_available_stocking_items(db, source_sheet=source_sheet, import_batch_id=import_batch_id)
+    file_name = period_file_name("海外仓备货申请表", source_sheet, import_batch_id)
+    batch = services.record_export_batch(db, items, file_name=file_name, scope="stocking_available")
+    content = services.build_available_stocking_workbook(items, exported_at=batch.exported_at)
+    db.commit()
+    filename = quote(file_name)
     return Response(
         content=content,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f"attachment; filename*=UTF-8''{filename}"},
     )
+
+
+@router.get("/traceability/export")
+def export_traceability_items(
+    source_sheet: str | None = Query(None),
+    import_batch_id: str | None = Query(None),
+    db: Session = Depends(get_db),
+) -> Response:
+    items = services.list_available_stocking_items(
+        db,
+        source_sheet=source_sheet,
+        import_batch_id=import_batch_id,
+        exclude_exported_scope="traceability",
+    )
+    not_claim_rows = services.list_not_claim_traceability_rows(db, source_sheet=source_sheet, import_batch_id=import_batch_id)
+    file_name = period_file_name("新品中央字段导出", source_sheet, import_batch_id)
+    batch = services.record_export_batch(
+        db,
+        items,
+        file_name=file_name,
+        scope="traceability",
+        extra_row_count=len(not_claim_rows),
+        extra_rows=[(opportunity, claim) for opportunity, claim, _ in not_claim_rows],
+    )
+    content = services.build_traceability_workbook(
+        db,
+        items,
+        export_batch=batch,
+        not_claim_rows=not_claim_rows,
+    )
+    db.commit()
+    filename = quote(file_name)
+    return Response(
+        content=content,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{filename}"},
+    )
+
+
+def period_file_name(prefix: str, source_sheet: str | None, import_batch_id: str | None) -> str:
+    period = source_sheet or import_batch_id
+    return f"{prefix}-{period}.xlsx" if period else f"{prefix}.xlsx"
 
 
 @router.post("/requests", response_model=schemas.MessageResponse)

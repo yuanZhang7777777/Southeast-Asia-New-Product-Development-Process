@@ -7,7 +7,7 @@ mkdir -p \
   "$APP_ROOT/app" \
   "$APP_ROOT/data" \
   "$APP_ROOT/backups" \
-  "$APP_ROOT/hermes" \
+  "$APP_ROOT/notification-adapter" \
   "$APP_ROOT/logs"
 
 if ! command -v dockerd >/dev/null 2>&1; then

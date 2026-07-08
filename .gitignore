@@ -5,6 +5,7 @@ __pycache__/
 .ruff_cache/
 .mypy_cache/
 .venv/
+.venv312/
 venv/
 
 # Node
@@ -18,6 +19,8 @@ dist/
 !.env.example
 *.key
 *.pem
+AccessKey*.csv
+PLM系统及相关接口.txt
 
 # Runtime data
 data/
@@ -25,6 +28,18 @@ logs/
 backups/
 *.db
 .codex_tmp/
+backend/.uploaded_sources/
+outputs/dingtalk_user_sync_report.json
+outputs/cloud_server_access_record.md
+outputs/public_reverse_tunnel.log
+outputs/public_mapping_record.md
+outputs/
+backend/.runtime/
+backend/*.db.bak-*
+.agents/
+.codex_recovery/
+.specify/
+.superpowers/
 
 # Local business source files stay in the workspace for analysis, not in Git.
 *.xlsx
