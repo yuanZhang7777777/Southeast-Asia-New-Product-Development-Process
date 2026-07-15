@@ -77,6 +77,7 @@ class OpportunityRead(OpportunityCreate):
     latest_claim_record_id: str | None = None
     latest_claim_result: str | None = None
     latest_claim_salesperson: str | None = None
+    latest_claim_daily_sales: float | None = None
     latest_reject_reason: str | None = None
     latest_feedback_summary: str | None = None
     latest_claim_note: str | None = None

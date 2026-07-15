@@ -5,6 +5,7 @@ from pathlib import Path
 os.environ["DATABASE_URL"] = f"sqlite:///{Path(__file__).with_name('test_workflow.db')}"
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
 from app import models, schemas, services  # noqa: E402
@@ -39,6 +40,89 @@ def test_review_approved_claim_marks_ready_and_completes_review_task() -> None:
         pending_review_tasks = pending_tasks(db, opportunity_id, "manager_review")
     assert opportunity.current_status == "ready_for_stocking"
     assert pending_review_tasks == []
+
+
+def test_opportunity_summary_includes_latest_claim_daily_sales() -> None:
+    opportunity_id = prepare_submission("claim", claim_daily_sales=2)
+
+    listed = next(item for item in client.get("/opportunities").json() if item["id"] == opportunity_id)
+
+    assert listed["latest_claim_daily_sales"] == 2
+
+
+def test_operator_can_update_same_claim_before_review_without_duplicate_review_task() -> None:
+    opportunity_id = prepare_submission("claim", claim_daily_sales=2)
+    with SessionLocal() as db:
+        original = db.query(models.SalesClaimForecast).filter_by(opportunity_id=opportunity_id).one()
+        original_id = original.id
+        first_submitted_at = original.first_submitted_at
+        original_updated_at = original.last_updated_at
+
+        updated = services.submit_claim(
+            db,
+            schemas.ClaimCreate(
+                opportunity_id=opportunity_id,
+                salesperson_name="销售A",
+                claim_result="claim",
+                claim_daily_sales=5,
+            ),
+            assignee_name="销售A",
+        )
+        db.commit()
+        pending_review_tasks = pending_tasks(db, opportunity_id, "manager_review")
+        updated_values = {
+            "id": updated.id,
+            "first_submitted_at": updated.first_submitted_at,
+            "last_updated_at": updated.last_updated_at,
+            "claim_daily_sales": updated.claim_daily_sales,
+        }
+
+    assert updated_values["id"] == original_id
+    assert updated_values["first_submitted_at"] == first_submitted_at
+    assert updated_values["last_updated_at"] >= original_updated_at
+    assert updated_values["claim_daily_sales"] == 5
+    assert len(pending_review_tasks) == 1
+
+
+def test_other_operator_cannot_update_submitted_claim() -> None:
+    opportunity_id = prepare_submission("claim", claim_daily_sales=2)
+
+    with SessionLocal() as db, pytest.raises(PermissionError, match="does not belong"):
+        services.submit_claim(
+            db,
+            schemas.ClaimCreate(
+                opportunity_id=opportunity_id,
+                salesperson_name="销售B",
+                claim_result="claim",
+                claim_daily_sales=5,
+            ),
+            assignee_name="销售B",
+        )
+
+
+def test_operator_cannot_update_claim_after_manager_review() -> None:
+    opportunity_id = prepare_submission("claim", claim_daily_sales=2)
+    response = client.post(
+        "/reviews",
+        json={
+            "opportunity_id": opportunity_id,
+            "reviewer_name": "练玉君",
+            "review_status": "approved",
+        },
+    )
+    assert response.status_code == 200
+
+    with SessionLocal() as db, pytest.raises(PermissionError, match="does not belong"):
+        services.submit_claim(
+            db,
+            schemas.ClaimCreate(
+                opportunity_id=opportunity_id,
+                salesperson_name="销售A",
+                claim_result="claim",
+                claim_daily_sales=5,
+            ),
+            assignee_name="销售A",
+        )
 
 
 def test_review_confirmed_not_claim_is_terminal_and_not_exportable() -> None:

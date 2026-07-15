@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends
-from sqlalchemy import select
+from sqlalchemy import and_, exists, or_, select
 from sqlalchemy.orm import Session
 
 from app import models, schemas
@@ -20,10 +20,29 @@ def my_tasks(
         select(models.FlowTask)
         .join(models.FlowInstance, models.FlowTask.flow_instance_id == models.FlowInstance.id)
         .join(models.NewProductOpportunity, models.FlowInstance.opportunity_id == models.NewProductOpportunity.id)
-        .where(models.FlowTask.status == "pending", models.NewProductOpportunity.current_status != OPPORTUNITY_DISABLED)
+        .outerjoin(models.SalesClaimForecast, models.SalesClaimForecast.task_id == models.FlowTask.id)
+        .where(
+            models.NewProductOpportunity.current_status != OPPORTUNITY_DISABLED,
+            or_(
+                models.FlowTask.status == "pending",
+                and_(
+                    models.FlowTask.status == "completed",
+                    models.FlowTask.task_type == "sales_claim",
+                    models.NewProductOpportunity.current_status.in_({"claim_submitted", "claim_rejected"}),
+                    models.SalesClaimForecast.id.is_not(None),
+                    models.FlowTask.completed_at.is_not(None),
+                    ~exists(
+                        select(models.ReviewRecord.id).where(
+                            models.ReviewRecord.opportunity_id == models.NewProductOpportunity.id,
+                            models.ReviewRecord.created_at >= models.FlowTask.completed_at,
+                        )
+                    ),
+                ),
+            ),
+        )
     )
     if auth and auth.role_keys.isdisjoint({"manager", "super_admin"}):
         assignee_name = auth.operator_name
     if assignee_name:
         query = query.where(models.FlowTask.assignee_name == assignee_name)
-    return list(db.scalars(query.order_by(models.FlowTask.created_at.desc()).limit(200)))
+    return list(db.scalars(query.distinct().order_by(models.FlowTask.created_at.desc()).limit(200)))

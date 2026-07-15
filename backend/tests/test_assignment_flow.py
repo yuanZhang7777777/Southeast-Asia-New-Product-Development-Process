@@ -123,6 +123,32 @@ def test_my_tasks_includes_opportunity_id_for_frontend_filtering() -> None:
     assert response.json()[0]["opportunity_id"] == opportunity_id
 
 
+def test_my_tasks_keeps_completed_claim_task_visible_until_manager_review() -> None:
+    with SessionLocal() as db:
+        opportunity = add_opportunity(db, "MAIN-EDITABLE", "SUB-001", "BATCH-1")
+        services.confirm_assignment(
+            db,
+            schemas.AssignmentConfirmRequest(opportunity_ids=[opportunity.id], assignee_name="销售A"),
+        )
+        db.flush()
+        services.submit_claim(
+            db,
+            schemas.ClaimCreate(
+                opportunity_id=opportunity.id,
+                salesperson_name="销售A",
+                claim_result="claim",
+                claim_daily_sales=2,
+            ),
+        )
+        db.commit()
+        opportunity_id = opportunity.id
+
+    response = client.get("/tasks/my?assignee_name=销售A")
+
+    assert response.status_code == 200
+    assert [(item["opportunity_id"], item["status"]) for item in response.json()] == [(opportunity_id, "completed")]
+
+
 def test_preview_assignments_counts_existing_pending_main_sku_groups() -> None:
     with SessionLocal() as db:
         existing_a = add_opportunity(db, "MAIN-A", "SUB-001", "BATCH-1")

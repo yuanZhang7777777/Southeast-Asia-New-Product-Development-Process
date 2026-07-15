@@ -613,7 +613,6 @@ def _find_claim_task(
     filters = [
         models.FlowInstance.opportunity_id == opportunity_id,
         models.FlowTask.task_type == "sales_claim",
-        models.FlowTask.status == TASK_PENDING,
     ]
     if task_id:
         filters.append(models.FlowTask.id == task_id)
@@ -624,12 +623,33 @@ def _find_claim_task(
         if assignee_user_id:
             owner_filters.append(models.FlowTask.assignee_user_id == assignee_user_id)
         filters.append(or_(*owner_filters))
-    return db.scalar(
+    query = (
         select(models.FlowTask)
         .join(models.FlowInstance)
         .where(*filters)
         .order_by(models.FlowTask.created_at.desc())
     )
+    pending = db.scalar(query.where(models.FlowTask.status == TASK_PENDING))
+    if pending:
+        return pending
+
+    opportunity = db.get(models.NewProductOpportunity, opportunity_id)
+    if opportunity is None or opportunity.current_status not in {OPPORTUNITY_CLAIM_SUBMITTED, OPPORTUNITY_CLAIM_REJECTED}:
+        return None
+    completed = db.scalar(query.where(models.FlowTask.status == TASK_COMPLETED))
+    claim = latest_platform_submission(db, opportunity_id)
+    if completed is None or claim is None or claim.task_id != completed.id:
+        return None
+    review = latest_review(db, opportunity_id)
+    if review and _same_or_later(review.created_at, completed.completed_at):
+        return None
+    return completed
+
+
+def _same_or_later(left: datetime | None, right: datetime | None) -> bool:
+    if left is None or right is None:
+        return False
+    return left.replace(tzinfo=None) >= right.replace(tzinfo=None)
 
 
 def _clean_text(value: str | None) -> str | None:
@@ -651,6 +671,17 @@ def create_review_task(db: Session, opportunity_id: str, actor_name: str | None 
         db.flush()
     flow.current_node = "review"
     flow.current_status = REVIEW_PENDING
+    existing = db.scalar(
+        select(models.FlowTask)
+        .join(models.FlowInstance)
+        .where(
+            models.FlowInstance.opportunity_id == opportunity_id,
+            models.FlowTask.task_type == "manager_review",
+            models.FlowTask.status == TASK_PENDING,
+        )
+    )
+    if existing:
+        return
     task = models.FlowTask(
         flow_instance_id=flow.id,
         node_code="review",

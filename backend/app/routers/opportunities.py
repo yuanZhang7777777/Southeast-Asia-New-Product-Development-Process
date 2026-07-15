@@ -335,6 +335,7 @@ def attach_latest_summaries(db: Session, opportunities: list[models.NewProductOp
         opportunity.latest_claim_record_id = claim.id if claim else None
         opportunity.latest_claim_result = claim.claim_result if claim else None
         opportunity.latest_claim_salesperson = claim.salesperson_name if claim else None
+        opportunity.latest_claim_daily_sales = claim.claim_daily_sales if claim else None
         opportunity.latest_reject_reason = claim.reject_reason if claim else None
         opportunity.latest_feedback_summary = claim.feedback_summary if claim else None
         opportunity.latest_claim_note = claim.note if claim else None
