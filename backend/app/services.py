@@ -49,7 +49,7 @@ from app.workflow_status import (
 
 EXCEL_TIMEZONE = timezone(timedelta(hours=8))
 SUPERVISOR_NAME = "练玉君"
-SUPERVISOR_CARD_RECEIVER_NAMES = ("刘学城", "徐成芬", "徐子云", "罗艳娇", "闫歌")
+SUPERVISOR_CARD_RECEIVER_NAMES = ("刘学城", "徐成芬", "徐仔云", "罗艳娇", "闫歌")
 
 REVIEW_TO_OPPORTUNITY_STATUS = {
     REVIEW_APPROVED: OPPORTUNITY_READY_FOR_STOCKING,

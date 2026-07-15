@@ -125,7 +125,7 @@ def test_supervisor_card_fans_out_to_real_supervisor_allowlist_even_with_test_re
             [
                 models.RoleMapping(name="刘学城", role="super_admin", dingtalk_user_id="dt-liu", enabled=True),
                 models.RoleMapping(name="徐成芬", role="manager", dingtalk_user_id="dt-xcf", enabled=True),
-                models.RoleMapping(name="徐子云", role="manager", dingtalk_user_id="dt-xzy", enabled=True),
+                models.RoleMapping(name="徐仔云", role="manager", dingtalk_user_id="dt-xzy", enabled=True),
                 models.RoleMapping(name="罗艳娇", role="manager", dingtalk_user_id="dt-lyj", enabled=True),
                 models.RoleMapping(name="闫歌", role="manager", dingtalk_user_id="dt-yg", enabled=True),
                 models.RoleMapping(name="其他主管", role="manager", dingtalk_user_id="dt-other", enabled=True),
