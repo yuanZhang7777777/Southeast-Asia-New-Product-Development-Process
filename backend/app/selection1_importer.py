@@ -446,8 +446,9 @@ def source_value(
 
 
 def is_summary_row(values: dict[str, Any]) -> bool:
-    joined = " ".join(str(value) for value in values.values() if value is not None)
-    return "小计" in joined or "合计" in joined
+    summary_labels = {"小计", "合计", "总计", "汇总"}
+    identity_columns = ("A", "G", "H", "I", "J")
+    return any((text_value(values.get(column)) or "").strip(" ：:") in summary_labels for column in identity_columns)
 
 
 def is_repeated_header_row(values: dict[str, Any]) -> bool:

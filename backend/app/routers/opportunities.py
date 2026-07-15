@@ -18,7 +18,7 @@ from app.site_codes import normalize_site_code
 from app.workflow_status import OPPORTUNITY_DISABLED
 
 router = APIRouter(prefix="/opportunities", tags=["opportunities"])
-UPLOAD_ROOT = Path(__file__).resolve().parents[1] / ".private_uploads" / "source-workbooks"
+UPLOAD_ROOT = Path(__file__).resolve().parents[2] / ".private_uploads" / "source-workbooks"
 
 
 @router.get("", response_model=list[schemas.OpportunityRead])

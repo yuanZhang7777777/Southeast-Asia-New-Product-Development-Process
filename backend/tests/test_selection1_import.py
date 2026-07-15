@@ -13,6 +13,7 @@ from openpyxl.drawing.image import Image  # noqa: E402
 from app import models  # noqa: E402
 from app.db import Base, SessionLocal, engine  # noqa: E402
 from app.main import app  # noqa: E402
+from app.routers import opportunities as opportunities_router  # noqa: E402
 
 
 client = TestClient(app)
@@ -186,6 +187,12 @@ def test_selection1_upload_import_uses_browser_file(tmp_path: Path) -> None:
     assert "selection1" in body["source_file"]
 
 
+def test_selection1_uploads_are_saved_in_backend_persistent_volume() -> None:
+    backend_root = Path(__file__).resolve().parents[1]
+
+    assert opportunities_router.UPLOAD_ROOT == backend_root / ".private_uploads" / "source-workbooks"
+
+
 def test_selection1_upload_accepts_oss_signed_filename(tmp_path: Path) -> None:
     workbook_path = tmp_path / "selection1_upload.xlsx"
     build_selection1_fixture(workbook_path)
@@ -256,6 +263,18 @@ def test_selection1_import_skips_repeated_header_rows(tmp_path: Path) -> None:
         assert db.query(models.NewProductOpportunity).filter_by(main_sku="MAINSKU").count() == 0
 
 
+def test_selection1_import_keeps_product_when_reason_contains_sales_total(tmp_path: Path) -> None:
+    workbook_path = tmp_path / "selection1_reason_contains_total.xlsx"
+    build_selection1_fixture(workbook_path, reason="多家竞对店铺月销合计3000以上")
+
+    response = client.post("/opportunities/import/selection1", json={"source_file": str(workbook_path), "source_sheet": "W27"})
+
+    assert response.status_code == 200
+    assert response.json()["imported_count"] == 1
+    with SessionLocal() as db:
+        assert db.query(models.NewProductOpportunity).filter_by(sub_sku="SUB-001").count() == 1
+
+
 def test_selection1_reimport_keeps_previous_source_snapshots(tmp_path: Path) -> None:
     workbook_path = tmp_path / "selection1_reimport.xlsx"
     build_selection1_fixture(workbook_path)
@@ -303,6 +322,7 @@ def build_selection1_fixture(
     row_index: int = 3,
     sub_sku: str = "SUB-001",
     sub_sku_name: str | None = None,
+    reason: str | None = None,
     extra_rows: list[dict[str, object]] | None = None,
 ) -> None:
     workbook = Workbook()
@@ -335,6 +355,7 @@ def build_selection1_fixture(
         row[column_index - 1] = value
     row[9] = sub_sku
     row[8] = sub_sku_name
+    row[11] = reason
     while worksheet.max_row < row_index - 1:
         worksheet.append([None] * 86)
     worksheet.append(row)
