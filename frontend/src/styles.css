@@ -1494,6 +1494,14 @@ textarea {
   min-width: 0;
 }
 
+.assignment-filter-bar {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(150px, 220px)) auto;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
 .claim-workflow-filters {
   display: flex;
   flex-wrap: wrap;
@@ -1714,7 +1722,7 @@ summary {
 
 .profile-row {
   display: grid;
-  grid-template-columns: 54px minmax(110px, 1fr) 90px minmax(120px, 1fr) minmax(120px, 1fr) 82px 54px;
+  grid-template-columns: 54px minmax(110px, 1fr) 90px minmax(120px, 1fr) minmax(120px, 1fr) 82px 82px 54px;
   gap: 8px;
   align-items: center;
 }
@@ -2316,6 +2324,47 @@ summary {
   min-width: 230px;
 }
 
+.competitor-group.competitor-lowest,
+.competitor-row.competitor-lowest td {
+  background: #eef6ff;
+}
+
+.competitor-group.competitor-most-orders,
+.competitor-row.competitor-most-orders td {
+  background: #edf8f1;
+}
+
+.competitor-group.competitor-second,
+.competitor-row.competitor-second td {
+  background: #fff8e8;
+}
+
+.competitor-group.competitor-third,
+.competitor-row.competitor-third td {
+  background: #f5f0ff;
+}
+
+.competitor-group.competitor-new,
+.competitor-row.competitor-new td {
+  background: #fff1f0;
+}
+
+.competitor-group-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 2px 7px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font-weight: 700;
+}
+
+.competitor-group-badge.competitor-lowest { border-color: #91caff; }
+.competitor-group-badge.competitor-most-orders { border-color: #95de64; }
+.competitor-group-badge.competitor-second { border-color: #ffd666; }
+.competitor-group-badge.competitor-third { border-color: #b7a2e8; }
+.competitor-group-badge.competitor-new { border-color: #ffa39e; }
+
 .claim-matrix-table tr:last-child td {
   border-bottom: 0;
 }
@@ -2895,6 +2944,10 @@ th {
   }
 
   .assignment-workload-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .assignment-filter-bar {
     grid-template-columns: 1fr;
   }
 }

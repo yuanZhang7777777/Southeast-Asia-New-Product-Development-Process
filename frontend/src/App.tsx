@@ -1,5 +1,7 @@
 import {
+  ArrowDown,
   ArrowLeft,
+  ArrowUp,
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
@@ -43,6 +45,8 @@ import {
   Task
 } from "./api";
 import { ClaimDraftState, createClaimDraft, createClaimDraftFromLatest, patchClaimDraftGroup } from "./claimDrafts";
+import { filterAssignmentItems, groupOperatorProfilesBySite, moveOperatorWithinSite, sortOperatorProfiles } from "./assignmentFilters";
+import { competitorGroupForColumn, competitorGroupForLabel } from "./competitorGroups";
 import { ImportResults, recordImportResult } from "./importResults";
 import { businessPeriodsByNewest, filterOperatorClaimRows, latestBusinessPeriod, operatorClaimStatusOptions } from "./operatorClaimFilters";
 import { groupByBusinessIdentity, normalizeSiteText } from "./opportunityGroups";
@@ -152,7 +156,7 @@ const viewMeta: Record<ViewKey, { title: string; desc: string }> = {
   assign: { title: "分配台", desc: "主管按主 SKU 整组生成推荐，可逐行调整最终分配；系统先按站点过滤候选人，再看重点品类1、重点品类2和负载。" },
   claim: { title: "运营认领", desc: "分配任务必须认领或不认领；财根机会池允许其他运营自认领，人数不限。" },
   review: { title: "主管复核", desc: "主管只能通过、确认不认领或退回补充，不允许代改运营填写内容。" },
-  stock: { title: "导出中心", desc: "只导出 Excel。按子 SKU 明细出行，同一子 SKU 被不同销售员认领时另起一行。" },
+  stock: { title: "导出中心", desc: "只导出 Excel。按子 SKU 明细出行，同一子 SKU 被不同运营认领时另起一行。" },
   research: { title: "二次调研", desc: "按主 SKU 整组处理到货后的复查；全部子 SKU 在同一界面填写，草稿自动保存。" }
 };
 
@@ -535,7 +539,7 @@ function App() {
       return;
     }
     if (activeOperator && operatorProfiles.some((profile) => profile.enabled && profile.operator_name === activeOperator)) return;
-    setActiveOperator(operatorProfiles.find((profile) => profile.enabled)?.operator_name || "");
+    setActiveOperator(sortOperatorProfiles(operatorProfiles.filter((profile) => profile.enabled))[0]?.operator_name || "");
   }, [activeOperator, activeRole, authSession, operatorProfiles]);
 
   useEffect(() => {
@@ -738,7 +742,7 @@ function App() {
   async function updateOpportunityDetails(id: string, payload: unknown) {
     await runAction("保存 SKU 信息", async () => {
       const updated = await api.updateOpportunity(id, payload);
-      setDetailGroupKey(`${updated.source_type || ""}|${updated.main_sku}`);
+      setDetailGroupKey(groupByBusinessIdentity([updated])[0]?.key || null);
     });
   }
 
@@ -760,7 +764,7 @@ function App() {
 
   async function addProfile() {
     await runAction("新增人员配置", async () => {
-      if (!newProfile.operator_name.trim()) throw new Error("销售员不能为空");
+      if (!newProfile.operator_name.trim()) throw new Error("运营不能为空");
       await api.createOperatorProfile(newProfile);
       setNewProfile({ operator_name: "", key_site: "", key_category1: "", key_category2: "", assignment_priority: 0, enabled: true });
     });
@@ -943,8 +947,7 @@ function App() {
               当前运营
               <select value={activeOperator} onChange={(event) => setActiveOperator(event.target.value)}>
                 <option value="">请选择</option>
-                {operatorProfiles
-                  .filter((profile) => profile.enabled)
+                {sortOperatorProfiles(operatorProfiles.filter((profile) => profile.enabled))
                   .map((profile) => (
                     <option key={profile.id} value={profile.operator_name}>
                       {profile.operator_name}
@@ -1338,7 +1341,7 @@ function SourceView(props: {
       />
       <ImportCard
         title="选品2：海外仓财根团队开发新品认领-反馈"
-        desc="作为财根机会池来源；主销售员必须处理，其他销售员可自认领。"
+        desc="作为财根机会池来源；主运营必须处理，其他运营可自认领。"
         sheet={props.source2Sheet}
         sheets={props.source2Sheets}
         file={props.source2File}
@@ -1661,7 +1664,7 @@ const competitorSpecs = [
     salesAliases: ["月销1", "竞品子sku月销 / （链接1）"]
   },
   {
-    label: "Most orders",
+    label: "月销最高",
     link: "AC",
     price: "AD",
     sales: "AE",
@@ -2142,9 +2145,11 @@ function CompetitorTable(props: { item: Opportunity }) {
           </tr>
         </thead>
         <tbody>
-          {rows.map((row) => (
-            <tr key={row.label}>
-              <td>{row.label}</td>
+          {rows.map((row) => {
+            const group = competitorGroupForLabel(row.label);
+            return (
+            <tr className={group ? `competitor-row competitor-${group.key}` : ""} key={row.label}>
+              <td><span className={group ? `competitor-group-badge competitor-${group.key}` : "competitor-group-badge"}>{group?.label || row.label}</span></td>
               <td>{row.linkColumn}</td>
               <td>{renderLinkCell(row.link)}</td>
               <td>{row.priceColumn}</td>
@@ -2152,7 +2157,8 @@ function CompetitorTable(props: { item: Opportunity }) {
               <td>{row.salesColumn}</td>
               <td>{row.sales || "-"}</td>
             </tr>
-          ))}
+            );
+          })}
         </tbody>
       </table>
     </div>
@@ -2419,13 +2425,25 @@ function AssignView(props: {
   onPreview: () => void;
   onAssign: () => void;
 }) {
+  const [siteFilter, setSiteFilter] = useState("");
+  const [categoryFilter, setCategoryFilter] = useState("");
+  const [operatorFilter, setOperatorFilter] = useState("");
   const patchProfile = (id: string, patch: Partial<OperatorAssignmentProfile>) => {
     props.setOperatorProfiles(props.operatorProfiles.map((profile) => (profile.id === id ? { ...profile, ...patch } : profile)));
   };
-  const enabledProfiles = props.operatorProfiles.filter((profile) => profile.enabled);
+  const sortedProfiles = sortOperatorProfiles(props.operatorProfiles);
+  const enabledProfiles = sortedProfiles.filter((profile) => profile.enabled);
+  const profileGroups = groupOperatorProfilesBySite(sortedProfiles);
   const workload = assignmentWorkload(enabledProfiles, props.groups, props.tasks, props.previewItems, props.assignmentDrafts);
   const pendingGroups = props.assignmentGroups;
-  const filteredItems = props.previewItems.filter((item) => assignmentItemMatches(item, props.assignmentGroups, props.assignmentDrafts, props.list.query));
+  const filteredItems = filterAssignmentItems(props.previewItems, props.assignmentGroups, props.assignmentDrafts, {
+    query: props.list.query,
+    site: siteFilter,
+    category: categoryFilter,
+    operator: operatorFilter
+  });
+  const siteOptions = Array.from(new Set(props.assignmentGroups.flatMap((group) => group.items.map((item) => normalizeSiteText(item.site || item.country)).filter(Boolean)))).sort();
+  const categoryOptions = Array.from(new Set(props.assignmentGroups.flatMap((group) => group.items.map((item) => item.category_level1?.trim()).filter((value): value is string => Boolean(value))))).sort();
   const pageItemsList = pageItems(filteredItems, props.list);
   const selectedCount = props.previewItems.filter((item) => props.assignmentDrafts[assignmentItemKey(item)]).length;
   const childSelectedCount = props.previewItems.reduce(
@@ -2434,6 +2452,9 @@ function AssignView(props: {
   );
   const patchDraft = (item: AssignmentPreviewItem, assignee: string) => {
     props.setAssignmentDrafts({ ...props.assignmentDrafts, [assignmentItemKey(item)]: assignee });
+  };
+  const moveProfile = (profileId: string, delta: -1 | 1) => {
+    props.setOperatorProfiles(moveOperatorWithinSite(props.operatorProfiles, profileId, delta));
   };
 
   return (
@@ -2446,7 +2467,44 @@ function AssignView(props: {
             <span className="tag">未分配 {props.previewItems.length ? props.previewItems.length - selectedCount : pendingGroups.length} 组</span>
           </div>
         </div>
-        <ListControls label="分配台" list={props.list} total={filteredItems.length} setList={(patch) => props.setList((current) => ({ ...current, ...patch }))} />
+        <div className="assignment-filter-bar">
+          <select value={siteFilter} onChange={(event) => {
+            setSiteFilter(event.target.value);
+            props.setList((current) => ({ ...current, page: 1 }));
+          }}>
+            <option value="">全部站点</option>
+            {siteOptions.map((site) => <option key={site} value={site}>{site}</option>)}
+          </select>
+          <select value={categoryFilter} onChange={(event) => {
+            setCategoryFilter(event.target.value);
+            props.setList((current) => ({ ...current, page: 1 }));
+          }}>
+            <option value="">全部一级类目</option>
+            {categoryOptions.map((category) => <option key={category} value={category}>{category}</option>)}
+          </select>
+          <select value={operatorFilter} onChange={(event) => {
+            setOperatorFilter(event.target.value);
+            props.setList((current) => ({ ...current, page: 1 }));
+          }}>
+            <option value="">全部运营</option>
+            {enabledProfiles.map((profile) => <option key={profile.id} value={profile.operator_name}>{profile.operator_name}</option>)}
+          </select>
+          <button className="btn" type="button" onClick={() => {
+            setSiteFilter("");
+            setCategoryFilter("");
+            setOperatorFilter("");
+            props.setList((current) => ({ ...current, query: "", page: 1 }));
+          }}>
+            <X size={14} />清空
+          </button>
+        </div>
+        <ListControls
+          label="分配台"
+          list={props.list}
+          total={filteredItems.length}
+          searchPlaceholder="搜索主 SKU / 子 SKU / 商品名，多个关键词用空格分隔"
+          setList={(patch) => props.setList((current) => ({ ...current, ...patch }))}
+        />
         <div className="assignment-workload-grid">
           {enabledProfiles.map((profile) => {
             const load = workload[profile.operator_name] || emptyAssignmentLoad();
@@ -2513,19 +2571,20 @@ function AssignView(props: {
             保存运营配置
           </button>
         </div>
-        <p className="muted">第一版只维护销售员、重点站点、重点品类1、重点品类2。新增或调整后，下一次生成推荐立即生效。</p>
+        <p className="muted">维护运营、重点站点、重点品类1、重点品类2和站点内顺序。新增或调整后，下一次生成推荐立即生效。</p>
         <div className="profile-table">
           <div className="profile-row head">
             <span>启用</span>
-            <span>销售员</span>
+            <span>运营</span>
             <span>重点站点</span>
             <span>重点品类1</span>
             <span>重点品类2</span>
             <span>优先级</span>
+            <span>排序</span>
             <span>删除</span>
           </div>
-          {props.operatorProfiles.map((profile) => (
-            <div className="profile-row" key={profile.id}>
+          {profileGroups.flatMap((profileGroup) => profileGroup.items.map((profile, profileIndex) => (
+            <div className="profile-row" data-site={profileGroup.site} key={profile.id}>
               <input
                 type="checkbox"
                 checked={profile.enabled}
@@ -2542,12 +2601,20 @@ function AssignView(props: {
                 onChange={(event) => patchProfile(profile.id, { assignment_priority: Number(event.target.value || 0) })}
               />
               <div className="action-row compact-actions">
+                <button className="btn" disabled={profileIndex === 0} onClick={() => moveProfile(profile.id, -1)} title="在同站点上移" type="button">
+                  <ArrowUp size={14} />
+                </button>
+                <button className="btn" disabled={profileIndex === profileGroup.items.length - 1} onClick={() => moveProfile(profile.id, 1)} title="在同站点下移" type="button">
+                  <ArrowDown size={14} />
+                </button>
+              </div>
+              <div className="action-row compact-actions">
                 <button className="btn" onClick={() => props.onDeleteProfile(profile.id)} title="删除">
                   <Trash2 size={15} />
                 </button>
               </div>
             </div>
-          ))}
+          )))}
           <div className="profile-row new">
             <input
               type="checkbox"
@@ -2558,7 +2625,7 @@ function AssignView(props: {
             <input
               value={props.newProfile.operator_name}
               onChange={(event) => props.setNewProfile({ ...props.newProfile, operator_name: event.target.value })}
-              placeholder="销售员"
+              placeholder="运营"
             />
             <input
               value={props.newProfile.key_site || ""}
@@ -2581,6 +2648,7 @@ function AssignView(props: {
               onChange={(event) => props.setNewProfile({ ...props.newProfile, assignment_priority: Number(event.target.value || 0) })}
               placeholder="优先级"
             />
+            <span />
             <button className="btn primary" onClick={props.onAddProfile}>
               <Plus size={15} />
               新增
@@ -2661,6 +2729,7 @@ function AssignmentTableRow(props: {
   const site = first?.site || first?.country || "-";
   const category = first?.category_level1 || "-";
   const selectedProfile = props.enabledProfiles.find((profile) => profile.operator_name === props.selectedAssignee);
+  const profileGroups = groupOperatorProfilesBySite(props.enabledProfiles);
   return (
     <div className="assignment-row">
       <div className="assignment-cell thumb-cell">
@@ -2703,10 +2772,14 @@ function AssignmentTableRow(props: {
       <div className="assignment-cell assignment-final-cell">
         <select className="assignment-select" value={props.selectedAssignee} onChange={(event) => props.onChange(props.item, event.target.value)}>
           <option value="">未分配</option>
-          {props.enabledProfiles.map((profile) => (
-            <option key={profile.id} value={profile.operator_name}>
-              {operatorOptionLabel(profile, props.workload[profile.operator_name] || emptyAssignmentLoad())}
-            </option>
+          {profileGroups.map((profileGroup) => (
+            <optgroup key={profileGroup.site} label={profileGroup.site}>
+              {profileGroup.items.map((profile) => (
+                <option key={profile.id} value={profile.operator_name}>
+                  {operatorOptionLabel(profile, props.workload[profile.operator_name] || emptyAssignmentLoad())}
+                </option>
+              ))}
+            </optgroup>
           ))}
         </select>
         {selectedProfile && <p className="muted full-profile">{operatorProfileBrief(selectedProfile)}</p>}
@@ -3332,7 +3405,7 @@ function ClaimMatrixTable(props: {
           <tr>
             <th className="claim-matrix-sticky-left">子 SKU（I-J）</th>
             {props.columns.map((column) => (
-              <th className={isHttpUrl(snapshotColumnText(props.group.first, column)) ? "wide" : ""} key={column}>
+              <th className={claimMatrixColumnClass(props.group.first, column)} key={column}>
                 {column} · {headerLabel(props.group.first, column) || column}
               </th>
             ))}
@@ -3353,7 +3426,7 @@ function ClaimMatrixTable(props: {
                 </div>
               </td>
               {props.columns.map((column) => (
-                <td className={isHttpUrl(snapshotColumnText(item, column)) ? "wide" : ""} key={column}>
+                <td className={claimMatrixColumnClass(item, column)} key={column}>
                   {renderMaybeLink(snapshotColumnText(item, column) || "-")}
                 </td>
               ))}
@@ -3375,6 +3448,14 @@ function ClaimMatrixTable(props: {
       </table>
     </div>
   );
+}
+
+function claimMatrixColumnClass(item: Opportunity, column: string) {
+  const classes = [];
+  if (isHttpUrl(snapshotColumnText(item, column))) classes.push("wide");
+  const group = competitorGroupForColumn(column);
+  if (group) classes.push("competitor-group", `competitor-${group.key}`);
+  return classes.join(" ");
 }
 
 function ClaimMatrixDraftEditor(props: {
@@ -3764,7 +3845,7 @@ function StockView({ rows, list, setList }: { rows: AvailableStockingItem[]; lis
               <th>时间</th>
               <th>备货类型</th>
               <th>选品数据源</th>
-              <th>销售员</th>
+              <th>运营</th>
               <th>主 SKU</th>
               <th>子 SKU</th>
               <th>成本价</th>
@@ -3866,7 +3947,7 @@ function ArrivalPreviewView({
             <table>
               <thead>
                 <tr>
-                  <th>销售员</th>
+                  <th>运营</th>
                   <th>新品</th>
                   <th>老品</th>
                   <th>无法判断</th>
@@ -3892,7 +3973,7 @@ function ArrivalPreviewView({
               <thead>
                 <tr>
                   <th>类型</th>
-                  <th>销售员</th>
+                  <th>运营</th>
                   <th>子 SKU</th>
                   <th>主 SKU</th>
                   <th>国家</th>
@@ -3993,11 +4074,13 @@ function ListControls({
   label,
   list,
   total,
+  searchPlaceholder,
   setList
 }: {
   label: string;
   list: ListState;
   total: number;
+  searchPlaceholder?: string;
   setList: (patch: Partial<ListState>) => void;
 }) {
   const pages = listPageCount(total, list.pageSize);
@@ -4011,7 +4094,7 @@ function ListControls({
         <input
           value={list.query}
           onChange={(event) => setList({ query: event.target.value, page: 1 })}
-          placeholder={`${label}搜索：主 SKU / 子 SKU / 商品名 / 站点 / 类目 / 运营 / 状态`}
+          placeholder={searchPlaceholder || `${label}搜索：主 SKU / 子 SKU / 商品名 / 站点 / 类目 / 运营 / 状态`}
         />
       </label>
       <select value={list.pageSize} onChange={(event) => setList({ pageSize: Number(event.target.value), page: 1 })}>
@@ -4057,24 +4140,6 @@ function filterOpportunitiesBySearch(items: Opportunity[], query: string) {
   const needle = normalizeSearch(query);
   if (!needle) return items;
   return items.filter((item) => opportunitySearchText(item).includes(needle));
-}
-
-function assignmentItemMatches(
-  item: AssignmentPreviewItem,
-  groups: ProductGroup[],
-  drafts: Record<string, string>,
-  query: string
-) {
-  const needle = normalizeSearch(query);
-  if (!needle) return true;
-  const group = groups.find((entry) => entry.items.some((opportunity) => item.opportunity_ids.includes(opportunity.id)));
-  return normalizeSearch([
-    item.main_sku,
-    item.suggested_assignee,
-    item.match_reason,
-    drafts[assignmentItemKey(item)],
-    group ? groupSearchText(group) : ""
-  ].join(" ")).includes(needle);
 }
 
 function stockItemMatches(row: AvailableStockingItem, query: string) {
