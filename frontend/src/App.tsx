@@ -691,6 +691,12 @@ function App() {
     return result.items;
   }
 
+  function cancelAssignmentPreview() {
+    setPreviewItems([]);
+    setAssignmentDrafts({});
+    setStatusMessage("已取消本次分配推荐");
+  }
+
   async function submitAssignments() {
     await runAction("提交分配", async () => {
       if (!assignmentItems.length) throw new Error("没有待分配的主 SKU 组");
@@ -1010,7 +1016,14 @@ function App() {
                 </h1>
                 <p>{meta.desc}</p>
               </div>
-              <Toolbar activeView={activeView} assignSummary={assignSummary} onPreview={previewAssignments} onAssign={submitAssignments} />
+              <Toolbar
+                activeView={activeView}
+                assignSummary={assignSummary}
+                hasAssignmentPreview={previewItems.length > 0}
+                onPreview={previewAssignments}
+                onCancelPreview={cancelAssignmentPreview}
+                onAssign={submitAssignments}
+              />
             </div>
             {statusMessage && <div className={statusMessage.includes("失败") || statusMessage.includes("Error") ? "notice toast red" : "notice toast"}>{statusMessage}</div>}
             <div className="screen-body">
@@ -3896,6 +3909,8 @@ function Toolbar({
   activeView,
   assignSummary,
   onPreview,
+  onCancelPreview,
+  hasAssignmentPreview,
   onAssign
 }: {
   activeView: ViewKey;
@@ -3907,6 +3922,8 @@ function Toolbar({
     unassignedGroupCount: number;
   };
   onPreview: () => void;
+  onCancelPreview: () => void;
+  hasAssignmentPreview: boolean;
   onAssign: () => void;
 }) {
   if (activeView === "assign") {
@@ -3919,6 +3936,10 @@ function Toolbar({
         <span className="tag">仍未分配：{assignSummary.unassignedGroupCount}</span>
         <button className="btn" onClick={onPreview}>
           生成推荐
+        </button>
+        <button className="btn" disabled={!hasAssignmentPreview} onClick={onCancelPreview}>
+          <X size={15} />
+          取消推荐
         </button>
         <button className="btn primary" onClick={onAssign}>
           <WandSparkles size={15} />
