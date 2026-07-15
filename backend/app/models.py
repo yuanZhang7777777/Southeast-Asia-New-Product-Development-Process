@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, JSON, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base
@@ -65,13 +65,15 @@ class OperatorAssignmentProfile(TimestampMixin, Base):
     key_site: Mapped[str | None] = mapped_column(String(32))
     key_category1: Mapped[str | None] = mapped_column(String(128))
     key_category2: Mapped[str | None] = mapped_column(String(128))
+    assignment_priority: Mapped[int] = mapped_column(Integer, default=0)
+    display_order: Mapped[int] = mapped_column(Integer, default=0)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
 
 
 class NewProductOpportunity(TimestampMixin, Base):
     __tablename__ = "new_product_opportunity"
     __table_args__ = (
-        UniqueConstraint("source_type", "source_file", "source_sheet", "source_row", name="uq_opportunity_source_row"),
+        Index("ix_opportunity_source_trace", "source_type", "source_file", "source_sheet", "source_row"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
@@ -108,6 +110,7 @@ class ImportBatch(TimestampMixin, Base):
     source_type: Mapped[str] = mapped_column(String(64))
     source_file: Mapped[str | None] = mapped_column(String(255))
     source_sheet: Mapped[str | None] = mapped_column(String(128))
+    business_period: Mapped[str | None] = mapped_column(String(128), index=True)
     imported_by: Mapped[str | None] = mapped_column(String(128))
     imported_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
     created_count: Mapped[int] = mapped_column(Integer, default=0)
@@ -203,6 +206,14 @@ class SalesClaimForecast(TimestampMixin, Base):
     first_submitted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
     last_updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
     note: Mapped[str | None] = mapped_column(Text)
+    downstream_status: Mapped[str | None] = mapped_column(String(64), index=True)
+    arrival_detected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    secondary_research_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    secondary_competitor_url: Mapped[str | None] = mapped_column(Text)
+    secondary_conclusion: Mapped[str | None] = mapped_column(Text)
+    product_positioning: Mapped[str | None] = mapped_column(String(32))
+    secondary_evidence_images: Mapped[list[dict] | None] = mapped_column(JSON, default=list)
+    secondary_research_submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class ReviewRecord(TimestampMixin, Base):
@@ -210,6 +221,7 @@ class ReviewRecord(TimestampMixin, Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     opportunity_id: Mapped[str] = mapped_column(ForeignKey("new_product_opportunity.id"))
+    claim_record_id: Mapped[str | None] = mapped_column(ForeignKey("sales_claim_forecast.id"), index=True)
     reviewer_user_id: Mapped[str | None] = mapped_column(String(36))
     reviewer_name: Mapped[str | None] = mapped_column(String(128))
     review_status: Mapped[str] = mapped_column(String(32))
@@ -283,14 +295,59 @@ class ExportRow(TimestampMixin, Base):
 
 class ArrivalRecord(TimestampMixin, Base):
     __tablename__ = "arrival_record"
+    __table_args__ = (UniqueConstraint("plm_arrival_batch_id", "claim_record_id", name="uq_arrival_record_plm_batch_claim"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     opportunity_id: Mapped[str] = mapped_column(ForeignKey("new_product_opportunity.id"))
+    claim_record_id: Mapped[str | None] = mapped_column(ForeignKey("sales_claim_forecast.id"), index=True)
+    plm_arrival_batch_id: Mapped[str | None] = mapped_column(ForeignKey("plm_arrival_batch.id"))
+    plm_arrival_item_id: Mapped[str | None] = mapped_column(ForeignKey("plm_arrival_item.id"))
+    salesperson_name: Mapped[str | None] = mapped_column(String(128), index=True)
+    country: Mapped[str | None] = mapped_column(String(64))
     warehouse: Mapped[str | None] = mapped_column(String(128))
     arrived_quantity: Mapped[int | None] = mapped_column(Integer)
     arrived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     listing_status: Mapped[str | None] = mapped_column(String(64))
     note: Mapped[str | None] = mapped_column(Text)
+
+
+class PlmArrivalBatch(TimestampMixin, Base):
+    __tablename__ = "plm_arrival_batch"
+    __table_args__ = (UniqueConstraint("source_hash", name="uq_plm_arrival_batch_source_hash"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    arrival_date: Mapped[str] = mapped_column(String(10), index=True)
+    source_file: Mapped[str | None] = mapped_column(String(255))
+    source_hash: Mapped[str] = mapped_column(String(64), index=True)
+    bloc_name: Mapped[str] = mapped_column(String(128))
+    status: Mapped[str] = mapped_column(String(64), default="processed")
+    processed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    row_count: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class PlmArrivalItem(TimestampMixin, Base):
+    __tablename__ = "plm_arrival_item"
+    __table_args__ = (Index("ix_plm_arrival_item_batch_claim", "batch_id", "matched_claim_record_id"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    batch_id: Mapped[str] = mapped_column(ForeignKey("plm_arrival_batch.id"), index=True)
+    source_sheet: Mapped[str | None] = mapped_column(String(128))
+    source_row: Mapped[int | None] = mapped_column(Integer)
+    arrival_type: Mapped[str] = mapped_column(String(32), index=True)
+    product_name: Mapped[str | None] = mapped_column(String(255))
+    salesperson_name: Mapped[str | None] = mapped_column(String(128), index=True)
+    country: Mapped[str | None] = mapped_column(String(64))
+    warehouse: Mapped[str | None] = mapped_column(String(128))
+    main_sku: Mapped[str | None] = mapped_column(String(128))
+    sub_sku: Mapped[str | None] = mapped_column(String(128), index=True)
+    latest_storage_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    first_listing_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    available_quantity: Mapped[float | None] = mapped_column(Float)
+    real_stock_quantity: Mapped[float | None] = mapped_column(Float)
+    daily_sales: Mapped[float | None] = mapped_column(Float)
+    match_status: Mapped[str] = mapped_column(String(64), default="unmatched", index=True)
+    matched_claim_record_id: Mapped[str | None] = mapped_column(ForeignKey("sales_claim_forecast.id"), index=True)
+    raw_payload: Mapped[dict] = mapped_column(JSON, default=dict)
 
 
 class FourWeekSummary(TimestampMixin, Base):

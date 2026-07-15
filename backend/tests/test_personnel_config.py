@@ -73,7 +73,16 @@ def test_operator_profile_admin_crud_exposes_only_assignment_fields() -> None:
 
     assert create_response.status_code == 200
     body = create_response.json()
-    assert set(body) == {"id", "operator_name", "key_site", "key_category1", "key_category2", "enabled"}
+    assert set(body) == {
+        "id",
+        "operator_name",
+        "key_site",
+        "key_category1",
+        "key_category2",
+        "assignment_priority",
+        "display_order",
+        "enabled",
+    }
     assert body["operator_name"] == "陈丽妹"
 
     update_response = client.patch(
@@ -91,6 +100,40 @@ def test_operator_profile_admin_crud_exposes_only_assignment_fields() -> None:
     delete_response = client.delete(f"/admin/operator-profiles/{body['id']}")
     assert delete_response.status_code == 204
     assert client.get("/admin/operator-profiles").json() == []
+
+
+def test_operator_profiles_keep_append_order_and_priority() -> None:
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    client = TestClient(app)
+    first = client.post(
+        "/admin/operator-profiles",
+        json={"operator_name": "Beta", "key_site": "PH", "assignment_priority": 1, "enabled": True},
+    )
+    second = client.post(
+        "/admin/operator-profiles",
+        json={"operator_name": "Alpha", "key_site": "PH", "assignment_priority": 9, "enabled": True},
+    )
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert first.json()["display_order"] < second.json()["display_order"]
+    assert second.json()["assignment_priority"] == 9
+
+    listed = client.get("/admin/operator-profiles").json()
+    assert [item["operator_name"] for item in listed] == ["Beta", "Alpha"]
+
+    with SessionLocal() as db:
+        role_names = [
+            item.name
+            for item in db.query(models.RoleMapping)
+            .filter(models.RoleMapping.role == "operator")
+            .order_by(models.RoleMapping.name)
+            .all()
+        ]
+    assert role_names == ["Alpha", "Beta"]
 
 
 def build_personnel_fixture(path: Path) -> None:

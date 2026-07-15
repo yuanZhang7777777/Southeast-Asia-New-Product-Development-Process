@@ -1,6 +1,8 @@
 import {
   ArrowLeft,
   CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
   ClipboardPen,
   Database,
   Download,
@@ -24,7 +26,7 @@ import {
   X,
   XCircle
 } from "lucide-react";
-import { ChangeEvent, ClipboardEvent, DragEvent, FormEvent, ReactNode, useEffect, useMemo, useState } from "react";
+import { ChangeEvent, ClipboardEvent, Dispatch, DragEvent, FormEvent, ReactNode, SetStateAction, useEffect, useMemo, useState } from "react";
 import {
   API_BASE,
   api,
@@ -32,12 +34,20 @@ import {
   AuthSession,
   AvailableStockingItem,
   getAuthToken,
+  ImportBatchSummary,
   Opportunity,
   OperatorAssignmentProfile,
+  PlmArrivalPreview,
   Selection1ImportResponse,
   setAuthToken,
   Task
 } from "./api";
+import { ClaimDraftState, createClaimDraft, patchClaimDraftGroup } from "./claimDrafts";
+import { ImportResults, recordImportResult } from "./importResults";
+import { adjacentDetailTarget } from "./productDetailNavigation";
+import { ProductBoardView } from "./ProductBoardView";
+import { SecondaryResearchView } from "./SecondaryResearchView";
+import { compactUrlLabel } from "./urlDisplay";
 
 type DingTalkAuthCodeResult = {
   authCode?: string;
@@ -63,7 +73,7 @@ declare global {
 }
 
 type RoleKey = "operator" | "manager";
-type ViewKey = "dashboard" | "source" | "pool" | "assign" | "claim" | "review" | "stock";
+type ViewKey = "dashboard" | "source" | "pool" | "assign" | "claim" | "review" | "stock" | "research";
 
 type ProductGroup = {
   key: string;
@@ -83,6 +93,12 @@ type DashboardFilters = {
   source: string;
 };
 
+type ListState = {
+  query: string;
+  page: number;
+  pageSize: number;
+};
+
 type EvidenceImage = {
   id: string;
   name: string;
@@ -99,11 +115,12 @@ type SubmittedEvidenceImage = {
   previewUrl?: string;
 };
 
-type ClaimDraft = {
-  mode: "claim" | "reject";
-  claimDailySales: string;
-  rejectReason: string;
-  evidenceImages: EvidenceImage[];
+type ClaimDraft = ClaimDraftState<EvidenceImage>;
+
+type ReviewDraft = {
+  reviewerName: string;
+  reviewStatus: string;
+  reviewComment: string;
 };
 
 type AssignmentLoad = {
@@ -113,13 +130,17 @@ type AssignmentLoad = {
   draftSubSkus: number;
 };
 
+type DetailSectionKey = "core" | "development" | "market" | "pricing" | "cost" | "claim" | "source";
+type ClaimDrawerModuleKey = "market" | "pricing" | "development" | "cost";
+
 const flowItems: { view: ViewKey; roles: RoleKey[]; icon: ReactNode; label: string }[] = [
   { view: "source", roles: ["manager"], icon: <FileSpreadsheet size={16} />, label: "源表导入" },
   { view: "pool", roles: ["operator", "manager"], icon: <Database size={16} />, label: "新品机会池" },
   { view: "assign", roles: ["manager"], icon: <UserRoundPlus size={16} />, label: "分配台" },
   { view: "claim", roles: ["operator"], icon: <ClipboardPen size={16} />, label: "运营认领" },
   { view: "review", roles: ["manager"], icon: <ShieldCheck size={16} />, label: "主管复核" },
-  { view: "stock", roles: ["manager"], icon: <Download size={16} />, label: "导出中心" }
+  { view: "stock", roles: ["manager"], icon: <Download size={16} />, label: "导出中心" },
+  { view: "research", roles: ["operator", "manager"], icon: <ClipboardPen size={16} />, label: "二次调研" }
 ];
 
 const viewMeta: Record<ViewKey, { title: string; desc: string }> = {
@@ -129,7 +150,8 @@ const viewMeta: Record<ViewKey, { title: string; desc: string }> = {
   assign: { title: "分配台", desc: "主管按主 SKU 整组生成推荐，可逐行调整最终分配；系统先按站点过滤候选人，再看重点品类1、重点品类2和负载。" },
   claim: { title: "运营认领", desc: "分配任务必须认领或不认领；财根机会池允许其他销售员自认领，人数不限。" },
   review: { title: "主管复核", desc: "主管只能通过、确认不认领或退回补充，不允许代改运营填写内容。" },
-  stock: { title: "导出中心", desc: "只导出 Excel。按子 SKU 明细出行，同一子 SKU 被不同销售员认领时另起一行。" }
+  stock: { title: "导出中心", desc: "只导出 Excel。按子 SKU 明细出行，同一子 SKU 被不同销售员认领时另起一行。" },
+  research: { title: "二次调研", desc: "按主 SKU 整组处理到货后的复查；全部子 SKU 在同一界面填写，草稿自动保存。" }
 };
 
 const statusMeta: Record<string, { label: string; klass: string }> = {
@@ -140,8 +162,12 @@ const statusMeta: Record<string, { label: string; klass: string }> = {
   claim_submitted: { label: "待复核-认领", klass: "amber" },
   claim_rejected: { label: "待复核-不认领", klass: "red" },
   ready_for_stocking: { label: "可备货", klass: "green" },
+  waiting_arrival: { label: "待到货", klass: "blue" },
+  waiting_secondary_research: { label: "待二次调研", klass: "amber" },
+  waiting_listing: { label: "待刊登", klass: "blue" },
   confirmed_not_claim: { label: "已确认不认领", klass: "gray" },
   已确认不认领: { label: "已确认不认领", klass: "gray" },
+  disabled: { label: "已停用", klass: "gray" },
   mixed: { label: "多状态", klass: "blue" }
 };
 
@@ -154,6 +180,8 @@ const defaultDashboardFilters: DashboardFilters = {
   category: "",
   source: ""
 };
+
+const defaultListState: ListState = { query: "", page: 1, pageSize: 50 };
 
 const operatorClaimStatuses = new Set(["assigned", "open_claim_pool", "returned_for_supplement"]);
 const OSS_PUBLIC_BASE = "https://hz-sea-np-flow-prod.oss-cn-shanghai.aliyuncs.com";
@@ -186,7 +214,7 @@ function requestDingTalkAuthCode() {
 }
 
 function isCaigenOpportunity(item: Opportunity) {
-  return item.source_type === "selection2_caigen_claim_feedback" || item.source_file?.includes("财根");
+  return item.source_type === "selection2_caigen_claim_feedback" || Boolean(item.source_file?.includes("财根"));
 }
 
 function isSelfClaimPoolItem(item: Opportunity) {
@@ -198,14 +226,13 @@ function isOperatorClaimItem(item: Opportunity) {
 }
 
 function isVisibleOperatorClaimItem(item: Opportunity, assignedOpportunityIds: Set<string>) {
-  if (isSelfClaimPoolItem(item)) return true;
   if (!operatorClaimStatuses.has(item.current_status)) return false;
   return assignedOpportunityIds.has(item.id);
 }
 
 function isPoolItem(item: Opportunity, role: RoleKey) {
-  if (role === "manager") return item.current_status === "pending_assignment" || isOperatorClaimItem(item);
-  return isOperatorClaimItem(item);
+  if (role === "manager") return isSelfClaimPoolItem(item);
+  return isSelfClaimPoolItem(item);
 }
 
 function claimSourceFor(item: Opportunity) {
@@ -233,24 +260,44 @@ function App() {
   const [opportunities, setOpportunities] = useState<Opportunity[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [operatorProfiles, setOperatorProfiles] = useState<OperatorAssignmentProfile[]>([]);
+  const [importBatches, setImportBatches] = useState<ImportBatchSummary[]>([]);
   const [activeOperator, setActiveOperator] = useState("");
   const [availableStocking, setAvailableStocking] = useState<AvailableStockingItem[]>([]);
-  const [lastImport, setLastImport] = useState<Selection1ImportResponse | null>(null);
+  const [lastImports, setLastImports] = useState<ImportResults>({});
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
-  const [source1Sheet, setSource1Sheet] = useState("开发0623期");
-  const [source2Sheet, setSource2Sheet] = useState("5.26期");
+  const [source1Sheet, setSource1Sheet] = useState("");
+  const [source2Sheet, setSource2Sheet] = useState("");
+  const [source1BusinessPeriod, setSource1BusinessPeriod] = useState("");
+  const [source1PeriodTouched, setSource1PeriodTouched] = useState(false);
+  const [source1Sheets, setSource1Sheets] = useState<string[]>([]);
+  const [source2Sheets, setSource2Sheets] = useState<string[]>([]);
   const [source1File, setSource1File] = useState<File | null>(null);
   const [source2File, setSource2File] = useState<File | null>(null);
   const [previewItems, setPreviewItems] = useState<AssignmentPreviewItem[]>([]);
   const [assignmentDrafts, setAssignmentDrafts] = useState<Record<string, string>>({});
+  const [claimDrafts, setClaimDrafts] = useState<Record<string, ClaimDraft>>({});
   const [reviewTarget, setReviewTarget] = useState<Opportunity | null>(null);
+  const [reviewDrafts, setReviewDrafts] = useState<Record<string, ReviewDraft>>({});
   const [detailGroupKey, setDetailGroupKey] = useState<string | null>(null);
+  const [detailChildId, setDetailChildId] = useState<string | null>(null);
+  const [claimDetailChildId, setClaimDetailChildId] = useState<string | null>(null);
   const [dashboardFilters, setDashboardFilters] = useState<DashboardFilters>(defaultDashboardFilters);
-  const [newProfile, setNewProfile] = useState<Pick<OperatorAssignmentProfile, "operator_name" | "key_site" | "key_category1" | "key_category2" | "enabled">>({
+  const [dashboardList, setDashboardList] = useState<ListState>(defaultListState);
+  const [poolList, setPoolList] = useState<ListState>(defaultListState);
+  const [assignList, setAssignList] = useState<ListState>(defaultListState);
+  const [claimList, setClaimList] = useState<ListState>(defaultListState);
+  const [reviewList, setReviewList] = useState<ListState>(defaultListState);
+  const [arrivalDate, setArrivalDate] = useState(previousDateText());
+  const [arrivalPreview, setArrivalPreview] = useState<PlmArrivalPreview | null>(null);
+  const [arrivalList, setArrivalList] = useState<ListState>(defaultListState);
+  const [stockList, setStockList] = useState<ListState>(defaultListState);
+  const [selectedSelfClaimIds, setSelectedSelfClaimIds] = useState<string[]>([]);
+  const [newProfile, setNewProfile] = useState<Pick<OperatorAssignmentProfile, "operator_name" | "key_site" | "key_category1" | "key_category2" | "assignment_priority" | "enabled">>({
     operator_name: "",
     key_site: "",
     key_category1: "",
     key_category2: "",
+    assignment_priority: 0,
     enabled: true
   });
 
@@ -309,9 +356,17 @@ function App() {
       ),
     [activeOperator, tasks]
   );
+  const isSuperAdmin = Boolean(authSession?.roles.some((item) => item.role === "super_admin"));
+  const canManage = Boolean(authSession?.roles.some((item) => item.role === "manager" || item.role === "super_admin"));
+  const selectedSelfClaimIdSet = useMemo(() => new Set(selectedSelfClaimIds), [selectedSelfClaimIds]);
   const claimRows = useMemo(
-    () => opportunities.filter((item) => isVisibleOperatorClaimItem(item, activeOperatorTaskOpportunityIds)),
-    [activeOperatorTaskOpportunityIds, opportunities]
+    () =>
+      opportunities.filter(
+        (item) =>
+          isVisibleOperatorClaimItem(item, activeOperatorTaskOpportunityIds) ||
+          (selectedSelfClaimIdSet.has(item.id) && isSelfClaimPoolItem(item))
+      ),
+    [activeOperatorTaskOpportunityIds, opportunities, selectedSelfClaimIdSet]
   );
   const reviewRows = useMemo(
     () => opportunities.filter((item) => ["claim_submitted", "claim_rejected"].includes(item.current_status)),
@@ -321,7 +376,55 @@ function App() {
     () => (detailGroupKey ? groups.find((group) => group.key === detailGroupKey) || null : null),
     [detailGroupKey, groups]
   );
+  const detailSequence = useMemo(
+    () => groups.flatMap((group) => group.items.map((item) => ({ groupKey: group.key, childId: item.id }))),
+    [groups]
+  );
+  const detailSequenceIndex = detailGroup
+    ? detailSequence.findIndex(
+        (entry) => entry.groupKey === detailGroup.key && entry.childId === (detailChildId || detailGroup.items[0]?.id)
+      )
+    : -1;
   const stats = useMemo(() => buildStats(opportunities, tasks, availableStocking), [opportunities, tasks, availableStocking]);
+
+  function openProductDetail(group: ProductGroup, childId?: string | null) {
+    setDetailGroupKey(group.key);
+    setDetailChildId(childId || group.items[0]?.id || null);
+  }
+
+  function navigateProductDetail(delta: -1 | 1, currentChildId: string) {
+    if (!detailGroupKey) return;
+    const target = adjacentDetailTarget(groups, detailGroupKey, currentChildId, delta);
+    if (!target) return;
+    setDetailGroupKey(target.groupKey);
+    setDetailChildId(target.childId);
+  }
+
+  function openOpportunityDetail(item: Opportunity) {
+    const group = groups.find((entry) => entry.items.some((child) => child.id === item.id));
+    if (group) openProductDetail(group, item.id);
+  }
+
+  function openClaimDetail(group: ProductGroup, childId?: string | null) {
+    setClaimDetailChildId(childId || group.items[0]?.id || null);
+  }
+
+  function addSelfClaimGroup(group: ProductGroup) {
+    const ids = group.items.filter(isSelfClaimPoolItem).map((item) => item.id);
+    if (!ids.length) return;
+    setSelectedSelfClaimIds((current) => Array.from(new Set([...current, ...ids])));
+    setActiveRole("operator");
+    setActiveView("claim");
+  }
+
+  function removeSelfClaimItem(id: string) {
+    setSelectedSelfClaimIds((current) => current.filter((itemId) => itemId !== id));
+    setClaimDrafts((current) => {
+      const next = { ...current };
+      delete next[id];
+      return next;
+    });
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -363,6 +466,10 @@ function App() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    if (activeView !== "claim") setClaimDetailChildId(null);
+  }, [activeView]);
 
   useEffect(() => {
     if (authChecked && authSession) refresh();
@@ -407,6 +514,14 @@ function App() {
   }, [activeRole, activeView, visibleFlow]);
 
   useEffect(() => {
+    setSelectedSelfClaimIds((current) => {
+      const valid = new Set(opportunities.filter(isSelfClaimPoolItem).map((item) => item.id));
+      const next = current.filter((id) => valid.has(id));
+      return next.length === current.length ? current : next;
+    });
+  }, [opportunities]);
+
+  useEffect(() => {
     if (activeRole !== "operator") return;
     if (authSession?.operator_name) {
       if (activeOperator !== authSession.operator_name) setActiveOperator(authSession.operator_name);
@@ -415,6 +530,12 @@ function App() {
     if (activeOperator && operatorProfiles.some((profile) => profile.enabled && profile.operator_name === activeOperator)) return;
     setActiveOperator(operatorProfiles.find((profile) => profile.enabled)?.operator_name || "");
   }, [activeOperator, activeRole, authSession, operatorProfiles]);
+
+  useEffect(() => {
+    if (!statusMessage || statusMessage.includes("中...") || statusMessage.includes("正在") || statusMessage.includes("失败") || statusMessage.includes("Error")) return;
+    const timer = window.setTimeout(() => setStatusMessage(""), 2400);
+    return () => window.clearTimeout(timer);
+  }, [statusMessage]);
 
   useEffect(() => {
     setDetailGroupKey(null);
@@ -450,6 +571,7 @@ function App() {
     setTasks([]);
     setAvailableStocking([]);
     setOperatorProfiles([]);
+    setImportBatches([]);
   }
 
   async function changeOwnPassword(event: FormEvent<HTMLFormElement>) {
@@ -479,22 +601,39 @@ function App() {
         return fallback;
       }
     }
-    const [health, opportunityList, taskList, stockingList, profileList] = await Promise.all([
+    const [health, opportunityList, taskList, stockingList, profileList, batchList] = await Promise.all([
       loadPart("健康检查", api.health, { status: "error", environment: "unknown" }),
-      loadPart("机会池", api.opportunities, []),
+      loadPart("机会池", () => api.opportunities(5000, undefined, isSuperAdmin), []),
       loadPart("待办", api.tasks, []),
       loadPart("导出中心", api.availableStocking, []),
-      loadPart("人员配置", api.operatorProfiles, [])
+      loadPart("人员配置", api.operatorProfiles, []),
+      canManage ? loadPart("导入批次", api.importBatches, []) : Promise.resolve([])
     ]);
     setHealthStatus(health.status);
     setOpportunities(opportunityList);
     setTasks(taskList);
     setAvailableStocking(stockingList);
     setOperatorProfiles(profileList);
+    setImportBatches(batchList);
     if (!options.silent || failures.length) {
       setStatusMessage(failures.length ? `部分数据未加载：${failures.join("、")}` : "已刷新");
     }
     if (!options.silent) setLoading(false);
+  }
+
+  async function loadPlmArrivalPreview() {
+    setLoading(true);
+    try {
+      const preview = await api.plmArrivalPreview(arrivalDate);
+      setArrivalPreview(preview);
+      setArrivalList((current) => ({ ...current, page: 1 }));
+      setStatusMessage(`已加载 ${preview.date} 到货预览`);
+    } catch (error) {
+      setArrivalPreview(null);
+      setStatusMessage(error instanceof Error ? error.message : "到货预览加载失败");
+    } finally {
+      setLoading(false);
+    }
   }
 
   async function runAction(label: string, action: () => Promise<unknown>) {
@@ -511,16 +650,30 @@ function App() {
     }
   }
 
+  function updateSourceSheet(kind: 1 | 2, value: string) {
+    if (kind === 1) {
+      setSource1Sheet(value);
+      if (!source1PeriodTouched) setSource1BusinessPeriod(value);
+    } else {
+      setSource2Sheet(value);
+    }
+  }
+
+  function updateBusinessPeriod(value: string) {
+    setSource1PeriodTouched(true);
+    setSource1BusinessPeriod(value);
+  }
+
   async function importSelection(kind: 1 | 2) {
     await runAction(`导入选品${kind}`, async () => {
       const selectedFile = kind === 1 ? source1File : source2File;
       if (!selectedFile) throw new Error(`请先选择选品${kind}反馈表 Excel 文件`);
       const result =
         kind === 1
-          ? await api.importSelection1File(source1Sheet, selectedFile)
+          ? await api.importSelection1File(source1Sheet, source1BusinessPeriod, selectedFile)
           : await api.importSelection2File(source2Sheet, selectedFile);
-      setLastImport(result);
-      setActiveView("pool");
+      setLastImports((current) => recordImportResult(current, kind, result));
+      setActiveView(kind === 1 ? "assign" : "pool");
     });
   }
 
@@ -542,10 +695,13 @@ function App() {
     await runAction("提交分配", async () => {
       if (!assignmentItems.length) throw new Error("没有待分配的主 SKU 组");
       const idsByAssignee = new Map<string, string[]>();
+      const currentAssignableIds = new Set(assignableIds);
       for (const item of assignmentItems) {
         const assignee = assignmentDrafts[assignmentItemKey(item)];
         if (!assignee) continue;
-        idsByAssignee.set(assignee, [...(idsByAssignee.get(assignee) || []), ...item.opportunity_ids]);
+        const opportunityIds = item.opportunity_ids.filter((id) => currentAssignableIds.has(id));
+        if (!opportunityIds.length) continue;
+        idsByAssignee.set(assignee, [...(idsByAssignee.get(assignee) || []), ...opportunityIds]);
       }
       if (!idsByAssignee.size) throw new Error("没有选择最终分配人");
       for (const [assignee, opportunityIds] of idsByAssignee) {
@@ -581,6 +737,8 @@ function App() {
           key_site: profile.key_site || "",
           key_category1: profile.key_category1 || "",
           key_category2: profile.key_category2 || "",
+          assignment_priority: Number(profile.assignment_priority || 0),
+          display_order: profile.display_order || 0,
           enabled: profile.enabled
         });
       }
@@ -591,7 +749,7 @@ function App() {
     await runAction("新增人员配置", async () => {
       if (!newProfile.operator_name.trim()) throw new Error("销售员不能为空");
       await api.createOperatorProfile(newProfile);
-      setNewProfile({ operator_name: "", key_site: "", key_category1: "", key_category2: "", enabled: true });
+      setNewProfile({ operator_name: "", key_site: "", key_category1: "", key_category2: "", assignment_priority: 0, enabled: true });
     });
   }
 
@@ -601,16 +759,47 @@ function App() {
     });
   }
 
+  async function setOpportunityDisabled(item: Opportunity, disabled: boolean) {
+    const reason = window.prompt(disabled ? "请输入停用原因" : "请输入恢复原因", "");
+    if (reason === null) return;
+    await runAction(disabled ? "停用 SKU" : "恢复 SKU", async () => {
+      await api.disableOpportunity(item.id, { disabled, reason });
+    });
+  }
+
+  async function setOpportunityGroupDisabled(group: ProductGroup, disabled: boolean) {
+    const reason = window.prompt(disabled ? "请输入停用整组原因" : "请输入恢复整组原因", "");
+    if (reason === null) return;
+    await runAction(disabled ? "停用主 SKU 组" : "恢复主 SKU 组", async () => {
+      await api.disableOpportunityGroup(group.first.id, { disabled, reason });
+    });
+  }
+
+  async function setImportBatchDisabled(batch: ImportBatchSummary, disabled: boolean) {
+    const reason = window.prompt(disabled ? "请输入停用批次原因" : "请输入恢复批次原因", "");
+    if (reason === null) return;
+    await runAction(disabled ? "停用导入批次" : "恢复导入批次", async () => {
+      await api.disableImportBatch(batch.id, { disabled, reason });
+    });
+  }
+
   async function submitReview(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!reviewTarget) return;
+    const targetId = reviewTarget.id;
     const form = new FormData(event.currentTarget);
     await runAction("提交复核", async () => {
       await api.review({
-        opportunity_id: reviewTarget.id,
+        opportunity_id: targetId,
+        claim_record_id: reviewTarget.latest_claim_record_id || undefined,
         reviewer_name: String(form.get("reviewer_name") || "练玉君"),
         review_status: String(form.get("review_status") || "approved"),
         review_comment: String(form.get("review_comment") || "")
+      });
+      setReviewDrafts((current) => {
+        const next = { ...current };
+        delete next[targetId];
+        return next;
       });
       setReviewTarget(null);
     });
@@ -622,6 +811,7 @@ function App() {
       for (const item of items) {
         await api.review({
           opportunity_id: item.id,
+          claim_record_id: item.latest_claim_record_id || undefined,
           reviewer_name: "练玉君",
           review_status: "approved",
           review_comment: "批量通过认领"
@@ -786,7 +976,7 @@ function App() {
               机会池流程
             </button>
           </div>
-          <span className="hub-note">第一版冻结：只做导入、认领复核和导出；不做在线表自动写回入口</span>
+          <span className="hub-note">当前为测试阶段：真实钉钉自动推送保持关闭</span>
         </section>
 
         <nav className="panel flow">
@@ -801,11 +991,20 @@ function App() {
           ))}
         </nav>
 
-        <section className="layout">
+        <section className={["claim", "research"].includes(activeView) && !detailGroup ? "layout claim-full-layout" : "layout"}>
           <div className="panel screen">
             <div className="screen-top">
               <div>
                 <h1>
+                  {detailGroup && (
+                    <button className="btn small" type="button" onClick={() => {
+                      setDetailGroupKey(null);
+                      setDetailChildId(null);
+                    }}>
+                      <ArrowLeft size={14} />
+                      返回
+                    </button>
+                  )}
                   {viewIcon(activeView)}
                   {meta.title}
                 </h1>
@@ -813,13 +1012,26 @@ function App() {
               </div>
               <Toolbar activeView={activeView} assignSummary={assignSummary} onPreview={previewAssignments} onAssign={submitAssignments} />
             </div>
-            {statusMessage && <div className={statusMessage.includes("失败") || statusMessage.includes("Error") ? "notice red" : "notice"}>{statusMessage}</div>}
+            {statusMessage && <div className={statusMessage.includes("失败") || statusMessage.includes("Error") ? "notice toast red" : "notice toast"}>{statusMessage}</div>}
             <div className="screen-body">
             {detailGroup ? (
               <ProductDetailView
                 group={detailGroup}
                 activeRole={activeRole}
-                onBack={() => setDetailGroupKey(null)}
+                activeChildId={detailChildId}
+                navLabel={
+                  detailSequenceIndex >= 0
+                    ? `子 SKU ${detailGroup.items.findIndex((item) => item.id === detailChildId) + 1}/${detailGroup.items.length} · 主 SKU ${groups.findIndex((group) => group.key === detailGroup.key) + 1}/${groups.length}`
+                    : ""
+                }
+                canGoPrevious={detailSequenceIndex > 0}
+                canGoNext={detailSequenceIndex >= 0 && detailSequenceIndex < detailSequence.length - 1}
+                onBack={() => {
+                  setDetailGroupKey(null);
+                  setDetailChildId(null);
+                }}
+                onSelectChild={setDetailChildId}
+                onNavigate={navigateProductDetail}
                 onUpdate={updateOpportunityDetails}
               />
             ) : (
@@ -829,48 +1041,50 @@ function App() {
                 loading={loading}
                 source1File={source1File}
                 source1Sheet={source1Sheet}
+                source1BusinessPeriod={source1BusinessPeriod}
+                source1Sheets={source1Sheets}
                 source2File={source2File}
                 source2Sheet={source2Sheet}
-                lastImport={lastImport}
+                source2Sheets={source2Sheets}
+                lastImports={lastImports}
+                importBatches={importBatches}
+                isSuperAdmin={isSuperAdmin}
                 setSource1File={setSource1File}
-                setSource1Sheet={setSource1Sheet}
+                setSource1Sheet={(value) => updateSourceSheet(1, value)}
+                setSource1BusinessPeriod={updateBusinessPeriod}
+                setSource1Sheets={setSource1Sheets}
                 setSource2File={setSource2File}
-                setSource2Sheet={setSource2Sheet}
+                setSource2Sheet={(value) => updateSourceSheet(2, value)}
+                setSource2Sheets={setSource2Sheets}
                 onImport={importSelection}
+                onToggleBatch={setImportBatchDisabled}
               />
             )}
             {activeView === "dashboard" && (
-              <DashboardView
-                groups={dashboardGroups}
-                allCount={groups.length}
-                filters={dashboardFilters}
-                options={dashboardOptions}
-                expanded={expanded}
-                setFilter={(key, value) => setDashboardFilters((current) => ({ ...current, [key]: value }))}
-                clearFilters={() => setDashboardFilters(defaultDashboardFilters)}
-                toggle={(key) => setExpanded((current) => ({ ...current, [key]: !current[key] }))}
-                onOpenDetail={(group) => setDetailGroupKey(group.key)}
-                goImport={() => {
-                  setActiveRole("manager");
-                  setActiveView("source");
+              <ProductBoardView
+                role={activeRole}
+                operatorName={activeOperator}
+                onOpenDetail={(opportunityId) => {
+                  const item = opportunities.find((entry) => entry.id === opportunityId);
+                  if (item) openOpportunityDetail(item);
                 }}
+                onOpenResearch={() => setActiveView("research")}
               />
             )}
             {activeView === "pool" && (
               <PoolView
                 activeRole={activeRole}
                 groups={poolGroups}
+                list={poolList}
+                setList={setPoolList}
                 expanded={expanded}
                 toggle={(key) => setExpanded((current) => ({ ...current, [key]: !current[key] }))}
-                onOpenDetail={(group) => setDetailGroupKey(group.key)}
+                onOpenDetail={(group) => openProductDetail(group)}
                 goAssign={() => {
                   setActiveRole("manager");
                   setActiveView("assign");
                 }}
-                goClaim={(opportunity) => {
-                  setActiveRole("operator");
-                  setActiveView("claim");
-                }}
+                goClaim={addSelfClaimGroup}
                 goImport={() => {
                   setActiveRole("manager");
                   setActiveView("source");
@@ -888,6 +1102,8 @@ function App() {
                 setAssignmentDrafts={setAssignmentDrafts}
                 operatorProfiles={operatorProfiles}
                 setOperatorProfiles={setOperatorProfiles}
+                list={assignList}
+                setList={setAssignList}
                 newProfile={newProfile}
                 setNewProfile={setNewProfile}
                 onSaveProfiles={saveProfiles}
@@ -898,17 +1114,48 @@ function App() {
               />
             )}
             {activeView === "claim" && (
-              <ClaimView rows={claimRows} activeOperator={activeOperator} onSubmit={submitClaimPayload} />
+              <ClaimView
+                rows={claimRows}
+                activeOperator={activeOperator}
+                drafts={claimDrafts}
+                setDrafts={setClaimDrafts}
+                list={claimList}
+                setList={setClaimList}
+                detailChildId={claimDetailChildId}
+                setDetailChildId={setClaimDetailChildId}
+                onOpenDetail={openClaimDetail}
+                onRemoveSelfClaim={removeSelfClaimItem}
+                onSubmit={submitClaimPayload}
+              />
             )}
             {activeView === "review" && (
-              <ReviewView rows={reviewRows} target={reviewTarget} setTarget={setReviewTarget} onSubmit={submitReview} onBulkApprove={approveClaimReviews} />
+              <ReviewView
+                rows={reviewRows}
+                target={reviewTarget}
+                setTarget={setReviewTarget}
+                drafts={reviewDrafts}
+                setDrafts={setReviewDrafts}
+                list={reviewList}
+                setList={setReviewList}
+                onOpenDetail={openOpportunityDetail}
+                onSubmit={submitReview}
+                onBulkApprove={approveClaimReviews}
+              />
             )}
-            {activeView === "stock" && <StockView rows={availableStocking} />}
+            {activeView === "stock" && <StockView rows={availableStocking} list={stockList} setList={setStockList} />}
+            {activeView === "research" && (
+              <SecondaryResearchView
+                salespersonName={activeOperator}
+                editable={activeRole === "operator"}
+                onStatus={setStatusMessage}
+              />
+            )}
             </>
             )}
             </div>
           </div>
 
+          {activeView !== "claim" && activeView !== "research" && (
           <aside className="side">
             <section className="panel side-card">
               <h2>
@@ -930,6 +1177,7 @@ function App() {
               </div>
             </section>
           </aside>
+          )}
         </section>
       </main>
     </div>
@@ -940,35 +1188,42 @@ function DashboardView(props: {
   groups: ProductGroup[];
   allCount: number;
   filters: DashboardFilters;
+  list: ListState;
   options: ReturnType<typeof buildDashboardOptions>;
   expanded: Record<string, boolean>;
   setFilter: (key: keyof DashboardFilters, value: string) => void;
+  setList: Dispatch<SetStateAction<ListState>>;
   clearFilters: () => void;
   toggle: (key: string) => void;
   onOpenDetail: (group: ProductGroup) => void;
+  onToggleGroupDisabled: (group: ProductGroup, disabled: boolean) => void;
+  onToggleItemDisabled: (item: Opportunity, disabled: boolean) => void;
+  isSuperAdmin: boolean;
   goImport: () => void;
 }) {
+  const pageGroups = pageItems(props.groups, props.list);
   return (
     <div className="dashboard">
       <div className="dashboard-filters">
-        <label className="wide">
-          搜索
-          <input
-            value={props.filters.query}
-            onChange={(event) => props.setFilter("query", event.target.value)}
-            placeholder="主 SKU / 子 SKU / 商品名 / 关键词"
-          />
-        </label>
         <FilterSelect label="状态" value={props.filters.status} options={props.options.statuses} onChange={(value) => props.setFilter("status", value)} />
         <FilterSelect label="健康标签" value={props.filters.health} options={["正常", "需关注", "异常"]} onChange={(value) => props.setFilter("health", value)} />
         <FilterSelect label="站点" value={props.filters.site} options={props.options.sites} onChange={(value) => props.setFilter("site", value)} />
-        <FilterSelect label="运营" value={props.filters.owner} options={props.options.owners} onChange={(value) => props.setFilter("owner", value)} />
+        <FilterSelect label="开发人员" value={props.filters.owner} options={props.options.owners} onChange={(value) => props.setFilter("owner", value)} />
         <FilterSelect label="类目" value={props.filters.category} options={props.options.categories} onChange={(value) => props.setFilter("category", value)} />
         <FilterSelect label="来源批次" value={props.filters.source} options={props.options.sources} onChange={(value) => props.setFilter("source", value)} />
         <button className="btn" onClick={props.clearFilters}>
           清空
         </button>
       </div>
+      <ListControls
+        label="商品看板"
+        list={{ ...props.list, query: props.filters.query }}
+        total={props.groups.length}
+        setList={(patch) => {
+          props.setList((current) => ({ ...current, ...patch }));
+          if (patch.query !== undefined) props.setFilter("query", patch.query);
+        }}
+      />
       <div className="dashboard-summary">
         <span className="tag">当前展示 {props.groups.length} / {props.allCount} 个主 SKU 组</span>
         <span className="tag">商品看板看全量状态；机会池只看待处理新品机会</span>
@@ -986,13 +1241,16 @@ function DashboardView(props: {
         <EmptySmall text="当前筛选条件下没有商品。" />
       ) : (
         <div className="group-list">
-          {props.groups.map((group) => (
+          {pageGroups.map((group) => (
             <ProductGroupCard
               group={group}
               expanded={Boolean(props.expanded[group.key])}
               key={group.key}
               onToggle={() => props.toggle(group.key)}
               onOpenDetail={() => props.onOpenDetail(group)}
+              onToggleGroupDisabled={(disabled) => props.onToggleGroupDisabled(group, disabled)}
+              onToggleItemDisabled={props.onToggleItemDisabled}
+              showAdminActions={props.isSuperAdmin}
               showPrimary={false}
             />
           ))}
@@ -1022,14 +1280,23 @@ function SourceView(props: {
   loading: boolean;
   source1File: File | null;
   source1Sheet: string;
+  source1BusinessPeriod: string;
+  source1Sheets: string[];
   source2File: File | null;
   source2Sheet: string;
-  lastImport: Selection1ImportResponse | null;
+  source2Sheets: string[];
+  lastImports: ImportResults;
+  importBatches: ImportBatchSummary[];
+  isSuperAdmin: boolean;
   setSource1File: (value: File | null) => void;
   setSource1Sheet: (value: string) => void;
+  setSource1BusinessPeriod: (value: string) => void;
+  setSource1Sheets: (value: string[]) => void;
   setSource2File: (value: File | null) => void;
   setSource2Sheet: (value: string) => void;
+  setSource2Sheets: (value: string[]) => void;
   onImport: (kind: 1 | 2) => void;
+  onToggleBatch: (batch: ImportBatchSummary, disabled: boolean) => void;
 }) {
   return (
     <div className="source-grid">
@@ -1037,8 +1304,13 @@ function SourceView(props: {
         title="选品1：海外仓开发部门开发新品认领-反馈"
         desc="按中央表截断到“开发是否接受核价结果”之前的字段对齐，后接内部认领字段。"
         sheet={props.source1Sheet}
+        businessPeriod={props.source1BusinessPeriod}
+        sheets={props.source1Sheets}
         file={props.source1File}
+        result={props.lastImports[1]}
         setSheet={props.setSource1Sheet}
+        setBusinessPeriod={props.setSource1BusinessPeriod}
+        setSheets={props.setSource1Sheets}
         setFile={props.setSource1File}
         buttonText="导入选品1反馈表"
         disabled={props.loading}
@@ -1048,27 +1320,51 @@ function SourceView(props: {
         title="选品2：海外仓财根团队开发新品认领-反馈"
         desc="作为财根机会池来源；主销售员必须处理，其他销售员可自认领。"
         sheet={props.source2Sheet}
+        sheets={props.source2Sheets}
         file={props.source2File}
+        result={props.lastImports[2]}
         setSheet={props.setSource2Sheet}
+        setSheets={props.setSource2Sheets}
         setFile={props.setSource2File}
         buttonText="导入选品2反馈表"
         disabled={props.loading}
         onImport={() => props.onImport(2)}
       />
-      {props.lastImport && (
-        <section className="info import-result">
+      {props.isSuperAdmin && (
+        <section className="info import-result import-history">
           <h3>
-            <FileCheck2 size={16} />
-            最近导入结果
+            <ShieldCheck size={16} />
+            导入批次
           </h3>
-          <div className="status-grid">
-            <StatusCell label="Sheet" value={props.lastImport.source_sheet} />
-            <StatusCell label="入池" value={props.lastImport.imported_count} />
-            <StatusCell label="新增" value={props.lastImport.created_count} />
-            <StatusCell label="更新" value={props.lastImport.updated_count} />
-            <StatusCell label="跳过" value={props.lastImport.skipped_count} />
-            <StatusCell label="任务" value={props.lastImport.task_count} />
-          </div>
+          {!props.importBatches.length ? (
+            <p className="muted">暂无导入批次。</p>
+          ) : (
+            <div className="batch-table">
+              <div className="batch-row head">
+                <span>时间</span>
+                <span>来源</span>
+                <span>期数</span>
+                <span>新增/更新</span>
+                <span>状态</span>
+                <span>操作</span>
+              </div>
+              {props.importBatches.map((batch) => {
+                const disabled = batch.status === "disabled";
+                return (
+                  <div className="batch-row" key={batch.id}>
+                    <span>{formatDateTime(batch.imported_at)}</span>
+                    <span>{batch.source_file || batch.source_type}</span>
+                    <span>{batch.business_period || batch.source_sheet || "-"}</span>
+                    <span>{batch.created_count} / {batch.updated_count}</span>
+                    <span>{disabled ? "已停用" : batch.status}</span>
+                    <button className="btn" type="button" onClick={() => props.onToggleBatch(batch, !disabled)}>
+                      {disabled ? "恢复" : "停用"}
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </section>
       )}
     </div>
@@ -1079,22 +1375,37 @@ function ImportCard(props: {
   title: string;
   desc: string;
   sheet: string;
+  businessPeriod?: string;
+  sheets: string[];
   file: File | null;
+  result?: Selection1ImportResponse;
   buttonText: string;
   disabled: boolean;
   setSheet: (value: string) => void;
+  setBusinessPeriod?: (value: string) => void;
+  setSheets: (value: string[]) => void;
   setFile: (value: File | null) => void;
   onImport: () => void;
 }) {
+  const [sheetLoading, setSheetLoading] = useState(false);
+  const [sheetError, setSheetError] = useState("");
+
   async function takeFileList(files: FileList | null) {
     const file = files?.[0] || null;
     props.setFile(file);
+    props.setSheets([]);
+    setSheetError("");
     if (!file) return;
+    setSheetLoading(true);
     try {
       const result = await api.excelSheets(file);
+      props.setSheets(result.sheets);
       if (result.default_sheet) props.setSheet(result.default_sheet);
-    } catch {
-      // Keep the typed sheet name when the workbook cannot be inspected locally.
+      if (!result.sheets.length) setSheetError("没有读取到 Sheet，可手填数据 Sheet 后导入。");
+    } catch (error) {
+      setSheetError(`未能自动读取 Sheet：${readableError(error)}。可手填数据 Sheet 后导入。`);
+    } finally {
+      setSheetLoading(false);
     }
   }
 
@@ -1106,10 +1417,31 @@ function ImportCard(props: {
       </h3>
       <p>{props.desc}</p>
       <div className="form">
-        <label>
-          Sheet
-          <input value={props.sheet} onChange={(event) => props.setSheet(event.target.value)} />
-        </label>
+        <div className="period-row">
+          <label>
+            数据 Sheet
+            {props.sheets.length ? (
+              <select value={props.sheet} onChange={(event) => props.setSheet(event.target.value)}>
+                {props.sheets.map((sheet) => (
+                  <option key={sheet} value={sheet}>
+                    {sheet}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <input value={props.sheet} onChange={(event) => props.setSheet(event.target.value)} />
+            )}
+          </label>
+          {props.setBusinessPeriod && (
+            <label>
+              业务期数
+              <input value={props.businessPeriod || ""} onChange={(event) => props.setBusinessPeriod?.(event.target.value)} />
+            </label>
+          )}
+        </div>
+        {sheetLoading && <p className="muted sheet-hint">正在读取 Excel 的 Sheet...</p>}
+        {!sheetLoading && props.sheets.length > 0 && <p className="muted sheet-hint">已读取 {props.sheets.length} 个 Sheet，请选择要读取的数据 Sheet。</p>}
+        {!sheetLoading && sheetError && <p className="notice red sheet-hint">{sheetError}</p>}
         <label
           className="upload-zone"
           onDragOver={(event) => event.preventDefault()}
@@ -1119,7 +1451,7 @@ function ImportCard(props: {
           }}
         >
           <Upload size={20} />
-          <b>{props.file ? props.file.name : "拖拽 Excel 到这里，或点击选择文件"}</b>
+          <b className="upload-file-name">{props.file ? props.file.name : "拖拽 Excel 到这里，或点击选择文件"}</b>
           <span>{props.file ? `${formatFileSize(props.file.size)} · 可重新选择` : "支持 .xlsx / .xlsm / .xls"}</span>
           <input
             type="file"
@@ -1130,31 +1462,59 @@ function ImportCard(props: {
             }}
           />
         </label>
-        <button className="btn primary" disabled={props.disabled || !props.file} onClick={props.onImport}>
+        <button className="btn primary" disabled={props.disabled || sheetLoading || !props.file} onClick={props.onImport}>
           <Upload size={15} />
           {props.buttonText}
         </button>
+        {props.result && (
+          <div className="import-card-result">
+            <h4>
+              <FileCheck2 size={15} />
+              最近导入结果
+            </h4>
+            <div className="status-grid compact">
+              <StatusCell label="数据 Sheet" value={props.result.source_sheet} />
+              <StatusCell label="业务期数" value={props.result.business_period || props.result.source_sheet} />
+              <StatusCell label="入池" value={props.result.imported_count} />
+              <StatusCell label="新增 / 更新" value={`${props.result.created_count} / ${props.result.updated_count}`} />
+            </div>
+          </div>
+        )}
       </div>
     </section>
   );
 }
 
+function readableError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error || "未知错误");
+  try {
+    const parsed = JSON.parse(message) as { detail?: unknown };
+    return typeof parsed.detail === "string" ? parsed.detail : message;
+  } catch {
+    return message;
+  }
+}
+
 function PoolView(props: {
   activeRole: RoleKey;
   groups: ProductGroup[];
+  list: ListState;
+  setList: Dispatch<SetStateAction<ListState>>;
   expanded: Record<string, boolean>;
   toggle: (key: string) => void;
   onOpenDetail: (group: ProductGroup) => void;
   goAssign: () => void;
-  goClaim: (opportunity: Opportunity) => void;
+  goClaim: (group: ProductGroup) => void;
   goImport: () => void;
 }) {
+  const filteredGroups = filterGroupsBySearch(props.groups, props.list.query);
+  const pageGroups = pageItems(filteredGroups, props.list);
   if (!props.groups.length) {
     return (
       <section className="empty-state">
         <Database size={28} />
-        <h3>还没有导入机会数据</h3>
-        <p>先导入选品1和选品2反馈表，导入后这里会按主 SKU 分组展示。</p>
+        <h3>还没有财根机会池数据</h3>
+        <p>选品1只进入分配台；这里展示选品2/财根可自领机会。</p>
         <button className="btn primary" onClick={props.goImport}>
           去源表导入
         </button>
@@ -1162,24 +1522,30 @@ function PoolView(props: {
     );
   }
   return (
-    <div className="group-list">
-      {props.groups.map((group) => (
-        <ProductGroupCard
-          group={group}
-          expanded={Boolean(props.expanded[group.key])}
-          key={group.key}
-          onToggle={() => props.toggle(group.key)}
-          onOpenDetail={() => props.onOpenDetail(group)}
-          onPrimary={() => {
-            if (props.activeRole === "manager" && group.items.some((item) => item.current_status === "pending_assignment")) props.goAssign();
-            else if (props.activeRole === "operator" && group.items.some(isOperatorClaimItem)) props.goClaim(group.items[0]);
-            else props.toggle(group.key);
-          }}
-          primaryLabel={poolPrimaryLabel(group, props.activeRole)}
-          showPrimary={Boolean(poolPrimaryLabel(group, props.activeRole))}
-        />
-      ))}
-    </div>
+    <>
+      <ListControls label="机会池" list={props.list} total={filteredGroups.length} setList={(patch) => props.setList((current) => ({ ...current, ...patch }))} />
+      {!filteredGroups.length ? (
+        <EmptySmall text="当前搜索条件下没有财根机会。" />
+      ) : (
+        <div className="group-list">
+          {pageGroups.map((group) => (
+            <ProductGroupCard
+              group={group}
+              expanded={Boolean(props.expanded[group.key])}
+              key={group.key}
+              onToggle={() => props.toggle(group.key)}
+              onOpenDetail={() => props.onOpenDetail(group)}
+              onPrimary={() => {
+                if (props.activeRole === "manager") props.goAssign();
+                else props.goClaim(group);
+              }}
+              primaryLabel={poolPrimaryLabel(group, props.activeRole)}
+              showPrimary={Boolean(poolPrimaryLabel(group, props.activeRole))}
+            />
+          ))}
+        </div>
+      )}
+    </>
   );
 }
 
@@ -1189,7 +1555,10 @@ function ProductGroupCard(props: {
   onToggle: () => void;
   onOpenDetail: () => void;
   onPrimary?: () => void;
+  onToggleGroupDisabled?: (disabled: boolean) => void;
+  onToggleItemDisabled?: (item: Opportunity, disabled: boolean) => void;
   primaryLabel?: string;
+  showAdminActions?: boolean;
   showPrimary?: boolean;
 }) {
   const { group } = props;
@@ -1205,7 +1574,7 @@ function ProductGroupCard(props: {
               {group.main_sku}
             </button>
             {statusPill(group.status)}
-            <span className="tag">{ownerText(group)}</span>
+            <span className="tag">开发：{ownerText(group)}</span>
           </div>
           <p>
             <b>{item.main_sku_name || item.sub_sku_name || "未命名商品"}</b>
@@ -1229,6 +1598,11 @@ function ProductGroupCard(props: {
               {props.primaryLabel || primaryActionLabel(group)}
             </button>
           )}
+          {props.showAdminActions && props.onToggleGroupDisabled && (
+            <button className="btn" type="button" onClick={() => props.onToggleGroupDisabled?.(group.status !== "disabled")}>
+              {group.status === "disabled" ? "恢复整组" : "停用整组"}
+            </button>
+          )}
         </div>
       </div>
       {props.expanded && (
@@ -1243,6 +1617,11 @@ function ProductGroupCard(props: {
               </div>
               <span className="tag">子 SKU</span>
               {statusPill(child.current_status)}
+              {props.showAdminActions && props.onToggleItemDisabled && (
+                <button className="btn" type="button" onClick={() => props.onToggleItemDisabled?.(child, child.current_status !== "disabled")}>
+                  {child.current_status === "disabled" ? "恢复" : "停用"}
+                </button>
+              )}
             </div>
           ))}
         </div>
@@ -1252,23 +1631,112 @@ function ProductGroupCard(props: {
 }
 
 const competitorSpecs = [
-  { label: "最低价", link: "Z", price: "AA", sales: "AB" },
-  { label: "Most orders", link: "AC", price: "AD", sales: "AE" },
-  { label: "月销次高", link: "AF", price: "AG", sales: "AH" },
-  { label: "月销第三高", link: "AI", price: "AJ", sales: "AK" },
-  { label: "新晋", link: "AL", price: "AM", sales: "AN" }
+  {
+    label: "最低价",
+    link: "Z",
+    price: "AA",
+    sales: "AB",
+    linkAliases: ["最低价链接", "平台综合推荐(前三页）最低价竞品链接1"],
+    priceAliases: ["售价1", "售价1(PHP）", "竞品单价 / （链接1） / (比索）"],
+    salesAliases: ["月销1", "竞品子sku月销 / （链接1）"]
+  },
+  {
+    label: "Most orders",
+    link: "AC",
+    price: "AD",
+    sales: "AE",
+    linkAliases: ["月销最高链接链接1", "月销最高链接", "most / orders链接", "most orders链接", "平台综合推荐（前三页）销量最多竞品链接2"],
+    priceAliases: ["售价2", "售价2(PHP）", "竞品单价 / （链接2） / (比索）"],
+    salesAliases: ["月销2", "竞品子sku月销 / （链接2）"]
+  },
+  {
+    label: "月销次高",
+    link: "AF",
+    price: "AG",
+    sales: "AH",
+    linkAliases: ["月销次高链接链接2", "月销次高链接"],
+    priceAliases: ["售价(PHP）"],
+    salesAliases: ["月销"]
+  },
+  {
+    label: "月销第三高",
+    link: "AI",
+    price: "AJ",
+    sales: "AK",
+    linkAliases: ["月销第三高链接链接3", "月销第三高链接"],
+    priceAliases: ["售价(PHP）"],
+    salesAliases: ["月销"]
+  },
+  {
+    label: "新晋",
+    link: "AL",
+    price: "AM",
+    sales: "AN",
+    linkAliases: ["新晋链接", "平台综合推荐（前三页近3个月上架的）新晋竞品链接3"],
+    priceAliases: ["售价3", "售价3(PHP）", "竞品单价（链接3）（比索）"],
+    salesAliases: ["月销3", "竞品子sku月销（链接3）"]
+  }
 ];
 
 const pricingSpecs = [
-  ["AO", "参考单销"],
-  ["AP", "参考定价"],
-  ["AQ", "一次毛利额"],
-  ["AR", "一次毛利额(RMB)"],
-  ["AS", "一次毛利率"],
-  ["AT", "预估单销"],
-  ["AU", "推广期定价"],
-  ["AV", "推广期利润率"]
+  { column: "AO", label: "参考单销", aliases: ["参考单销"] },
+  { column: "AP", label: "参考定价", aliases: ["参考定价", "稳定期定价 / （PHP）", "稳定期参考定价 / （VND）"] },
+  { column: "AQ", label: "一次毛利额", aliases: ["一次毛利额 / （THB）", "一次毛利额 / （PHP）", "一次毛利额 / （VND）"] },
+  { column: "AR", label: "一次毛利额(RMB)", aliases: ["一次毛利额 / （人民币）"] },
+  { column: "AS", label: "一次毛利率", aliases: ["一次毛利率", "稳定期利润率"] },
+  { column: "AT", label: "预估单销", aliases: ["预估单销"] },
+  { column: "AU", label: "推广期定价", aliases: ["推广期定价"] },
+  { column: "AV", label: "推广期利润率", aliases: ["推广期利润率"] }
 ] as const;
+
+const detailSections: { key: DetailSectionKey; label: string }[] = [
+  { key: "core", label: "基础信息" },
+  { key: "development", label: "开发询价" },
+  { key: "market", label: "市场调研" },
+  { key: "pricing", label: "价格参考" },
+  { key: "cost", label: "成本参数" },
+  { key: "claim", label: "认领与复核" },
+  { key: "source", label: "源表字段" }
+];
+
+type DetailFieldSpec = {
+  label: string;
+  column: string;
+  aliases?: string[];
+  value?: (item: Opportunity) => string;
+};
+
+const coreFieldSpecs: DetailFieldSpec[] = [
+  { label: "站点/国家", column: "A", aliases: ["站点", "国家"], value: (item) => item.site || item.country || "" },
+  { label: "开发部门", column: "B", aliases: ["开发部门", "部门"], value: (item) => item.developer_department || "" },
+  { label: "开发员", column: "C", aliases: ["开发员"], value: (item) => item.developer_name || "" },
+  { label: "一级类目", column: "D", aliases: ["一级类目"], value: (item) => item.category_level1 || "" },
+  { label: "关键词", column: "E", aliases: ["关键词"], value: (item) => item.keyword || "" },
+  { label: "主 SKU 名称", column: "G", aliases: ["主SKU名称"], value: (item) => item.main_sku_name || "" },
+  { label: "主 SKU", column: "H", aliases: ["主SKU"], value: (item) => item.main_sku || "" },
+  { label: "子 SKU 名称", column: "I", aliases: ["子SKU名称"], value: (item) => item.sub_sku_name || "" },
+  { label: "子 SKU", column: "J", aliases: ["子SKU"], value: (item) => item.sub_sku || "" },
+  { label: "产品类型", column: "K", aliases: ["产品类型", "引流or绑定or利润"], value: (item) => item.product_type || "" },
+  { label: "开品理由", column: "L", aliases: ["开品理由"], value: (item) => item.reason || "" }
+];
+
+const developmentFieldSpecs: DetailFieldSpec[] = [
+  { label: "产品规格", column: "M", aliases: ["产品规格"] },
+  { label: "产品外包装", column: "N", aliases: ["产品外包装"] },
+  { label: "末道包材", column: "O", aliases: ["末道包材"] },
+  { label: "供应商链接", column: "P", aliases: ["供应商链接"] },
+  { label: "供应商名称", column: "Q", aliases: ["供应商名称"] },
+  { label: "商品成本-含税（元）", column: "R", aliases: ["商品成本-含税（元）"] },
+  { label: "加购运费", column: "S", aliases: ["预估单销*30的加购运费", "包装重量(kg)"] },
+  { label: "加购运费分摊", column: "T", aliases: ["单子sku的加购运费分摊", "产品包装后体积长(cm)"] },
+  { label: "包装重量", column: "U", aliases: ["包装重量(kg)", "产品包装后体积宽(cm)"] },
+  { label: "长(cm)", column: "V", aliases: ["产品包装后体积长(cm)", "产品包装后体积高(cm)"] },
+  { label: "宽(cm)", column: "W", aliases: ["产品包装后体积宽(cm)", "包装后体积"] },
+  { label: "高(cm)", column: "X", aliases: ["产品包装后体积高(cm)"] },
+  { label: "包装后体积", column: "Y", aliases: ["包装后体积"] }
+];
+
+const costParameterColumns = columnsBetween("AQ", "BR");
 
 function hasOperatorSubmission(item: Opportunity) {
   return Boolean(item.latest_claim_result || item.latest_claim_salesperson || item.latest_reject_reason || item.latest_feedback_summary || item.latest_claim_note);
@@ -1303,12 +1771,20 @@ function skuEditDraft(item: Opportunity): SkuEditDraft {
 function ProductDetailView(props: {
   group: ProductGroup;
   activeRole: RoleKey;
+  activeChildId: string | null;
+  navLabel: string;
+  canGoPrevious: boolean;
+  canGoNext: boolean;
   onBack: () => void;
+  onSelectChild: (id: string) => void;
+  onNavigate: (delta: -1 | 1, currentChildId: string) => void;
   onUpdate: (id: string, payload: unknown) => Promise<void>;
 }) {
   const { group } = props;
   const item = group.first;
-  const imageItem = group.items.find((child) => child.image_url) || item;
+  const activeChild = group.items.find((child) => child.id === props.activeChildId) || group.items[0] || item;
+  const imageItem = activeChild.image_url ? activeChild : group.items.find((child) => child.image_url) || item;
+  const [activeSection, setActiveSection] = useState<DetailSectionKey>("core");
   const [editingItem, setEditingItem] = useState<Opportunity | null>(null);
   const [editDraft, setEditDraft] = useState<SkuEditDraft>(() => skuEditDraft(item));
 
@@ -1341,10 +1817,27 @@ function ProductDetailView(props: {
   return (
     <div className="detail-page">
       <div className="detail-toolbar">
-        <button className="btn" type="button" onClick={props.onBack}>
-          <ArrowLeft size={16} />
-          返回
-        </button>
+        <div className="detail-sequence-nav">
+          <button
+            className="btn"
+            type="button"
+            disabled={!props.canGoPrevious}
+            onClick={() => props.onNavigate(-1, activeChild.id)}
+          >
+            <ChevronLeft size={16} />
+            上一个
+          </button>
+          <span className="tag">{props.navLabel || `子 SKU 1/${group.items.length}`}</span>
+          <button
+            className="btn"
+            type="button"
+            disabled={!props.canGoNext}
+            onClick={() => props.onNavigate(1, activeChild.id)}
+          >
+            下一个
+            <ChevronRight size={16} />
+          </button>
+        </div>
       </div>
       <section className="detail-hero">
         <ProductThumb item={imageItem} />
@@ -1370,47 +1863,109 @@ function ProductDetailView(props: {
       </section>
 
       <section className="detail-section">
-        <h3>子 SKU 明细</h3>
-        <div className="table-wrap detail-table-wrap">
-          <table className="detail-table">
-            <thead>
-              <tr>
-                <th>图片</th>
-                <th>子 SKU</th>
-                <th>商品名</th>
-                <th>站点</th>
-                <th>类目</th>
-                <th>状态</th>
-                <th>来源行</th>
-                {props.activeRole === "manager" && <th>操作</th>}
-              </tr>
-            </thead>
-            <tbody>
-              {group.items.map((child) => (
-                <tr key={child.id}>
-                  <td>
-                    <ProductThumb item={child} small />
-                  </td>
-                  <td>
-                    <b>{child.sub_sku}</b>
-                  </td>
-                  <td>{child.sub_sku_name || child.main_sku_name || "-"}</td>
-                  <td>{child.site || child.country || "-"}</td>
-                  <td>{child.category_level1 || "-"}</td>
-                  <td>{statusLabel(child.current_status)}</td>
-                  <td>{child.source_sheet || "-"} · {child.source_row || "-"}</td>
-                  {props.activeRole === "manager" && (
-                    <td>
-                      <button className="btn" type="button" onClick={() => startEdit(child)}>
-                        <ClipboardPen size={14} />
-                        编辑
-                      </button>
-                    </td>
-                  )}
-                </tr>
+        <div className="detail-workspace">
+          <aside className="detail-sidebar">
+            <h3>商品全局档案</h3>
+            <div className="detail-nav">
+              {detailSections.map((section) => (
+                <button
+                  className={activeSection === section.key ? "detail-nav-button active" : "detail-nav-button"}
+                  key={section.key}
+                  type="button"
+                  onClick={() => setActiveSection(section.key)}
+                >
+                  {section.label}
+                </button>
               ))}
-            </tbody>
-          </table>
+            </div>
+          </aside>
+          <div className="detail-content">
+            <div className="detail-subsku-strip">
+              {group.items.map((child) => (
+                <button
+                  className={activeChild.id === child.id ? "detail-subsku-chip active" : "detail-subsku-chip"}
+                  key={child.id}
+                  type="button"
+                  onClick={() => props.onSelectChild(child.id)}
+                >
+                  <span>{child.sub_sku}</span>
+                  <small>{child.sub_sku_name || child.main_sku_name || "未命名"}</small>
+                </button>
+              ))}
+            </div>
+            <div className="active-detail-head">
+              <ProductThumb item={activeChild} small />
+              <div>
+                <div className="title-row">
+                  <h3>{activeChild.sub_sku}</h3>
+                  {statusPill(activeChild.current_status)}
+                  {props.activeRole === "manager" && (
+                    <button className="btn" type="button" onClick={() => startEdit(activeChild)}>
+                      <ClipboardPen size={14} />
+                      编辑
+                    </button>
+                  )}
+                </div>
+                <p>
+                  <b>{activeChild.sub_sku_name || activeChild.main_sku_name || "未命名商品"}</b>
+                </p>
+                <div className="tag-row">
+                  <span className="tag">{activeChild.site || activeChild.country || "未填站点"}</span>
+                  <span className="tag">{activeChild.category_level1 || "未填类目"}</span>
+                  <span className="tag">{sourceLabel(activeChild)} · 行 {activeChild.source_row || "-"}</span>
+                </div>
+              </div>
+            </div>
+            {activeSection === "core" && (
+              <div className="detail-pane">
+                <h3>基础信息（A-L）</h3>
+                <DetailFieldGrid item={activeChild} specs={coreFieldSpecs} />
+              </div>
+            )}
+            {activeSection === "development" && (
+              <div className="detail-pane">
+                <h3>开发询价（M-Y）</h3>
+                <DetailFieldGrid item={activeChild} specs={developmentFieldSpecs} />
+              </div>
+            )}
+            {activeSection === "market" && (
+              <div className="detail-pane">
+                <h3>市场调研（表头匹配，历史 Z-AN 兜底）</h3>
+                <CompetitorTable item={activeChild} />
+              </div>
+            )}
+            {activeSection === "pricing" && (
+              <div className="detail-pane">
+                <h3>价格 / 毛利参考（表头匹配，历史 AO-AV 兜底）</h3>
+                <PricingGrid item={activeChild} />
+                {!pricingRows(activeChild).length && <p className="muted detail-empty">暂无价格 / 毛利参考字段。</p>}
+              </div>
+            )}
+            {activeSection === "cost" && (
+              <div className="detail-pane">
+                <h3>成本参数（AQ-BR）</h3>
+                <ColumnRangeTable item={activeChild} columns={costParameterColumns} />
+              </div>
+            )}
+            {activeSection === "claim" && (
+              <div className="detail-pane">
+                <h3>认领与复核</h3>
+                {hasOperatorSubmission(activeChild) ? <OperatorSubmissionSummary item={activeChild} /> : <p className="muted detail-empty">暂无运营提交记录。</p>}
+                <ClaimReviewTable item={activeChild} />
+              </div>
+            )}
+            {activeSection === "source" && (
+              <div className="detail-pane">
+                <h3>源表字段与追溯</h3>
+                <div className="detail-trace">
+                  <span>文件：{activeChild.source_file || "-"}</span>
+                  <span>Sheet：{activeChild.source_sheet || "-"}</span>
+                  <span>行号：{activeChild.source_row || "-"}</span>
+                </div>
+                <SourceFieldsTable item={activeChild} />
+              </div>
+            )}
+          </div>
         </div>
         {props.activeRole === "manager" && editingItem && (
           <form className="sku-edit-form" onSubmit={submitEdit}>
@@ -1465,68 +2020,84 @@ function ProductDetailView(props: {
           </form>
         )}
       </section>
+    </div>
+  );
+}
 
-      <section className="detail-section">
-        <h3>竞品链接与价格参考（Z:AV）</h3>
-        <div className="detail-subsku-list">
-          {group.items.map((child, index) => (
-            <details className="detail-subsku" key={child.id} open={index === 0}>
-              <summary>
-                <span>{child.sub_sku}</span>
-                <span className="muted">{child.sub_sku_name || child.main_sku_name || "未命名商品"}</span>
-              </summary>
-              {hasOperatorSubmission(child) && <OperatorSubmissionSummary item={child} />}
-              <CompetitorTable item={child} />
-              <PricingGrid item={child} />
-            </details>
+function ClaimReviewTable(props: { item: Opportunity }) {
+  const child = props.item;
+  return (
+    <div className="table-wrap detail-table-wrap">
+      <table className="detail-table">
+        <thead>
+          <tr>
+            <th>运营</th>
+            <th>认领结果</th>
+            <th>不认领原因</th>
+            <th>调研结论</th>
+            <th>主管复核</th>
+            <th>复核意见</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>{child.latest_claim_salesperson || "-"}</td>
+            <td>{claimResultLabel(child.latest_claim_result)}</td>
+            <td>{child.latest_reject_reason || "-"}</td>
+            <td>{child.latest_feedback_summary || "-"}</td>
+            <td>{reviewStatusLabel(child.latest_review_status)}</td>
+            <td>{child.latest_review_comment || "-"}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function DetailFieldGrid(props: { item: Opportunity; specs: DetailFieldSpec[] }) {
+  const rows = detailFieldRows(props.item, props.specs);
+  if (!rows.length) return <p className="muted detail-empty">暂无可展示字段。</p>;
+  return (
+    <div className="detail-field-grid">
+      {rows.map((row) => (
+        <div className="detail-field-cell" key={`${row.column}-${row.label}`}>
+          <span>{row.column} · {row.label}</span>
+          <b>{renderMaybeLink(row.value)}</b>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ColumnRangeTable(props: { item: Opportunity; columns: string[] }) {
+  const rows = props.columns
+    .map((column) => ({
+      column,
+      label: headerLabel(props.item, column),
+      value: snapshotColumnText(props.item, column)
+    }))
+    .filter((row) => row.value);
+  if (!rows.length) return <p className="muted detail-empty">暂无成本参数字段。</p>;
+  return (
+    <div className="table-wrap detail-table-wrap">
+      <table className="detail-table">
+        <thead>
+          <tr>
+            <th>列</th>
+            <th>字段</th>
+            <th>值</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.column}>
+              <td>{row.column}</td>
+              <td>{row.label}</td>
+              <td>{renderMaybeLink(row.value)}</td>
+            </tr>
           ))}
-        </div>
-      </section>
-
-      <section className="detail-section">
-        <h3>认领与复核</h3>
-        <div className="table-wrap detail-table-wrap">
-          <table className="detail-table">
-            <thead>
-              <tr>
-                <th>子 SKU</th>
-                <th>运营</th>
-                <th>认领结果</th>
-                <th>不认领原因/备注</th>
-                <th>主管复核</th>
-                <th>复核意见</th>
-              </tr>
-            </thead>
-            <tbody>
-              {group.items.map((child) => (
-                <tr key={child.id}>
-                  <td>{child.sub_sku}</td>
-                  <td>{child.latest_claim_salesperson || child.developer_name || "-"}</td>
-                  <td>{claimResultLabel(child.latest_claim_result)}</td>
-                  <td>{child.latest_reject_reason || child.latest_claim_note || child.latest_feedback_summary || "-"}</td>
-                  <td>{reviewStatusLabel(child.latest_review_status)}</td>
-                  <td>{child.latest_review_comment || "-"}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-      <section className="detail-section">
-        <h3>源表字段</h3>
-        <div className="detail-subsku-list">
-          {group.items.map((child, index) => (
-            <details className="detail-subsku" key={child.id} open={index === 0}>
-              <summary>
-                <span>{child.sub_sku}</span>
-                <span className="muted">{child.source_file || "-"} · {child.source_sheet || "-"} · 行 {child.source_row || "-"}</span>
-              </summary>
-              <SourceFieldsTable item={child} />
-            </details>
-          ))}
-        </div>
-      </section>
+        </tbody>
+      </table>
     </div>
   );
 }
@@ -1610,8 +2181,8 @@ function renderLinkCell(value: string) {
   if (!value) return "-";
   if (!isHttpUrl(value)) return <span>{value}</span>;
   return (
-    <a href={value} target="_blank" rel="noreferrer" className="link-inline">
-      打开链接
+    <a href={value} target="_blank" rel="noreferrer" className="link-inline" title={value}>
+      <span>{compactUrlLabel(value)}</span>
       <ExternalLink size={14} />
     </a>
   );
@@ -1620,35 +2191,63 @@ function renderLinkCell(value: string) {
 function renderMaybeLink(value: string) {
   if (!isHttpUrl(value)) return value;
   return (
-    <a href={value} target="_blank" rel="noreferrer" className="link-inline">
-      {value}
+    <a href={value} target="_blank" rel="noreferrer" className="link-inline" title={value}>
+      <span>{compactUrlLabel(value)}</span>
       <ExternalLink size={14} />
     </a>
   );
 }
 
 function competitorRows(item: Opportunity) {
-  const cells = snapshotCells(item);
   return competitorSpecs
     .map((spec) => ({
       label: spec.label,
       linkColumn: spec.link,
       priceColumn: spec.price,
       salesColumn: spec.sales,
-      link: valueText(cells[spec.link]),
-      price: valueText(cells[spec.price]),
-      sales: valueText(cells[spec.sales])
+      link: detailFieldValue(item, spec.linkAliases, spec.link),
+      price: detailFieldValue(item, spec.priceAliases, spec.price),
+      sales: detailFieldValue(item, spec.salesAliases, spec.sales)
     }))
     .filter((row) => row.link || row.price || row.sales);
 }
 
 function pricingRows(item: Opportunity) {
-  const cells = snapshotCells(item);
   const snapshot = snapshotOf(item);
   const pricing = isRecord(snapshot.pricing_snapshot) ? snapshot.pricing_snapshot : {};
   return pricingSpecs
-    .map(([column, label]) => ({ column, label, value: valueText(cells[column]) || valueText(pricing[label]) }))
+    .map((spec) => ({ column: spec.column, label: spec.label, value: detailFieldValue(item, spec.aliases, spec.column) || valueText(pricing[spec.label]) }))
     .filter((row) => row.value);
+}
+
+function detailFieldRows(item: Opportunity, specs: DetailFieldSpec[]) {
+  return specs
+    .map((spec) => ({
+      column: spec.column,
+      label: headerLabel(item, spec.column) || spec.label,
+      value: spec.value?.(item) || detailFieldValue(item, spec.aliases || [spec.label], spec.column)
+    }))
+    .filter((row) => row.value);
+}
+
+function detailFieldValue(item: Opportunity, aliases: readonly string[], fallbackColumn: string) {
+  const fields = snapshotFields(item);
+  for (const alias of aliases) {
+    const value = fields[normalizeFieldKey(alias)];
+    const text = valueText(value);
+    if (text) return text;
+  }
+  return snapshotColumnText(item, fallbackColumn);
+}
+
+function headerLabel(item: Opportunity, column: string) {
+  const headers = headersByColumn(item)[column];
+  return Array.isArray(headers) ? headers.filter(Boolean).join(" / ") : "";
+}
+
+function headersByColumn(item?: Opportunity | null): Record<string, unknown> {
+  const headers = snapshotOf(item).headers_by_column;
+  return isRecord(headers) ? headers : {};
 }
 
 function sourceFieldRows(item: Opportunity) {
@@ -1672,6 +2271,15 @@ function snapshotFields(item?: Opportunity | null): Record<string, unknown> {
   return isRecord(fields) ? fields : {};
 }
 
+function snapshotFieldsByColumn(item?: Opportunity | null): Record<string, unknown> {
+  const fields = snapshotOf(item).fields_by_column;
+  return isRecord(fields) ? fields : {};
+}
+
+function snapshotColumnText(item: Opportunity, column: string) {
+  return valueText(snapshotFieldsByColumn(item)[column]) || valueText(snapshotCells(item)[column]);
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
@@ -1685,6 +2293,30 @@ function valueText(value: unknown) {
 
 function isHttpUrl(value: string) {
   return /^https?:\/\//i.test(value.trim());
+}
+
+function normalizeFieldKey(value: string) {
+  return value.replace(/\u00a0/g, " ").split(/\s+/).join("");
+}
+
+function columnsBetween(start: string, end: string) {
+  const first = columnNumber(start);
+  const last = columnNumber(end);
+  return Array.from({ length: last - first + 1 }, (_, index) => columnName(first + index));
+}
+
+function columnNumber(column: string) {
+  return column.split("").reduce((total, char) => total * 26 + char.charCodeAt(0) - 64, 0);
+}
+
+function columnName(index: number) {
+  let value = "";
+  while (index > 0) {
+    index -= 1;
+    value = String.fromCharCode(65 + (index % 26)) + value;
+    index = Math.floor(index / 26);
+  }
+  return value;
 }
 
 function claimResultLabel(value?: string | null) {
@@ -1731,7 +2363,7 @@ function ProductThumb(props: { item?: Opportunity | null; small?: boolean }) {
 function imageSrc(url?: string | null) {
   if (!url) return "";
   if (url.startsWith("/uploaded-sources/")) return `${API_BASE}${url}`;
-  if (url.startsWith(`${OSS_PUBLIC_BASE}/`)) return `${API_BASE}/claims/evidence-images/proxy?url=${encodeURIComponent(url)}`;
+  if (url.startsWith(`${OSS_PUBLIC_BASE}/`)) return `${API_BASE}/claims/evidence-images/proxy?url=${encodeURIComponent(url)}&token=${encodeURIComponent(getAuthToken())}`;
   return url;
 }
 
@@ -1755,8 +2387,10 @@ function AssignView(props: {
   setAssignmentDrafts: (value: Record<string, string>) => void;
   operatorProfiles: OperatorAssignmentProfile[];
   setOperatorProfiles: (value: OperatorAssignmentProfile[]) => void;
-  newProfile: Pick<OperatorAssignmentProfile, "operator_name" | "key_site" | "key_category1" | "key_category2" | "enabled">;
-  setNewProfile: (value: Pick<OperatorAssignmentProfile, "operator_name" | "key_site" | "key_category1" | "key_category2" | "enabled">) => void;
+  list: ListState;
+  setList: Dispatch<SetStateAction<ListState>>;
+  newProfile: Pick<OperatorAssignmentProfile, "operator_name" | "key_site" | "key_category1" | "key_category2" | "assignment_priority" | "enabled">;
+  setNewProfile: (value: Pick<OperatorAssignmentProfile, "operator_name" | "key_site" | "key_category1" | "key_category2" | "assignment_priority" | "enabled">) => void;
   onSaveProfiles: () => void;
   onAddProfile: () => void;
   onDeleteProfile: (profileId: string) => void;
@@ -1769,6 +2403,8 @@ function AssignView(props: {
   const enabledProfiles = props.operatorProfiles.filter((profile) => profile.enabled);
   const workload = assignmentWorkload(enabledProfiles, props.groups, props.tasks, props.previewItems, props.assignmentDrafts);
   const pendingGroups = props.assignmentGroups;
+  const filteredItems = props.previewItems.filter((item) => assignmentItemMatches(item, props.assignmentGroups, props.assignmentDrafts, props.list.query));
+  const pageItemsList = pageItems(filteredItems, props.list);
   const selectedCount = props.previewItems.filter((item) => props.assignmentDrafts[assignmentItemKey(item)]).length;
   const childSelectedCount = props.previewItems.reduce(
     (sum, item) => sum + (props.assignmentDrafts[assignmentItemKey(item)] ? item.sub_sku_count : 0),
@@ -1788,6 +2424,7 @@ function AssignView(props: {
             <span className="tag">未分配 {props.previewItems.length ? props.previewItems.length - selectedCount : pendingGroups.length} 组</span>
           </div>
         </div>
+        <ListControls label="分配台" list={props.list} total={filteredItems.length} setList={(patch) => props.setList((current) => ({ ...current, ...patch }))} />
         <div className="assignment-workload-grid">
           {enabledProfiles.map((profile) => {
             const load = workload[profile.operator_name] || emptyAssignmentLoad();
@@ -1814,6 +2451,8 @@ function AssignView(props: {
         </div>
         {!props.previewItems.length ? (
           <p className="muted">没有待分配的主 SKU 组。</p>
+        ) : !filteredItems.length ? (
+          <EmptySmall text="当前搜索条件下没有待分配 SKU。" />
         ) : (
           <div className="assignment-table-scroll">
             <div className="assignment-table">
@@ -1824,7 +2463,7 @@ function AssignView(props: {
                 <span>推荐依据</span>
                 <span>最终分配 / 状态</span>
               </div>
-            {props.previewItems.map((item) => (
+            {pageItemsList.map((item) => (
               <AssignmentTableRow
                 enabledProfiles={enabledProfiles}
                 group={props.assignmentGroups.find((group) => group.items.some((opportunity) => item.opportunity_ids.includes(opportunity.id)))}
@@ -1860,6 +2499,7 @@ function AssignView(props: {
             <span>重点站点</span>
             <span>重点品类1</span>
             <span>重点品类2</span>
+            <span>优先级</span>
             <span>删除</span>
           </div>
           {props.operatorProfiles.map((profile) => (
@@ -1874,6 +2514,11 @@ function AssignView(props: {
               <input value={profile.key_site || ""} onChange={(event) => patchProfile(profile.id, { key_site: event.target.value })} />
               <input value={profile.key_category1 || ""} onChange={(event) => patchProfile(profile.id, { key_category1: event.target.value })} />
               <input value={profile.key_category2 || ""} onChange={(event) => patchProfile(profile.id, { key_category2: event.target.value })} />
+              <input
+                type="number"
+                value={profile.assignment_priority || 0}
+                onChange={(event) => patchProfile(profile.id, { assignment_priority: Number(event.target.value || 0) })}
+              />
               <div className="action-row compact-actions">
                 <button className="btn" onClick={() => props.onDeleteProfile(profile.id)} title="删除">
                   <Trash2 size={15} />
@@ -1907,6 +2552,12 @@ function AssignView(props: {
               value={props.newProfile.key_category2 || ""}
               onChange={(event) => props.setNewProfile({ ...props.newProfile, key_category2: event.target.value })}
               placeholder="重点品类2"
+            />
+            <input
+              type="number"
+              value={props.newProfile.assignment_priority || 0}
+              onChange={(event) => props.setNewProfile({ ...props.newProfile, assignment_priority: Number(event.target.value || 0) })}
+              placeholder="优先级"
             />
             <button className="btn primary" onClick={props.onAddProfile}>
               <Plus size={15} />
@@ -1966,11 +2617,11 @@ function assignmentWorkload(
 }
 
 function operatorProfileBrief(profile: OperatorAssignmentProfile) {
-  return `${profile.key_site || "-"} · 品类1 ${profile.key_category1 || "-"} · 品类2 ${profile.key_category2 || "-"}`;
+  return `${profile.key_site || "-"} · 品类1 ${profile.key_category1 || "-"} · 品类2 ${profile.key_category2 || "-"} · 优先级 ${profile.assignment_priority || 0}`;
 }
 
 function operatorOptionLabel(profile: OperatorAssignmentProfile, load: AssignmentLoad) {
-  return `${profile.operator_name}｜${profile.key_site || "-"}｜${profile.key_category1 || "-"} / ${profile.key_category2 || "-"}｜${load.groups}组/${load.subSkus}子SKU`;
+  return `${profile.operator_name}｜${profile.key_site || "-"}｜${profile.key_category1 || "-"} / ${profile.key_category2 || "-"}｜优先级${profile.assignment_priority || 0}｜${load.groups}组/${load.subSkus}子SKU`;
 }
 
 function AssignmentTableRow(props: {
@@ -2099,6 +2750,9 @@ function assignmentMatchLines(item: AssignmentPreviewItem, opportunity?: Opportu
   } else if (item.match_reason?.includes("负载更低")) {
     lines.push("负载更低：同等匹配优先级下，选择当前负载更低的运营");
   }
+  if ((profile.assignment_priority || 0) > 0) {
+    lines.push(`优先级：同负载时优先级 ${profile.assignment_priority}`);
+  }
   return lines;
 }
 
@@ -2166,31 +2820,64 @@ function normalizeCategoryText(value?: string | null) {
 function ClaimView(props: {
   rows: Opportunity[];
   activeOperator: string;
+  drafts: Record<string, ClaimDraft>;
+  setDrafts: Dispatch<SetStateAction<Record<string, ClaimDraft>>>;
+  list: ListState;
+  setList: Dispatch<SetStateAction<ListState>>;
+  detailChildId: string | null;
+  setDetailChildId: (value: string | null) => void;
+  onOpenDetail: (group: ProductGroup, childId?: string | null) => void;
+  onRemoveSelfClaim: (id: string) => void;
   onSubmit: (payload: unknown | unknown[]) => Promise<void>;
 }) {
-  const [drafts, setDrafts] = useState<Record<string, ClaimDraft>>({});
-  const claimGroups = useMemo(() => groupOpportunities(props.rows), [props.rows]);
+  const filteredRows = useMemo(() => filterOpportunitiesBySearch(props.rows, props.list.query), [props.rows, props.list.query]);
+  const claimGroups = useMemo(() => groupOpportunities(filteredRows), [filteredRows]);
+  const allClaimGroups = useMemo(() => groupOpportunities(props.rows), [props.rows]);
+  const pageGroups = pageItems(claimGroups, props.list);
+  const drawerItem = props.detailChildId ? props.rows.find((item) => item.id === props.detailChildId) || null : null;
+  const drawerGroup = drawerItem ? allClaimGroups.find((group) => group.items.some((item) => item.id === drawerItem.id)) || groupOpportunities([drawerItem])[0] : null;
+  const drawerGroupSequence = drawerGroup && claimGroups.some((group) => group.key === drawerGroup.key) ? claimGroups : allClaimGroups;
+  const drawerGroupIndex = drawerGroup ? drawerGroupSequence.findIndex((group) => group.key === drawerGroup.key) : -1;
+  const previousDrawerGroup = drawerGroupIndex > 0 ? drawerGroupSequence[drawerGroupIndex - 1] : null;
+  const nextDrawerGroup = drawerGroupIndex >= 0 && drawerGroupIndex < drawerGroupSequence.length - 1 ? drawerGroupSequence[drawerGroupIndex + 1] : null;
+  const [syncRejectToGroup, setSyncRejectToGroup] = useState(true);
+
+  useEffect(() => {
+    if (props.detailChildId && !props.rows.some((item) => item.id === props.detailChildId)) props.setDetailChildId(null);
+  }, [props.detailChildId, props.rows, props.setDetailChildId]);
 
   function draftFor(item: Opportunity): ClaimDraft {
-    return drafts[item.id] || { mode: "claim", claimDailySales: "", rejectReason: "", evidenceImages: [] };
+    return props.drafts[item.id] || draftForId();
   }
 
-  function patchDraft(itemId: string, patch: Partial<ClaimDraft>) {
-    setDrafts((current) => ({ ...current, [itemId]: { ...(current[itemId] || draftForId()), ...patch } }));
+  function patchDraft(itemId: string, patch: Partial<ClaimDraft>, group?: ProductGroup | null, syncReject = false) {
+    props.setDrafts((current) =>
+      patchClaimDraftGroup(
+        current,
+        itemId,
+        patch,
+        group?.items.map((item) => item.id),
+        syncReject,
+        group?.items[0]?.id === itemId
+      )
+    );
   }
 
-  function setMode(itemId: string, mode: "claim" | "reject") {
+  function setMode(itemId: string, mode: "claim" | "reject", group?: ProductGroup | null, syncReject = false) {
     patchDraft(
       itemId,
       mode === "claim"
-        ? { mode, rejectReason: "", evidenceImages: [] }
-        : { mode, claimDailySales: "" }
+        ? { mode, rejectReason: "" }
+        : { mode, claimDailySales: "" },
+      group,
+      syncReject
     );
   }
 
   function buildPayload(item: Opportunity, draft: ClaimDraft, requireComplete: boolean) {
     const dailySales = draft.claimDailySales.trim();
     const rejectReason = draft.rejectReason.trim();
+    const researchConclusion = draft.researchConclusion.trim();
     if (draft.mode === "claim" && !dailySales) {
       if (requireComplete) window.alert("认领时必须填写认领单销");
       return null;
@@ -2200,7 +2887,7 @@ function ClaimView(props: {
       return null;
     }
     const note =
-      draft.mode === "reject" && draft.evidenceImages.length
+      draft.evidenceImages.length
         ? JSON.stringify({
             evidence_images: draft.evidenceImages.map((image) => ({
               name: image.name,
@@ -2218,7 +2905,7 @@ function ClaimView(props: {
       claim_source: claimSourceFor(item),
       claim_daily_sales: draft.mode === "claim" ? Number(dailySales) : undefined,
       reject_reason: draft.mode === "reject" ? rejectReason : undefined,
-      feedback_summary: "",
+      feedback_summary: researchConclusion || undefined,
       note
     };
   }
@@ -2232,7 +2919,8 @@ function ClaimView(props: {
     const payload = buildPayload(item, draft, true);
     if (!payload) return;
     await props.onSubmit(payload);
-    setDrafts((current) => ({ ...current, [item.id]: draftForId() }));
+    props.setDrafts((current) => ({ ...current, [item.id]: draftForId() }));
+    if (isSelfClaimPoolItem(item)) props.onRemoveSelfClaim(item.id);
   }
 
   async function submitComplete(items: Opportunity[]) {
@@ -2250,151 +2938,487 @@ function ClaimView(props: {
       return;
     }
     await props.onSubmit(readyItems.map((entry) => entry.payload));
-    setDrafts((current) => {
+    props.setDrafts((current) => {
       const next = { ...current };
       for (const entry of readyItems) next[entry.item.id] = draftForId();
       return next;
     });
+    for (const entry of readyItems) {
+      if (isSelfClaimPoolItem(entry.item)) props.onRemoveSelfClaim(entry.item.id);
+    }
   }
 
   function addEvidence(itemId: string, images: EvidenceImage[]) {
     if (!images.length) return;
-    const current = drafts[itemId] || draftForId();
+    const current = props.drafts[itemId] || draftForId();
     patchDraft(itemId, { evidenceImages: [...current.evidenceImages, ...images] });
   }
 
   function removeEvidence(itemId: string, imageId: string) {
-    const current = drafts[itemId] || draftForId();
+    const current = props.drafts[itemId] || draftForId();
     patchDraft(itemId, { evidenceImages: current.evidenceImages.filter((image) => image.id !== imageId) });
   }
 
   return (
-    <div className="claim-card-list">
-      {!props.rows.length && <EmptySmall text="没有待认领任务或财根机会池记录。" />}
-      {!!props.rows.length && (
-        <div className="claim-bulkbar">
-          <span>按主 SKU 分组展示；可逐个提交，也可一键提交已填写完整的子 SKU。</span>
-          <button className="btn primary" onClick={() => void submitComplete(props.rows)}>
-            <Send size={15} />
-            一键提交全部已填写
-          </button>
-        </div>
-      )}
-      {claimGroups.map((group) => (
-        <article className="group-item claim-main-card" key={group.key}>
-          <div className="claim-group-head">
-            <div>
-              <div className="title-row">
-                <h2>{group.main_sku}</h2>
-                {statusPill(group.status)}
-                <span className="tag">{group.items.length} 个子 SKU</span>
-              </div>
-              <p className="muted">{group.first.main_sku_name || group.first.keyword || "暂无商品名"}</p>
-              <p className="muted">开品理由：{groupReason(group)}</p>
-            </div>
-            <button className="btn" onClick={() => void submitComplete(group.items)}>
-              提交本组已填写
+    <div className="claim-workspace">
+      <section className="claim-list-pane">
+        <ListControls label="运营认领" list={props.list} total={filteredRows.length} setList={(patch) => props.setList((current) => ({ ...current, ...patch }))} />
+        {!props.rows.length && <EmptySmall text="没有待认领任务或财根机会池记录。" />}
+        {!!props.rows.length && !filteredRows.length && <EmptySmall text="当前搜索条件下没有待认领任务。" />}
+        {!!filteredRows.length && (
+          <div className="claim-bulkbar">
+            <span>每个子 SKU 一行；可在列表填，也可打开右侧详情边看边填。</span>
+            <button className="btn primary" onClick={() => void submitComplete(filteredRows)}>
+              <Send size={15} />
+              一键提交全部已填写
             </button>
           </div>
-          <div className="claim-child-list">
-            {group.items.map((item) => {
-              const draft = draftFor(item);
-              return (
-                <section className="claim-child-card" key={item.id}>
-                  <div className="sku-group claim-card-top">
-                    <ProductThumb item={item} />
-                    <div>
-                      <div className="title-row">
-                        <h3>{item.sub_sku}</h3>
+        )}
+        {pageGroups.map((group) => (
+          <article className="group-item claim-main-card" key={group.key}>
+            <div className="claim-group-head">
+              <div>
+                <div className="title-row">
+                  <button className="sku-title-link" type="button" onClick={() => props.onOpenDetail(group)}>
+                    {group.main_sku}
+                  </button>
+                  {statusPill(group.status)}
+                  <span className="tag">{group.items.length} 个子 SKU</span>
+                </div>
+                <p className="muted">{group.first.main_sku_name || group.first.keyword || "暂无商品名"}</p>
+                <p className="muted">开品理由：{groupReason(group)}</p>
+              </div>
+              <button className="btn" onClick={() => void submitComplete(group.items)}>
+                提交本组已填写
+              </button>
+            </div>
+            <div className="claim-child-list compact">
+              {group.items.map((item) => {
+                const draft = draftFor(item);
+                return (
+                  <section className={props.detailChildId === item.id ? "claim-row-card active" : "claim-row-card"} key={item.id}>
+                    <ProductThumb item={item} small />
+                    <div className="claim-row-info">
+                      <div className="title-row compact">
+                        <button className="sku-title-link small-title" type="button" onClick={() => props.onOpenDetail(group, item.id)}>
+                          {item.sub_sku}
+                        </button>
                         {statusPill(item.current_status)}
-                        <span className="tag">{claimTypeLabel(item)}</span>
-                        {item.latest_claim_result && <span className="tag">上次：{item.latest_claim_result === "claim" ? "认领" : "不认领"}</span>}
                       </div>
                       <p>
                         <b>{item.sub_sku_name || item.keyword || "-"}</b>
                       </p>
-                      <div className="tag-row">
-                        <span className="tag">{item.site || item.country || "未填站点"}</span>
-                        <span className="tag">{item.category_level1 || "未填类目"}</span>
-                        <span className="tag">当前运营：{props.activeOperator || "未选择"}</span>
+                      <div className="claim-row-meta">
+                        {item.latest_claim_result && <span>上次：{item.latest_claim_result === "claim" ? "认领" : "不认领"}</span>}
+                        {item.current_status === "returned_for_supplement" && item.latest_review_comment && <span className="red">退回：{item.latest_review_comment}</span>}
                       </div>
-                      {item.current_status === "returned_for_supplement" && item.latest_review_comment && (
-                        <div className="return-reason">主管退回原因：{item.latest_review_comment}</div>
-                      )}
-                      {item.current_status === "returned_for_supplement" && hasOperatorSubmission(item) && (
-                        <OperatorSubmissionSummary item={item} title="上次不认领记录" />
-                      )}
                     </div>
-                  </div>
-                  <div className="claim-inline">
-                    <div className="mode-tabs">
-                      <button className={draft.mode === "claim" ? "mode-tab active" : "mode-tab"} onClick={() => setMode(item.id, "claim")}>
-                        <CheckCircle2 size={15} />
-                        认领
-                      </button>
-                      <button className={draft.mode === "reject" ? "mode-tab active reject" : "mode-tab"} onClick={() => setMode(item.id, "reject")}>
-                        <XCircle size={15} />
-                        不认领
-                      </button>
-                    </div>
-                    {draft.mode === "claim" ? (
-                      <div className="claim-fields">
-                        <label>
-                          认领单销（日销）
-                          <input
-                            type="number"
-                            min="0"
-                            step="0.01"
-                            value={draft.claimDailySales}
-                            onChange={(event) => patchDraft(item.id, { claimDailySales: event.target.value })}
-                            placeholder="备货数量 = 认领单销 × 30"
-                          />
-                        </label>
-                      </div>
-                    ) : (
-                      <div className="claim-fields">
-                        <label>
-                          不认领原因
-                          <textarea
-                            rows={3}
-                            value={draft.rejectReason}
-                            onChange={(event) => patchDraft(item.id, { rejectReason: event.target.value })}
-                            placeholder="填写不认领原因，可补充调研判断"
-                          />
-                        </label>
-                        <EvidencePicker
-                          images={draft.evidenceImages}
-                          onFiles={(files) => void readEvidenceFiles(files, item.id).then((images) => addEvidence(item.id, images))}
-                          onRemove={(imageId) => removeEvidence(item.id, imageId)}
-                        />
-                      </div>
-                    )}
-                    <div className="action-row">
-                      <button className="btn primary" onClick={() => void submitItem(item)}>
-                        <Send size={15} />
-                        提交{draft.mode === "claim" ? "认领" : "不认领"}
-                      </button>
-                    </div>
-                  </div>
-                </section>
-              );
-            })}
+                    <ClaimDraftEditor
+                      compact
+                      draft={draft}
+                      item={item}
+                      onAddEvidence={(images) => addEvidence(item.id, images)}
+                      onMode={(mode) => setMode(item.id, mode)}
+                      onPatch={(patch) => patchDraft(item.id, patch)}
+                      onRemoveEvidence={(imageId) => removeEvidence(item.id, imageId)}
+                      onRemoveSelfClaim={() => props.onRemoveSelfClaim(item.id)}
+                      onSubmit={() => void submitItem(item)}
+                      showRemove={isSelfClaimPoolItem(item)}
+                      submitText="提交"
+                    />
+                    <button className="btn small" type="button" onClick={() => props.onOpenDetail(group, item.id)}>
+                      详情
+                    </button>
+                  </section>
+                );
+              })}
+            </div>
+          </article>
+        ))}
+      </section>
+      {drawerItem && drawerGroup && (
+        <ClaimDetailDrawer
+          drafts={props.drafts}
+          group={drawerGroup}
+          groupIndex={drawerGroupIndex >= 0 ? drawerGroupIndex + 1 : 1}
+          groupTotal={drawerGroupSequence.length || 1}
+          nextGroup={nextDrawerGroup}
+          onAddEvidence={(item, images) => addEvidence(item.id, images)}
+          onClose={() => props.setDetailChildId(null)}
+          onMode={(item, mode) => setMode(item.id, mode, drawerGroup, syncRejectToGroup)}
+          onNextGroup={() => nextDrawerGroup && props.setDetailChildId(nextDrawerGroup.items[0]?.id || null)}
+          onPatch={(item, patch) => patchDraft(item.id, patch, drawerGroup, syncRejectToGroup)}
+          onPreviousGroup={() => previousDrawerGroup && props.setDetailChildId(previousDrawerGroup.items[0]?.id || null)}
+          onRemoveEvidence={(item, imageId) => removeEvidence(item.id, imageId)}
+          onRemoveSelfClaim={(item) => props.onRemoveSelfClaim(item.id)}
+          onSubmitGroup={() => void submitComplete(drawerGroup.items)}
+          previousGroup={previousDrawerGroup}
+          syncRejectToGroup={syncRejectToGroup}
+          onSyncRejectToGroupChange={setSyncRejectToGroup}
+        />
+      )}
+    </div>
+  );
+}
+
+function ClaimDraftEditor(props: {
+  item: Opportunity;
+  draft: ClaimDraft;
+  compact?: boolean;
+  showRemove?: boolean;
+  submitText: string;
+  onMode: (mode: "claim" | "reject") => void;
+  onPatch: (patch: Partial<ClaimDraft>) => void;
+  onAddEvidence: (images: EvidenceImage[]) => void;
+  onRemoveEvidence: (imageId: string) => void;
+  onSubmit: () => void;
+  onRemoveSelfClaim?: () => void;
+}) {
+  const { draft } = props;
+  const primaryLabel = draft.mode === "claim" ? "认领日销" : "不认领原因";
+  return (
+    <div className={props.compact ? "claim-editor compact" : "claim-editor drawer"}>
+      <div className="mode-tabs">
+        <button className={draft.mode === "claim" ? "mode-tab active" : "mode-tab"} type="button" onClick={() => props.onMode("claim")}>
+          <CheckCircle2 size={15} />
+          认领
+        </button>
+        <button className={draft.mode === "reject" ? "mode-tab active reject" : "mode-tab"} type="button" onClick={() => props.onMode("reject")}>
+          <XCircle size={15} />
+          不认领
+        </button>
+      </div>
+      <label className="claim-editor-field primary-field">
+        <span>{primaryLabel}</span>
+        {draft.mode === "claim" ? (
+          <input
+            min="0"
+            onChange={(event) => props.onPatch({ claimDailySales: event.target.value })}
+            placeholder="日销"
+            step="0.01"
+            type="number"
+            value={draft.claimDailySales}
+          />
+        ) : (
+          <input
+            onChange={(event) => props.onPatch({ rejectReason: event.target.value })}
+            placeholder="必填原因"
+            value={draft.rejectReason}
+          />
+        )}
+      </label>
+      <label className="claim-editor-field conclusion-field">
+        <span>调研结论</span>
+        {props.compact ? (
+          <input
+            onChange={(event) => props.onPatch({ researchConclusion: event.target.value })}
+            placeholder="结论"
+            value={draft.researchConclusion}
+          />
+        ) : (
+          <textarea
+            onChange={(event) => props.onPatch({ researchConclusion: event.target.value })}
+            placeholder="可选，导出到市场监控 AK"
+            rows={3}
+            value={draft.researchConclusion}
+          />
+        )}
+      </label>
+      <EvidencePicker
+        compact={props.compact}
+        images={draft.evidenceImages}
+        onFiles={(files) => void readEvidenceFiles(files, props.item.id).then(props.onAddEvidence)}
+        onRemove={props.onRemoveEvidence}
+      />
+      <div className="claim-editor-actions">
+        {props.showRemove && props.onRemoveSelfClaim && (
+          <button className="btn small" type="button" onClick={props.onRemoveSelfClaim}>
+            <Trash2 size={14} />
+            移除
+          </button>
+        )}
+        <button className="btn primary" type="button" onClick={props.onSubmit}>
+          <Send size={15} />
+          {props.submitText}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function ClaimDetailDrawer(props: {
+  group: ProductGroup;
+  drafts: Record<string, ClaimDraft>;
+  groupIndex: number;
+  groupTotal: number;
+  previousGroup: ProductGroup | null;
+  nextGroup: ProductGroup | null;
+  syncRejectToGroup: boolean;
+  onClose: () => void;
+  onPreviousGroup: () => void;
+  onNextGroup: () => void;
+  onSyncRejectToGroupChange: (checked: boolean) => void;
+  onMode: (item: Opportunity, mode: "claim" | "reject") => void;
+  onPatch: (item: Opportunity, patch: Partial<ClaimDraft>) => void;
+  onAddEvidence: (item: Opportunity, images: EvidenceImage[]) => void;
+  onRemoveEvidence: (item: Opportunity, imageId: string) => void;
+  onSubmitGroup: () => void;
+  onRemoveSelfClaim: (item: Opportunity) => void;
+}) {
+  const moduleTabs: { key: ClaimDrawerModuleKey; label: string; columns: string[] }[] = [
+    { key: "market", label: "市场调研", columns: columnsBetween("Z", "AN") },
+    { key: "pricing", label: "价格 / 毛利", columns: columnsBetween("AO", "AV").filter((column) => column !== "AQ") },
+    { key: "development", label: "开发询价 / 包装", columns: columnsBetween("M", "Y") },
+    { key: "cost", label: "成本 / 备货汇总", columns: columnsBetween("AW", "BX") }
+  ];
+  const [activeModule, setActiveModule] = useState<ClaimDrawerModuleKey>("market");
+  const activeTab = moduleTabs.find((tab) => tab.key === activeModule) || moduleTabs[0];
+  const basicColumns = columnsBetween("A", "L").filter((column) => !["I", "J"].includes(column));
+  const first = props.group.first;
+  const summaryMeta = [first.site || first.country, first.developer_department, first.developer_name, first.category_level1, first.product_type]
+    .filter(Boolean)
+    .join(" · ");
+
+  useEffect(() => {
+    setActiveModule("market");
+  }, [props.group.key]);
+
+  return (
+    <div className="claim-detail-overlay" role="dialog" aria-modal="true">
+      <button className="claim-detail-backdrop" type="button" onClick={props.onClose}>
+        <span>关闭详情</span>
+      </button>
+      <aside className="claim-detail-drawer">
+        <header className="claim-drawer-head">
+          <div className="drawer-title-row">
+            <div>
+              <h2>{props.group.main_sku}</h2>
+              <p>{first.main_sku_name || first.keyword || "未命名商品"} · {props.group.items.length} 个子 SKU</p>
+            </div>
+            <div className="drawer-header-actions">
+              <span className="tag">第 {props.groupIndex} / {props.groupTotal} 组</span>
+              <button className="btn small" type="button" onClick={props.onClose}>
+                <X size={14} />
+                关闭
+              </button>
+            </div>
           </div>
-        </article>
-      ))}
+        </header>
+        <div className="claim-drawer-body">
+          <details className="claim-basic-details">
+            <summary>
+              <ProductThumb item={first} small />
+              <span className="claim-basic-summary">
+                <b>{summaryMeta || "基础信息"}</b>
+                <span>{first.keyword || first.main_sku_name || "-"} · {groupReason(props.group)}</span>
+              </span>
+              <span className="tag">基础信息 A-L</span>
+            </summary>
+            <div className="claim-basic-grid">
+              {basicColumns.map((column) => (
+                <span key={column}>
+                  <b>{column} · {headerLabel(first, column) || column}</b>
+                  {renderMaybeLink(snapshotColumnText(first, column) || "-")}
+                </span>
+              ))}
+            </div>
+          </details>
+
+          {props.group.items.some((item) => item.current_status === "returned_for_supplement" && item.latest_review_comment) && (
+            <div className="return-reason">本组存在主管退回项，请在右侧认领栏查看退回原因。</div>
+          )}
+
+          <div className="claim-matrix-toolbar">
+            <div className="claim-module-tabs">
+              {moduleTabs.map((tab) => (
+                <button className={activeModule === tab.key ? "claim-module-tab active" : "claim-module-tab"} key={tab.key} type="button" onClick={() => setActiveModule(tab.key)}>
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+            <div className="claim-matrix-actions">
+              <label className="sync-check">
+                <input checked={props.syncRejectToGroup} onChange={(event) => props.onSyncRejectToGroupChange(event.target.checked)} type="checkbox" />
+                不认领自动填充其他未填写子 SKU
+              </label>
+              <span className="tag">{activeTab.columns[0]}-{activeTab.columns[activeTab.columns.length - 1]}</span>
+              <button className="btn primary" type="button" onClick={props.onSubmitGroup}>
+                <Send size={15} />
+                提交本主 SKU 已填写项
+              </button>
+            </div>
+          </div>
+
+          <ClaimMatrixTable
+            columns={activeTab.columns}
+            drafts={props.drafts}
+            group={props.group}
+            onAddEvidence={props.onAddEvidence}
+            onMode={props.onMode}
+            onPatch={props.onPatch}
+            onRemoveEvidence={props.onRemoveEvidence}
+            onRemoveSelfClaim={props.onRemoveSelfClaim}
+          />
+        </div>
+        <button
+          aria-label="上一个主 SKU"
+          className="claim-group-nav previous"
+          disabled={!props.previousGroup}
+          type="button"
+          onClick={props.onPreviousGroup}
+        >
+          <ChevronLeft size={20} />
+          <span>上一组</span>
+        </button>
+        <button
+          aria-label="下一个主 SKU"
+          className="claim-group-nav next"
+          disabled={!props.nextGroup}
+          type="button"
+          onClick={props.onNextGroup}
+        >
+          <ChevronRight size={20} />
+          <span>下一组</span>
+        </button>
+      </aside>
+    </div>
+  );
+}
+
+function ClaimMatrixTable(props: {
+  group: ProductGroup;
+  columns: string[];
+  drafts: Record<string, ClaimDraft>;
+  onMode: (item: Opportunity, mode: "claim" | "reject") => void;
+  onPatch: (item: Opportunity, patch: Partial<ClaimDraft>) => void;
+  onAddEvidence: (item: Opportunity, images: EvidenceImage[]) => void;
+  onRemoveEvidence: (item: Opportunity, imageId: string) => void;
+  onRemoveSelfClaim: (item: Opportunity) => void;
+}) {
+  return (
+    <div className="claim-matrix-wrap">
+      <table className="claim-matrix-table">
+        <thead>
+          <tr>
+            <th className="claim-matrix-sticky-left">子 SKU（I-J）</th>
+            {props.columns.map((column) => (
+              <th className={isHttpUrl(snapshotColumnText(props.group.first, column)) ? "wide" : ""} key={column}>
+                {column} · {headerLabel(props.group.first, column) || column}
+              </th>
+            ))}
+            <th className="claim-matrix-sticky-right">认领填写与调研图片</th>
+          </tr>
+        </thead>
+        <tbody>
+          {props.group.items.map((item) => (
+            <tr key={item.id}>
+              <td className="claim-matrix-sticky-left">
+                <div className="claim-matrix-sku">
+                  <ProductThumb item={item} small />
+                  <span>
+                    <b>{item.sub_sku}</b>
+                    <span>{item.sub_sku_name || item.keyword || "-"}</span>
+                    {statusPill(item.current_status)}
+                  </span>
+                </div>
+              </td>
+              {props.columns.map((column) => (
+                <td className={isHttpUrl(snapshotColumnText(item, column)) ? "wide" : ""} key={column}>
+                  {renderMaybeLink(snapshotColumnText(item, column) || "-")}
+                </td>
+              ))}
+              <td className="claim-matrix-sticky-right">
+                <ClaimMatrixDraftEditor
+                  draft={props.drafts[item.id] || draftForId()}
+                  item={item}
+                  onAddEvidence={(images) => props.onAddEvidence(item, images)}
+                  onMode={(mode) => props.onMode(item, mode)}
+                  onPatch={(patch) => props.onPatch(item, patch)}
+                  onRemoveEvidence={(imageId) => props.onRemoveEvidence(item, imageId)}
+                  onRemoveSelfClaim={() => props.onRemoveSelfClaim(item)}
+                  showRemove={isSelfClaimPoolItem(item)}
+                />
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function ClaimMatrixDraftEditor(props: {
+  item: Opportunity;
+  draft: ClaimDraft;
+  showRemove: boolean;
+  onMode: (mode: "claim" | "reject") => void;
+  onPatch: (patch: Partial<ClaimDraft>) => void;
+  onAddEvidence: (images: EvidenceImage[]) => void;
+  onRemoveEvidence: (imageId: string) => void;
+  onRemoveSelfClaim: () => void;
+}) {
+  return (
+    <div className="claim-matrix-editor">
+      <div className="mode-tabs">
+        <button className={props.draft.mode === "claim" ? "mode-tab active" : "mode-tab"} type="button" onClick={() => props.onMode("claim")}>
+          <CheckCircle2 size={14} />认领
+        </button>
+        <button className={props.draft.mode === "reject" ? "mode-tab active reject" : "mode-tab"} type="button" onClick={() => props.onMode("reject")}>
+          <XCircle size={14} />不认领
+        </button>
+      </div>
+      <label className="claim-editor-field">
+        <span>{props.draft.mode === "claim" ? "认领日销" : "不认领原因"}</span>
+        <input
+          min={props.draft.mode === "claim" ? "0" : undefined}
+          onChange={(event) => props.onPatch(props.draft.mode === "claim" ? { claimDailySales: event.target.value } : { rejectReason: event.target.value })}
+          placeholder={props.draft.mode === "claim" ? "日销" : "必填原因"}
+          step={props.draft.mode === "claim" ? "0.01" : undefined}
+          type={props.draft.mode === "claim" ? "number" : "text"}
+          value={props.draft.mode === "claim" ? props.draft.claimDailySales : props.draft.rejectReason}
+        />
+      </label>
+      <label className="claim-editor-field conclusion-field">
+        <span>调研结论</span>
+        <input onChange={(event) => props.onPatch({ researchConclusion: event.target.value })} placeholder="结论" value={props.draft.researchConclusion} />
+      </label>
+      <EvidencePicker
+        compact
+        images={props.draft.evidenceImages}
+        onFiles={(files) => void readEvidenceFiles(files, props.item.id).then(props.onAddEvidence)}
+        onRemove={props.onRemoveEvidence}
+      />
+      {props.showRemove && (
+        <button className="btn small" type="button" onClick={props.onRemoveSelfClaim}>
+          <Trash2 size={14} />移除
+        </button>
+      )}
+      {props.item.current_status === "returned_for_supplement" && props.item.latest_review_comment && (
+        <span className="claim-matrix-return">退回：{props.item.latest_review_comment}</span>
+      )}
     </div>
   );
 }
 
 function draftForId(): ClaimDraft {
-  return { mode: "claim", claimDailySales: "", rejectReason: "", evidenceImages: [] };
+  return createClaimDraft<EvidenceImage>();
+}
+
+function reviewDraftFor(item?: Opportunity | null): ReviewDraft {
+  return {
+    reviewerName: "练玉君",
+    reviewStatus: item?.current_status === "claim_rejected" ? "confirmed_not_claim" : "approved",
+    reviewComment: ""
+  };
 }
 
 function EvidencePicker(props: {
   images: EvidenceImage[];
   onFiles: (files: FileList | File[]) => void;
   onRemove: (imageId: string) => void;
+  compact?: boolean;
 }) {
+  const [preview, setPreview] = useState<EvidenceImage | null>(null);
   function handleInput(event: ChangeEvent<HTMLInputElement>) {
     if (event.target.files) props.onFiles(event.target.files);
     event.currentTarget.value = "";
@@ -2412,30 +3436,40 @@ function EvidencePicker(props: {
   }
 
   return (
-    <div className="evidence-block">
+    <div className={props.compact ? "evidence-block compact" : "evidence-block"}>
       <label
-        className="evidence-zone"
+        className={props.compact ? "evidence-zone compact" : "evidence-zone"}
         tabIndex={0}
         onDragOver={(event) => event.preventDefault()}
         onDrop={handleDrop}
         onPaste={handlePaste}
       >
-        <Upload size={18} />
-        <b>粘贴、拖拽或选择调研图片</b>
-        <span>JPG / PNG / WebP / GIF，可多张</span>
+        <Upload size={props.compact ? 14 : 18} />
+        <b>{props.compact ? (props.images.length ? `${props.images.length} 张` : "图片") : "添加调研图片"}</b>
+        <span>{props.compact ? "上传" : "粘贴 / 拖拽 / 选择，可多张"}</span>
         <input type="file" accept="image/*" multiple onChange={handleInput} />
       </label>
       {!!props.images.length && (
         <div className="evidence-list">
           {props.images.map((image) => (
             <div className="evidence-item" key={image.id}>
-              <img src={image.previewUrl} alt={image.name} />
+              <button className="evidence-thumb-button" type="button" onClick={() => setPreview(image)} title="查看大图">
+                <img src={image.previewUrl} alt={image.name} />
+              </button>
               <span>{image.name || "剪贴板图片"}</span>
-              <button className="btn" onClick={() => props.onRemove(image.id)} title="删除图片">
-                <Trash2 size={14} />
+              <button className="evidence-thumb-remove" type="button" onClick={() => props.onRemove(image.id)} title="删除图片">
+                <X size={12} />
               </button>
             </div>
           ))}
+        </div>
+      )}
+      {preview && (
+        <div className="image-preview" role="dialog" aria-modal="true" onClick={() => setPreview(null)}>
+          <button className="image-preview-close" type="button" onClick={() => setPreview(null)}>
+            <X size={18} />
+          </button>
+          <img src={preview.previewUrl} alt={preview.name} onClick={(event) => event.stopPropagation()} />
         </div>
       )}
     </div>
@@ -2446,19 +3480,31 @@ function ReviewView(props: {
   rows: Opportunity[];
   target: Opportunity | null;
   setTarget: (value: Opportunity | null) => void;
+  drafts: Record<string, ReviewDraft>;
+  setDrafts: Dispatch<SetStateAction<Record<string, ReviewDraft>>>;
+  list: ListState;
+  setList: Dispatch<SetStateAction<ListState>>;
+  onOpenDetail: (item: Opportunity) => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
   onBulkApprove: (items: Opportunity[]) => Promise<void>;
 }) {
-  const [reviewDecision, setReviewDecision] = useState("approved");
   const [selectedClaimReviewIds, setSelectedClaimReviewIds] = useState<string[]>([]);
+  const filteredRows = useMemo(() => filterOpportunitiesBySearch(props.rows, props.list.query), [props.rows, props.list.query]);
+  const pageRows = pageItems(filteredRows, props.list);
   const targetIsNotClaim = props.target?.current_status === "claim_rejected";
   const targetIsClaim = props.target?.current_status === "claim_submitted";
-  const claimReviewRows = props.rows.filter((item) => item.current_status === "claim_submitted");
+  const claimReviewRows = filteredRows.filter((item) => item.current_status === "claim_submitted");
   const selectedClaimReviewRows = claimReviewRows.filter((item) => selectedClaimReviewIds.includes(item.id));
+  const reviewDraft = props.target ? props.drafts[props.target.id] || reviewDraftFor(props.target) : reviewDraftFor(null);
+  const reviewDecision = reviewDraft.reviewStatus;
 
-  useEffect(() => {
-    setReviewDecision(props.target?.current_status === "claim_rejected" ? "confirmed_not_claim" : "approved");
-  }, [props.target?.id, props.target?.current_status]);
+  function patchReviewDraft(patch: Partial<ReviewDraft>) {
+    if (!props.target) return;
+    props.setDrafts((current) => ({
+      ...current,
+      [props.target!.id]: { ...(current[props.target!.id] || reviewDraftFor(props.target)), ...patch }
+    }));
+  }
 
   useEffect(() => {
     setSelectedClaimReviewIds((current) => {
@@ -2479,8 +3525,9 @@ function ReviewView(props: {
   return (
     <div className="review-layout">
       <section className="group-list">
+        <ListControls label="主管复核" list={props.list} total={filteredRows.length} setList={(patch) => props.setList((current) => ({ ...current, ...patch }))} />
         {claimReviewRows.length > 0 && (
-          <div className="claim-bulkbar">
+          <div className="claim-bulkbar review-bulkbar">
             <label className="checkline">
               <input
                 checked={selectedClaimReviewIds.length === claimReviewRows.length}
@@ -2496,7 +3543,8 @@ function ReviewView(props: {
           </div>
         )}
         {!props.rows.length && <EmptySmall text="没有待主管复核的认领或不认领任务。" />}
-        {props.rows.map((item) => (
+        {!!props.rows.length && !filteredRows.length && <EmptySmall text="当前搜索条件下没有待复核任务。" />}
+        {pageRows.map((item) => (
           <article className={`group-item compact${props.target?.id === item.id ? " active" : ""}`} key={item.id}>
             <div className="sku-group">
               {item.current_status === "claim_submitted" && (
@@ -2511,12 +3559,14 @@ function ReviewView(props: {
               <ProductThumb item={item} />
               <div>
                 <div className="title-row">
-                  <h2>{item.main_sku}</h2>
+                  <button className="sku-title-link" type="button" onClick={() => props.onOpenDetail(item)} title="查看商品详情">
+                    {item.main_sku}
+                  </button>
                   {statusPill(item.current_status)}
                   <span className="tag">{item.current_status === "claim_submitted" ? "运营已认领" : "运营不认领"}</span>
                 </div>
                 <p>
-                  <b>{item.sub_sku}</b> · {item.sub_sku_name || item.keyword || "-"}
+                  <button className="text-link" type="button" onClick={() => props.onOpenDetail(item)}>{item.sub_sku}</button> · {item.sub_sku_name || item.keyword || "-"}
                 </p>
                 <p className="muted">
                   {item.latest_claim_salesperson || "运营"}提交了{item.current_status === "claim_submitted" ? "认领" : "不认领"}，主管不代改运营填写内容。
@@ -2525,9 +3575,11 @@ function ReviewView(props: {
                   <p className="muted">不认领原因：{item.latest_reject_reason}</p>
                 )}
               </div>
-              <button className="btn primary" onClick={() => props.setTarget(item)}>
-                复核
-              </button>
+              <div className="review-card-actions">
+                <button className="btn primary" onClick={() => props.setTarget(item)}>
+                  复核
+                </button>
+              </div>
             </div>
           </article>
         ))}
@@ -2542,28 +3594,30 @@ function ReviewView(props: {
             <OperatorSubmissionSummary item={props.target} />
             <label>
               复核人
-              <input name="reviewer_name" required defaultValue="练玉君" />
+              <input name="reviewer_name" required value={reviewDraft.reviewerName} onChange={(event) => patchReviewDraft({ reviewerName: event.target.value })} />
             </label>
             {targetIsClaim && (
-              <div className="review-fixed-result">
-                <span>复核结果</span>
-                <b>通过认领</b>
-                <input type="hidden" name="review_status" value="approved" />
-              </div>
+              <label>
+                复核结果
+                <select name="review_status" value={reviewDecision} onChange={(event) => patchReviewDraft({ reviewStatus: event.target.value })}>
+                  <option value="approved">通过认领</option>
+                  <option value="returned_for_supplement">退回补充</option>
+                </select>
+              </label>
             )}
             {targetIsNotClaim && (
               <label>
                 复核结果
-                <select name="review_status" value={reviewDecision} onChange={(event) => setReviewDecision(event.target.value)}>
+                <select name="review_status" value={reviewDecision} onChange={(event) => patchReviewDraft({ reviewStatus: event.target.value })}>
                   <option value="confirmed_not_claim">确认不认领</option>
                   <option value="returned_for_supplement">退回补充</option>
                 </select>
               </label>
             )}
-            {targetIsNotClaim && reviewDecision === "returned_for_supplement" && (
+            {(targetIsClaim || targetIsNotClaim) && reviewDecision === "returned_for_supplement" && (
               <label>
                 退回原因
-                <textarea name="review_comment" rows={4} required placeholder="说明需要运营补充什么内容" />
+                <textarea name="review_comment" rows={4} required value={reviewDraft.reviewComment} onChange={(event) => patchReviewDraft({ reviewComment: event.target.value })} placeholder="说明需要运营补充什么内容" />
               </label>
             )}
             <div className="action-row">
@@ -2607,32 +3661,28 @@ function OperatorSubmissionSummary({ item, title = "运营提交内容" }: { ite
       )}
       {item.latest_feedback_summary && (
         <div className="submission-row">
-          <span>运营说明</span>
+          <span>调研结论</span>
           <p>{item.latest_feedback_summary}</p>
         </div>
       )}
-      {isNotClaim && (
+      {!!evidenceImages.length && (
         <div className="submission-row">
           <span>图片附件</span>
-          {evidenceImages.length ? (
-            <div className="submitted-evidence-list">
-              {evidenceImages.map((image, index) => (
-                <div className="submitted-evidence-item" key={`${image.name}-${index}`}>
-                  {image.previewUrl ? (
-                    <button className="submitted-evidence-thumb" type="button" onClick={() => setPreviewImage(image)} title="查看大图">
-                      <img src={image.previewUrl} alt={image.name} />
-                    </button>
-                  ) : (
-                    <div>图</div>
-                  )}
-                  <p title={image.name}>{image.name}</p>
-                  <small>{[image.type, image.size ? formatFileSize(image.size) : ""].filter(Boolean).join(" · ")}</small>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <p className="muted">未上传图片附件</p>
-          )}
+          <div className="submitted-evidence-list">
+            {evidenceImages.map((image, index) => (
+              <div className="submitted-evidence-item" key={`${image.name}-${index}`}>
+                {image.previewUrl ? (
+                  <button className="submitted-evidence-thumb" type="button" onClick={() => setPreviewImage(image)} title="查看大图">
+                    <img src={image.previewUrl} alt={image.name} />
+                  </button>
+                ) : (
+                  <div>图</div>
+                )}
+                <p title={image.name}>{image.name}</p>
+                <small>{[image.type, image.size ? formatFileSize(image.size) : ""].filter(Boolean).join(" · ")}</small>
+              </div>
+            ))}
+          </div>
         </div>
       )}
       {previewImage?.previewUrl && (
@@ -2647,7 +3697,9 @@ function OperatorSubmissionSummary({ item, title = "运营提交内容" }: { ite
   );
 }
 
-function StockView({ rows }: { rows: AvailableStockingItem[] }) {
+function StockView({ rows, list, setList }: { rows: AvailableStockingItem[]; list: ListState; setList: Dispatch<SetStateAction<ListState>> }) {
+  const filteredRows = rows.filter((row) => stockItemMatches(row, list.query));
+  const pageRows = pageItems(filteredRows, list);
   return (
     <div>
       <div className="action-row stock-actions">
@@ -2660,6 +3712,7 @@ function StockView({ rows }: { rows: AvailableStockingItem[] }) {
           导出海外仓备货申请表
         </button>
       </div>
+      <ListControls label="导出中心" list={list} total={filteredRows.length} setList={(patch) => setList((current) => ({ ...current, ...patch }))} />
       <div className="table-wrap">
         <table>
           <thead>
@@ -2688,7 +3741,12 @@ function StockView({ rows }: { rows: AvailableStockingItem[] }) {
                 <td colSpan={16}>暂无可导出记录</td>
               </tr>
             )}
-            {rows.map((row) => (
+            {!!rows.length && !filteredRows.length && (
+              <tr>
+                <td colSpan={16}>当前搜索条件下没有可导出记录</td>
+              </tr>
+            )}
+            {pageRows.map((row) => (
               <tr key={row.claim_record_id}>
                 <td>{row.operation_status}</td>
                 <td>{formatDate(row.time)}</td>
@@ -2711,6 +3769,125 @@ function StockView({ rows }: { rows: AvailableStockingItem[] }) {
           </tbody>
         </table>
       </div>
+    </div>
+  );
+}
+
+function ArrivalPreviewView({
+  date,
+  preview,
+  list,
+  setDate,
+  setList,
+  onLoad
+}: {
+  date: string;
+  preview: PlmArrivalPreview | null;
+  list: ListState;
+  setDate: (value: string) => void;
+  setList: Dispatch<SetStateAction<ListState>>;
+  onLoad: () => void;
+}) {
+  const filteredItems = (preview?.items || []).filter((item) => arrivalItemMatches(item, list.query));
+  const pageRows = pageItems(filteredItems, list);
+  return (
+    <div className="arrival-preview">
+      <div className="action-row stock-actions">
+        <input type="date" value={date} onChange={(event) => setDate(event.target.value)} />
+        <button className="btn primary" onClick={onLoad}>
+          <RefreshCw size={15} />
+          刷新预览
+        </button>
+      </div>
+      {preview && (
+        <>
+          <div className="metrics">
+            <div className="metric">
+              <span>总到货</span>
+              <b>{preview.row_count}</b>
+            </div>
+            <div className="metric">
+              <span>新品到货</span>
+              <b>{preview.new_arrival_count}</b>
+            </div>
+            <div className="metric">
+              <span>老品补货</span>
+              <b>{preview.restock_count}</b>
+            </div>
+            <div className="metric">
+              <span>无法判断</span>
+              <b>{preview.unknown_count}</b>
+            </div>
+          </div>
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>销售员</th>
+                  <th>新品</th>
+                  <th>老品</th>
+                  <th>无法判断</th>
+                  <th>合计</th>
+                </tr>
+              </thead>
+              <tbody>
+                {preview.by_salesperson.map((row) => (
+                  <tr key={row.salesperson_name}>
+                    <td>{row.salesperson_name}</td>
+                    <td>{row.new_arrival_count}</td>
+                    <td>{row.restock_count}</td>
+                    <td>{row.unknown_count}</td>
+                    <td>{row.total_count}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <ListControls label="PLM 到货明细" list={list} total={filteredItems.length} setList={(patch) => setList((current) => ({ ...current, ...patch }))} />
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>类型</th>
+                  <th>销售员</th>
+                  <th>子 SKU</th>
+                  <th>主 SKU</th>
+                  <th>国家</th>
+                  <th>海外仓</th>
+                  <th>最后入库</th>
+                  <th>首次上架</th>
+                  <th>可发</th>
+                  <th>真仓库存</th>
+                  <th>单销</th>
+                </tr>
+              </thead>
+              <tbody>
+                {!pageRows.length && (
+                  <tr>
+                    <td colSpan={11}>当前条件下没有到货记录</td>
+                  </tr>
+                )}
+                {pageRows.map((item, index) => (
+                  <tr key={`${item.sub_sku || index}-${item.latest_storage_time || ""}`}>
+                    <td>{arrivalTypeLabel(item.arrival_type)}</td>
+                    <td>{item.salesperson_name}</td>
+                    <td>{item.sub_sku || ""}</td>
+                    <td>{item.main_sku || ""}</td>
+                    <td>{item.country || ""}</td>
+                    <td>{item.warehouse || ""}</td>
+                    <td>{item.latest_storage_time || ""}</td>
+                    <td>{item.first_listing_time || ""}</td>
+                    <td>{item.available_quantity ?? ""}</td>
+                    <td>{item.real_stock_quantity ?? ""}</td>
+                    <td>{item.daily_sales ?? ""}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+      {!preview && <div className="empty-state">请选择日期并刷新 PLM 到货预览</div>}
     </div>
   );
 }
@@ -2753,16 +3930,171 @@ function Toolbar({
   if (activeView === "pool") {
     return (
       <div className="toolbar">
-        <div className="search">
-          <Search size={16} />
-          主 SKU / 子 SKU / 关键词 / 产品名 / 站点 / 类目 / 运营 / 状态
-        </div>
+        <span className="tag">只展示选品2/财根可自领机会；选品1在分配台处理</span>
         <span className="pill gray">状态优先</span>
-        <span className="pill gray">50 条/页</span>
       </div>
     );
   }
   return null;
+}
+
+function ListControls({
+  label,
+  list,
+  total,
+  setList
+}: {
+  label: string;
+  list: ListState;
+  total: number;
+  setList: (patch: Partial<ListState>) => void;
+}) {
+  const pages = listPageCount(total, list.pageSize);
+  const page = clampPage(list.page, pages);
+  const start = total ? (page - 1) * list.pageSize + 1 : 0;
+  const end = Math.min(total, page * list.pageSize);
+  return (
+    <div className="list-controls">
+      <label className="list-search">
+        <Search size={16} />
+        <input
+          value={list.query}
+          onChange={(event) => setList({ query: event.target.value, page: 1 })}
+          placeholder={`${label}搜索：主 SKU / 子 SKU / 商品名 / 站点 / 类目 / 运营 / 状态`}
+        />
+      </label>
+      <select value={list.pageSize} onChange={(event) => setList({ pageSize: Number(event.target.value), page: 1 })}>
+        {[20, 50, 100, 200].map((size) => (
+          <option key={size} value={size}>
+            {size} 条/页
+          </option>
+        ))}
+      </select>
+      <span className="tag">{start}-{end} / {total}</span>
+      <button className="btn" disabled={page <= 1} onClick={() => setList({ page: page - 1 })}>
+        上一页
+      </button>
+      <span className="tag">第 {page} / {pages} 页</span>
+      <button className="btn" disabled={page >= pages} onClick={() => setList({ page: page + 1 })}>
+        下一页
+      </button>
+    </div>
+  );
+}
+
+function pageItems<T>(items: T[], list: ListState): T[] {
+  const page = clampPage(list.page, listPageCount(items.length, list.pageSize));
+  const start = (page - 1) * list.pageSize;
+  return items.slice(start, start + list.pageSize);
+}
+
+function listPageCount(total: number, pageSize: number) {
+  return Math.max(1, Math.ceil(total / Math.max(1, pageSize)));
+}
+
+function clampPage(page: number, pages: number) {
+  return Math.min(Math.max(1, page), pages);
+}
+
+function filterGroupsBySearch(groups: ProductGroup[], query: string) {
+  const needle = normalizeSearch(query);
+  if (!needle) return groups;
+  return groups.filter((group) => groupSearchText(group).includes(needle));
+}
+
+function filterOpportunitiesBySearch(items: Opportunity[], query: string) {
+  const needle = normalizeSearch(query);
+  if (!needle) return items;
+  return items.filter((item) => opportunitySearchText(item).includes(needle));
+}
+
+function assignmentItemMatches(
+  item: AssignmentPreviewItem,
+  groups: ProductGroup[],
+  drafts: Record<string, string>,
+  query: string
+) {
+  const needle = normalizeSearch(query);
+  if (!needle) return true;
+  const group = groups.find((entry) => entry.items.some((opportunity) => item.opportunity_ids.includes(opportunity.id)));
+  return normalizeSearch([
+    item.main_sku,
+    item.suggested_assignee,
+    item.match_reason,
+    drafts[assignmentItemKey(item)],
+    group ? groupSearchText(group) : ""
+  ].join(" ")).includes(needle);
+}
+
+function stockItemMatches(row: AvailableStockingItem, query: string) {
+  const needle = normalizeSearch(query);
+  if (!needle) return true;
+  return normalizeSearch([
+    row.operation_status,
+    row.stocking_type,
+    row.selection_source,
+    row.salesperson_name,
+    row.main_sku,
+    row.sub_sku,
+    row.site,
+    row.stocking_country,
+    row.warehouse,
+    row.replenishment_reason,
+    row.review_status
+  ].join(" ")).includes(needle);
+}
+
+function arrivalItemMatches(row: PlmArrivalPreview["items"][number], query: string) {
+  const needle = normalizeSearch(query);
+  if (!needle) return true;
+  return normalizeSearch([
+    arrivalTypeLabel(row.arrival_type),
+    row.salesperson_name,
+    row.sub_sku,
+    row.main_sku,
+    row.country,
+    row.warehouse,
+    row.latest_storage_time,
+    row.first_listing_time
+  ].join(" ")).includes(needle);
+}
+
+function arrivalTypeLabel(value: string) {
+  if (value === "new_arrival") return "新品到货";
+  if (value === "restock") return "老品补货";
+  return "无法判断";
+}
+
+function groupSearchText(group: ProductGroup) {
+  return normalizeSearch([
+    group.main_sku,
+    ownerText(group),
+    statusLabel(group.status),
+    healthLabel(group),
+    group.items.map(opportunitySearchText).join(" ")
+  ].join(" "));
+}
+
+function opportunitySearchText(item: Opportunity) {
+  return normalizeSearch([
+    item.main_sku,
+    item.sub_sku,
+    item.main_sku_name,
+    item.sub_sku_name,
+    item.keyword,
+    item.site,
+    item.country,
+    item.category_level1,
+    item.developer_name,
+    item.latest_claim_salesperson,
+    item.source_sheet,
+    item.source_type,
+    statusLabel(item.current_status)
+  ].join(" "));
+}
+
+function normalizeSearch(value: string) {
+  return value.toLowerCase().replace(/\s+/g, "");
 }
 
 function StatusCell({ label, value }: { label: string; value: string | number | null | undefined }) {
@@ -2890,7 +4222,7 @@ function primaryActionLabel(group: ProductGroup) {
 
 function poolPrimaryLabel(group: ProductGroup, role: RoleKey) {
   if (role === "manager" && group.items.some((item) => item.current_status === "pending_assignment")) return "去分配";
-  if (role === "operator" && group.items.some(isOperatorClaimItem)) return "去认领";
+  if (role === "operator" && group.items.some(isSelfClaimPoolItem)) return "加入认领";
   return "";
 }
 
@@ -3003,6 +4335,16 @@ async function readEvidenceFile(file: File, opportunityId: string): Promise<Evid
 
 function formatDate(value: string) {
   return value ? value.slice(0, 10) : "";
+}
+
+function previousDateText() {
+  const date = new Date();
+  date.setDate(date.getDate() - 1);
+  return date.toISOString().slice(0, 10);
+}
+
+function formatDateTime(value?: string | null) {
+  return value ? value.replace("T", " ").slice(0, 16) : "-";
 }
 
 export default App;

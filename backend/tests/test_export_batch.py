@@ -29,6 +29,7 @@ def test_stocking_export_persists_export_batch_and_rows() -> None:
     with SessionLocal() as db:
         batch = db.query(models.ExportBatch).one()
         rows = db.query(models.ExportRow).all()
+        opportunity_status = db.get(models.NewProductOpportunity, opportunity_id).current_status
 
     assert batch.file_name == "海外仓备货申请表.xlsx"
     assert batch.scope == "stocking_available"
@@ -37,6 +38,7 @@ def test_stocking_export_persists_export_batch_and_rows() -> None:
     assert [(row.opportunity_id, row.claim_record_id, row.stocking_quantity) for row in rows] == [
         (opportunity_id, claim_id, 60)
     ]
+    assert opportunity_status == "waiting_arrival"
 
 
 def test_available_export_filters_by_source_sheet_and_excludes_already_exported_rows() -> None:

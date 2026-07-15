@@ -22,7 +22,7 @@ class UserRead(BaseModel):
 class DingTalkLoginRequest(BaseModel):
     auth_code: str | None = None
     dingtalk_user_id: str | None = None
-    name: str = "本地测试用户"
+    name: str = "鏈湴娴嬭瘯鐢ㄦ埛"
 
 
 class AccountLoginRequest(BaseModel):
@@ -74,6 +74,7 @@ class OpportunityCreate(BaseModel):
 class OpportunityRead(OpportunityCreate):
     id: str
     current_status: str
+    latest_claim_record_id: str | None = None
     latest_claim_result: str | None = None
     latest_claim_salesperson: str | None = None
     latest_reject_reason: str | None = None
@@ -108,6 +109,7 @@ class OpportunityUpdateRequest(BaseModel):
 class Selection1ImportRequest(BaseModel):
     source_file: str | None = None
     source_sheet: str = "开发0623期"
+    business_period: str | None = None
     max_rows: int | None = None
 
 
@@ -115,6 +117,7 @@ class Selection1ImportResponse(BaseModel):
     import_batch_id: str | None = None
     source_file: str
     source_sheet: str
+    business_period: str | None = None
     imported_count: int
     created_count: int
     updated_count: int
@@ -124,12 +127,24 @@ class Selection1ImportResponse(BaseModel):
     task_count: int
 
 
-class Selection2ImportRequest(Selection1ImportRequest):
+class Selection2ImportRequest(BaseModel):
+    source_file: str | None = None
     source_sheet: str = "5.26期"
+    max_rows: int | None = None
 
 
-class Selection2ImportResponse(Selection1ImportResponse):
-    pass
+class Selection2ImportResponse(BaseModel):
+    import_batch_id: str | None = None
+    source_file: str
+    source_sheet: str
+    business_period: str | None = None
+    imported_count: int
+    created_count: int
+    updated_count: int
+    skipped_count: int
+    market_research_count: int
+    prefill_claim_count: int
+    task_count: int
 
 
 class ExcelSheetListResponse(BaseModel):
@@ -142,6 +157,7 @@ class ImportBatchSummary(BaseModel):
     source_type: str
     source_file: str | None
     source_sheet: str | None
+    business_period: str | None = None
     imported_by: str | None
     imported_at: datetime | None
     created_count: int
@@ -224,6 +240,7 @@ class ClaimCreate(BaseModel):
 
 class ReviewCreate(BaseModel):
     opportunity_id: str
+    claim_record_id: str | None = None
     reviewer_name: str
     review_status: str
     review_comment: str | None = None
@@ -290,6 +307,9 @@ class AvailableStockingItem(BaseModel):
 
 class ArrivalRecordCreate(BaseModel):
     opportunity_id: str
+    claim_record_id: str | None = None
+    salesperson_name: str | None = None
+    country: str | None = None
     warehouse: str | None = None
     arrived_quantity: int | None = None
     arrived_at: datetime | None = None
@@ -302,6 +322,166 @@ class ArrivalRecordRead(ArrivalRecordCreate):
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class SecondaryResearchPeerRead(BaseModel):
+    claim_record_id: str
+    salesperson_name: str | None = None
+    secondary_research_at: datetime | None = None
+    secondary_competitor_url: str | None = None
+    secondary_conclusion: str | None = None
+    product_positioning: str | None = None
+    secondary_research_submitted_at: datetime | None = None
+
+
+class SecondaryResearchItemRead(BaseModel):
+    claim_record_id: str
+    opportunity_id: str
+    salesperson_name: str
+    downstream_status: str
+    arrival_detected_at: datetime | None = None
+    secondary_research_at: datetime | None = None
+    secondary_competitor_url: str | None = None
+    secondary_conclusion: str | None = None
+    product_positioning: str | None = None
+    secondary_evidence_images: list[dict[str, Any]] = Field(default_factory=list)
+    secondary_research_submitted_at: datetime | None = None
+    sub_sku: str
+    sub_sku_name: str | None = None
+    image_url: str | None = None
+    reason: str | None = None
+    snapshot: dict[str, Any] = Field(default_factory=dict)
+    peer_records: list[SecondaryResearchPeerRead] = Field(default_factory=list)
+
+
+class SecondaryResearchGroupRead(BaseModel):
+    key: str
+    source_type: str
+    business_period: str | None = None
+    site: str | None = None
+    country: str | None = None
+    main_sku: str
+    main_sku_name: str | None = None
+    salesperson_name: str
+    items: list[SecondaryResearchItemRead]
+
+
+class ProductBoardChildSkuRead(BaseModel):
+    opportunity_id: str
+    sub_sku: str
+    sub_sku_name: str | None = None
+    visible_status: str
+
+
+class ProductBoardResponsibilityRead(BaseModel):
+    claim_record_id: str | None = None
+    task_id: str | None = None
+    opportunity_id: str
+    salesperson_name: str | None = None
+    sub_sku: str
+    claim_daily_sales: float | None = None
+    visible_status: str
+    arrival_detected_at: datetime | None = None
+
+
+class ProductBoardGroupRead(BaseModel):
+    key: str
+    business_period: str | None = None
+    site: str | None = None
+    country: str | None = None
+    main_sku: str
+    main_sku_name: str | None = None
+    image_url: str | None = None
+    child_skus: list[ProductBoardChildSkuRead]
+    responsibilities: list[ProductBoardResponsibilityRead]
+    summary_tags: list[str] = Field(default_factory=list)
+
+
+class SecondaryResearchDraftUpdate(BaseModel):
+    secondary_research_at: datetime | None = None
+    secondary_competitor_url: str | None = None
+    secondary_conclusion: str | None = None
+    product_positioning: str | None = None
+    secondary_evidence_images: list[dict[str, Any]] | None = None
+
+    model_config = {"extra": "forbid"}
+
+    @field_validator("product_positioning")
+    @classmethod
+    def valid_product_positioning(cls, value: str | None) -> str | None:
+        if value is not None and value not in {"引流款", "利润款", "淘汰款"}:
+            raise ValueError("product_positioning must be 引流款, 利润款, or 淘汰款")
+        return value
+
+
+class SecondaryResearchSubmitGroupRequest(BaseModel):
+    claim_record_ids: list[str] = Field(min_length=1)
+
+
+class PlmArrivalItem(BaseModel):
+    source_sheet: str | None = None
+    source_row: int | None = None
+    arrival_type: str
+    product_name: str | None = None
+    salesperson_name: str
+    sub_sku: str | None = None
+    main_sku: str | None = None
+    country: str | None = None
+    warehouse: str | None = None
+    latest_storage_time: str | None = None
+    first_listing_time: str | None = None
+    available_quantity: float | None = None
+    real_stock_quantity: float | None = None
+    daily_sales: float | None = None
+
+
+class PlmArrivalSalespersonSummary(BaseModel):
+    salesperson_name: str
+    new_arrival_count: int
+    restock_count: int
+    unknown_count: int
+    total_count: int
+
+
+class PlmArrivalPreviewRead(BaseModel):
+    date: str
+    bloc_name: str
+    row_count: int
+    new_arrival_count: int
+    restock_count: int
+    unknown_count: int
+    by_salesperson: list[PlmArrivalSalespersonSummary]
+    items: list[PlmArrivalItem]
+
+
+class PlmArrivalProcessRequest(BaseModel):
+    date: str
+    source_file: str | None = None
+
+
+class PlmArrivalMatchedResponsibilityRead(BaseModel):
+    claim_record_id: str
+    opportunity_id: str
+    business_period: str | None = None
+    salesperson_name: str | None = None
+    site: str | None = None
+    country: str | None = None
+    main_sku: str
+    sub_sku: str
+    product_name: str | None = None
+
+
+class PlmArrivalProcessRead(BaseModel):
+    batch_id: str
+    status: str
+    row_count: int
+    new_arrival_count: int
+    restock_count: int
+    unknown_count: int
+    matched_count: int
+    unmatched_count: int
+    arrival_record_count: int
+    planned_responsibilities: list[PlmArrivalMatchedResponsibilityRead] = Field(default_factory=list)
 
 
 class FourWeekSummaryCreate(BaseModel):
@@ -399,6 +579,8 @@ class OperatorAssignmentProfileCreate(BaseModel):
     key_site: str | None = None
     key_category1: str | None = None
     key_category2: str | None = None
+    assignment_priority: int = 0
+    display_order: int | None = None
     enabled: bool = True
 
 
@@ -407,6 +589,8 @@ class OperatorAssignmentProfileUpdate(BaseModel):
     key_site: str | None = None
     key_category1: str | None = None
     key_category2: str | None = None
+    assignment_priority: int | None = None
+    display_order: int | None = None
     enabled: bool | None = None
 
 
@@ -414,6 +598,11 @@ class OperatorAssignmentProfileRead(OperatorAssignmentProfileCreate):
     id: str
 
     model_config = {"from_attributes": True}
+
+
+class DisableRequest(BaseModel):
+    disabled: bool
+    reason: str | None = None
 
 
 class MessageResponse(BaseModel):

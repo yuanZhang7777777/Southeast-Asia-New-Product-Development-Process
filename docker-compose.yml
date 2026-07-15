@@ -3,6 +3,7 @@ name: hengzhe-new-product
 services:
   postgres:
     image: postgres:16-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-workflow}
       POSTGRES_USER: ${POSTGRES_USER:-workflow}
@@ -18,6 +19,7 @@ services:
 
   redis:
     image: redis:7-alpine
+    restart: unless-stopped
     command: ["redis-server", "--appendonly", "yes"]
     volumes:
       - redis-data:/data
@@ -27,8 +29,9 @@ services:
       timeout: 5s
       retries: 5
 
-  api:
+  migrate:
     build: ./backend
+    command: ["alembic", "upgrade", "head"]
     env_file:
       - path: .env
         required: false
@@ -39,6 +42,28 @@ services:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-workflow}:${POSTGRES_PASSWORD:-change-me}@postgres:5432/${POSTGRES_DB:-workflow}
       REDIS_URL: redis://redis:6379/0
     depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    build: ./backend
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      APP_ENV: ${APP_ENV:-production}
+      AUTH_REQUIRED: ${AUTH_REQUIRED:-true}
+      AUTH_SECRET_KEY: ${AUTH_SECRET_KEY:?set AUTH_SECRET_KEY}
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-workflow}:${POSTGRES_PASSWORD:-change-me}@postgres:5432/${POSTGRES_DB:-workflow}
+      REDIS_URL: redis://redis:6379/0
+    volumes:
+      - plm-cache:/data/plm
+      - source-workbooks:/app/.private_uploads
+      - uploaded-sources:/app/.uploaded_sources
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       redis:
@@ -51,6 +76,7 @@ services:
 
   worker:
     build: ./backend
+    restart: unless-stopped
     command: ["python", "-m", "app.worker"]
     env_file:
       - path: .env
@@ -62,6 +88,8 @@ services:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-workflow}:${POSTGRES_PASSWORD:-change-me}@postgres:5432/${POSTGRES_DB:-workflow}
       REDIS_URL: redis://redis:6379/0
     depends_on:
+      migrate:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       redis:
@@ -69,6 +97,7 @@ services:
 
   scheduler:
     build: ./backend
+    restart: unless-stopped
     command: ["python", "-m", "app.scheduler"]
     env_file:
       - path: .env
@@ -79,7 +108,11 @@ services:
       AUTH_SECRET_KEY: ${AUTH_SECRET_KEY:?set AUTH_SECRET_KEY}
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-workflow}:${POSTGRES_PASSWORD:-change-me}@postgres:5432/${POSTGRES_DB:-workflow}
       REDIS_URL: redis://redis:6379/0
+    volumes:
+      - plm-cache:/data/plm
     depends_on:
+      migrate:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       redis:
@@ -91,12 +124,14 @@ services:
       args:
         VITE_API_BASE_URL: /api
         VITE_DINGTALK_CORP_ID: ${VITE_DINGTALK_CORP_ID:-}
+    restart: unless-stopped
     depends_on:
       api:
         condition: service_healthy
 
   reverse-proxy:
     image: caddy:2-alpine
+    restart: unless-stopped
     ports:
       - "${HTTP_PORT:-8080}:80"
     volumes:
@@ -122,3 +157,6 @@ volumes:
   redis-data:
   caddy-data:
   caddy-config:
+  plm-cache:
+  source-workbooks:
+  uploaded-sources:

@@ -63,6 +63,7 @@ def test_opportunities_can_filter_full_pool_by_period() -> None:
                     source_type="selection1_developer_claim_feedback",
                     source_file="选品1.xlsx",
                     source_sheet="开发0623期",
+                    batch="2026年第29期",
                     source_row=1,
                     main_sku="MAIN-W27",
                     sub_sku="SUB-W27",
@@ -71,6 +72,7 @@ def test_opportunities_can_filter_full_pool_by_period() -> None:
                     source_type="selection1_developer_claim_feedback",
                     source_file="选品1.xlsx",
                     source_sheet="开发0630期",
+                    batch="2026年第30期",
                     source_row=2,
                     main_sku="MAIN-W28",
                     sub_sku="SUB-W28",
@@ -79,7 +81,7 @@ def test_opportunities_can_filter_full_pool_by_period() -> None:
         )
         db.commit()
 
-    response = client.get("/opportunities?source_sheet=开发0623期")
+    response = client.get("/opportunities?business_period=2026年第29期")
 
     assert response.status_code == 200
     assert [item["main_sku"] for item in response.json()] == ["MAIN-W27"]
@@ -91,6 +93,7 @@ def test_opportunities_export_full_source_rows_by_period() -> None:
             source_type="selection1_developer_claim_feedback",
             source_file="selection1.xlsx",
             source_sheet="开发0623期",
+            batch="2026年第29期",
             source_row=1,
             import_batch_id="batch-0623",
             main_sku="MAIN-W27",
@@ -101,6 +104,7 @@ def test_opportunities_export_full_source_rows_by_period() -> None:
             source_type="selection1_developer_claim_feedback",
             source_file="selection1.xlsx",
             source_sheet="开发0630期",
+            batch="2026年第30期",
             source_row=2,
             import_batch_id="batch-0630",
             main_sku="MAIN-W28",
@@ -133,7 +137,7 @@ def test_opportunities_export_full_source_rows_by_period() -> None:
         )
         db.commit()
 
-    response = client.get("/opportunities/export?source_sheet=开发0623期")
+    response = client.get("/opportunities/export?business_period=2026年第29期")
 
     assert response.status_code == 200
     workbook = load_workbook(BytesIO(response.content), data_only=True)
@@ -292,9 +296,10 @@ def test_selection1_import_is_idempotent_and_exportable(tmp_path: Path) -> None:
         snapshots = db.query(models.SourceRecordSnapshot).all()
     assert len(market_items) == 2
     assert len(source_claims) == 1
-    assert snapshots[0].column_range == "A:L,Z:AN,AO:AV,CC:CH"
-    assert "M" not in snapshots[0].payload["cells"]
-    assert "AW" not in snapshots[0].payload["cells"]
+    assert snapshots[0].column_range == "A:BX,CC:CH"
+    assert "M" in snapshots[0].payload["cells"]
+    assert "AW" in snapshots[0].payload["cells"]
+    assert "BX" in snapshots[0].payload["cells"]
     assert "CB" not in snapshots[0].payload["cells"]
 
     assignment_response = client.post(

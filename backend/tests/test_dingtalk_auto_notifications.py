@@ -16,6 +16,7 @@ from app.workflow_status import (  # noqa: E402
     CLAIM_RESULT_REJECT,
     OPPORTUNITY_CLAIM_REJECTED,
     OPPORTUNITY_CLAIM_SUBMITTED,
+    OPPORTUNITY_DISABLED,
     OPPORTUNITY_RETURNED_FOR_SUPPLEMENT,
     REVIEW_RETURNED_FOR_SUPPLEMENT,
     TASK_PENDING,
@@ -84,6 +85,26 @@ def test_operator_auto_card_counts_pending_claim_main_sku_groups() -> None:
                     status=TASK_PENDING,
                 )
             )
+        disabled = models.NewProductOpportunity(
+            source_type="test",
+            main_sku="DISABLED-1",
+            sub_sku="D1",
+            current_status=OPPORTUNITY_DISABLED,
+        )
+        db.add(disabled)
+        db.flush()
+        disabled_flow = models.FlowInstance(opportunity_id=disabled.id, current_node="sales_claim", current_status=OPPORTUNITY_DISABLED)
+        db.add(disabled_flow)
+        db.flush()
+        db.add(
+            models.FlowTask(
+                flow_instance_id=disabled_flow.id,
+                node_code="sales_claim",
+                task_type="sales_claim",
+                assignee_name="销售A",
+                status=TASK_PENDING,
+            )
+        )
         db.flush()
 
         log = services.notify_operator_new_product_todo_card(db, "销售A", "assignment-test", settings, sender)
@@ -152,7 +173,7 @@ def test_card_test_receiver_redirects_operator_card_to_named_user() -> None:
         assert sender.cards[0].subject_name == "销售A"
 
 
-def test_claim_submission_triggers_supervisor_card_summary(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_claim_submission_does_not_trigger_supervisor_card_summary(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[object] = []
     monkeypatch.setattr(services, "notify_supervisor_new_product_todo_card", lambda *args, **kwargs: calls.append(args))
     with SessionLocal() as db:
@@ -172,13 +193,14 @@ def test_claim_submission_triggers_supervisor_card_summary(monkeypatch: pytest.M
     )
 
     assert response.status_code == 200
-    assert len(calls) == 1
-    assert calls[0][1].startswith(f"claim-{response.json()['id']}-")
+    assert calls == []
 
 
-def test_returned_supplement_resubmission_uses_new_supervisor_card_key(monkeypatch: pytest.MonkeyPatch) -> None:
-    keys: list[str] = []
-    monkeypatch.setattr(services, "notify_supervisor_new_product_todo_card", lambda *args, **kwargs: keys.append(args[1]))
+def test_return_for_supplement_still_triggers_operator_card(monkeypatch: pytest.MonkeyPatch) -> None:
+    operator_calls: list[object] = []
+    supervisor_calls: list[object] = []
+    monkeypatch.setattr(services, "notify_operator_new_product_todo_card", lambda *args, **kwargs: operator_calls.append(args))
+    monkeypatch.setattr(services, "notify_supervisor_new_product_todo_card", lambda *args, **kwargs: supervisor_calls.append(args))
     with SessionLocal() as db:
         opportunity = models.NewProductOpportunity(source_type="test", main_sku="MAIN-R", sub_sku="S1")
         db.add(opportunity)
@@ -218,5 +240,7 @@ def test_returned_supplement_resubmission_uses_new_supervisor_card_key(monkeypat
 
     assert second_response.status_code == 200
     assert second_response.json()["id"] == first_response.json()["id"]
-    assert len(keys) == 2
-    assert keys[0] != keys[1]
+    assert supervisor_calls == []
+    assert len(operator_calls) == 1
+    assert operator_calls[0][1] == "销售A"
+    assert str(operator_calls[0][2]).startswith("returned-")

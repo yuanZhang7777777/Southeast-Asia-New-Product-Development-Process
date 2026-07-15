@@ -19,20 +19,22 @@ def list_stocking_requests(db: Session = Depends(get_db)) -> list[models.Stockin
 @router.get("/available-list", response_model=list[schemas.AvailableStockingItem])
 def list_available_stocking_items(
     source_sheet: str | None = Query(None),
+    business_period: str | None = Query(None),
     import_batch_id: str | None = Query(None),
     db: Session = Depends(get_db),
 ) -> list[schemas.AvailableStockingItem]:
-    return services.list_available_stocking_items(db, source_sheet=source_sheet, import_batch_id=import_batch_id)
+    return services.list_available_stocking_items(db, source_sheet=source_sheet, business_period=business_period, import_batch_id=import_batch_id)
 
 
 @router.get("/available-list/export")
 def export_available_stocking_items(
     source_sheet: str | None = Query(None),
+    business_period: str | None = Query(None),
     import_batch_id: str | None = Query(None),
     db: Session = Depends(get_db),
 ) -> Response:
-    items = services.list_available_stocking_items(db, source_sheet=source_sheet, import_batch_id=import_batch_id)
-    file_name = period_file_name("海外仓备货申请表", source_sheet, import_batch_id)
+    items = services.list_available_stocking_items(db, source_sheet=source_sheet, business_period=business_period, import_batch_id=import_batch_id)
+    file_name = period_file_name("海外仓备货申请表", business_period or source_sheet, import_batch_id)
     batch = services.record_export_batch(db, items, file_name=file_name, scope="stocking_available")
     content = services.build_available_stocking_workbook(items, exported_at=batch.exported_at)
     db.commit()
@@ -47,17 +49,19 @@ def export_available_stocking_items(
 @router.get("/traceability/export")
 def export_traceability_items(
     source_sheet: str | None = Query(None),
+    business_period: str | None = Query(None),
     import_batch_id: str | None = Query(None),
     db: Session = Depends(get_db),
 ) -> Response:
     items = services.list_available_stocking_items(
         db,
         source_sheet=source_sheet,
+        business_period=business_period,
         import_batch_id=import_batch_id,
         exclude_exported_scope="traceability",
     )
-    not_claim_rows = services.list_not_claim_traceability_rows(db, source_sheet=source_sheet, import_batch_id=import_batch_id)
-    file_name = period_file_name("新品中央字段导出", source_sheet, import_batch_id)
+    not_claim_rows = services.list_not_claim_traceability_rows(db, source_sheet=source_sheet, business_period=business_period, import_batch_id=import_batch_id)
+    file_name = period_file_name("新品中央字段导出", business_period or source_sheet, import_batch_id)
     batch = services.record_export_batch(
         db,
         items,

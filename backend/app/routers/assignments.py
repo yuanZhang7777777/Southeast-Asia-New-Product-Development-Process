@@ -20,7 +20,7 @@ def preview(payload: schemas.AssignmentPreviewRequest, db: Session = Depends(get
     if payload.candidates:
         profile_query = profile_query.where(models.OperatorAssignmentProfile.operator_name.in_(payload.candidates))
     profiles = list(db.scalars(profile_query))
-    return schemas.AssignmentPreviewResponse(items=services.preview_assignments(opportunities, payload.candidates, profiles))
+    return schemas.AssignmentPreviewResponse(items=services.preview_assignments(opportunities, payload.candidates, profiles, db=db))
 
 
 @router.post("/confirm", response_model=list[schemas.TaskRead])

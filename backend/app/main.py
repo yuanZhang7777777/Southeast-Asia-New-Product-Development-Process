@@ -15,9 +15,12 @@ from app.routers import (
     claims,
     events,
     health,
+    market_monitor,
     notifications,
     opportunities,
+    product_board,
     reviews,
+    secondary_research,
     stocking,
     summary,
     tasks,
@@ -51,12 +54,15 @@ app.mount("/uploaded-sources/product-images", StaticFiles(directory=product_imag
 app.include_router(health.router)
 app.include_router(auth.router)
 app.include_router(opportunities.router)
+app.include_router(product_board.router)
 app.include_router(assignments.router)
 app.include_router(tasks.router)
 app.include_router(claims.router)
 app.include_router(events.router)
 app.include_router(reviews.router)
+app.include_router(secondary_research.router)
 app.include_router(stocking.router)
+app.include_router(market_monitor.router)
 app.include_router(arrival.router)
 app.include_router(summary.router)
 app.include_router(notifications.router)

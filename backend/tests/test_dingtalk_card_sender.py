@@ -1,4 +1,5 @@
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -6,14 +7,52 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from app.config import Settings
 from app.dingtalk_card_sender import (
+    DINGTALK_ARRIVAL_CARD_TEMPLATE_ID,
     DINGTALK_NEW_PRODUCT_TODO_TEMPLATE_ID,
+    ArrivalCard,
+    ArrivalCardItem,
     DingTalkCardConfig,
     DingTalkCardSender,
     NewProductTodoCard,
+    build_arrival_card_params,
     build_new_product_todo_params,
     masked_dingtalk_user_id,
 )
+
+CARD_TEMPLATE_ID_PATTERN = re.compile(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\.schema")
+
+
+def test_repository_only_mentions_confirmed_card_templates() -> None:
+    root = Path(__file__).resolve().parents[2]
+    allowed = {DINGTALK_NEW_PRODUCT_TODO_TEMPLATE_ID, DINGTALK_ARRIVAL_CARD_TEMPLATE_ID}
+    paths = [
+        root / ".env.example",
+        root / "backend",
+        root / "deploy",
+        root / "docker-compose.yml",
+        root / "docs",
+        root / "frontend",
+    ]
+
+    found: set[str] = set()
+    for path in paths:
+        candidates = path.rglob("*") if path.is_dir() else [path]
+        for candidate in candidates:
+            if any(part in {".pytest_cache", "__pycache__"} for part in candidate.parts):
+                continue
+            if candidate.is_file() and candidate.suffix.lower() not in {".png", ".jpg", ".jpeg", ".xlsx", ".docx", ".pyc"}:
+                found.update(CARD_TEMPLATE_ID_PATTERN.findall(candidate.read_text(encoding="utf-8", errors="ignore")))
+
+    assert found <= allowed
+
+
+def test_from_settings_uses_confirmed_card_templates() -> None:
+    config = DingTalkCardConfig.from_settings(Settings())
+
+    assert config.card_template_id == DINGTALK_NEW_PRODUCT_TODO_TEMPLATE_ID
+    assert config.arrival_card_template_id == DINGTALK_ARRIVAL_CARD_TEMPLATE_ID
 
 
 def test_operator_card_uses_confirmed_template_and_labels() -> None:
@@ -47,7 +86,7 @@ def test_supervisor_card_uses_confirmed_template_and_labels() -> None:
         subject_name="练玉君",
     )
 
-    assert params["card_title"] == "练玉君的新品待办"
+    assert params["card_title"] == "主管新品待办"
     assert params["summary_text"] == "你有 7 项主管事项待处理"
     assert params["left_label"] == "认领待复核"
     assert params["right_label"] == "不认领待复核"
@@ -117,6 +156,60 @@ def test_sender_builds_create_and_deliver_payload() -> None:
     assert "sys_full_json_obj" not in deliver_call[2]["cardData"]["cardParamMap"]
     assert deliver_call[2]["userIdType"] == 1
     assert json.dumps(deliver_call[2], ensure_ascii=False).find("secret") == -1
+
+
+def test_arrival_card_params_group_new_and_old_sections() -> None:
+    params = build_arrival_card_params(
+        arrival_date="2026-07-12",
+        salesperson_name="销售A",
+        new_items=[ArrivalCardItem(main_sku="MAIN-1", child_sku_count=2, product_name="新品一")],
+        old_items=[ArrivalCardItem(main_sku="MAIN-2", child_sku_count=1, product_name="老品二")],
+        action_url="https://example.com/?from=ding&role=operator",
+    )
+
+    assert set(params) == {"card_title", "summary_text", "left_label", "left_count", "sku_markdown", "action_text", "action_url"}
+    assert params["card_title"] == "到货通知"
+    assert params["summary_text"] == "2026-07-12 到货 2 个主 SKU"
+    assert params["left_label"] == "主SKU数"
+    assert params["left_count"] == "2"
+    assert "**新品**" in params["sku_markdown"]
+    assert "MAIN-1｜2 个子 SKU｜新品一" in params["sku_markdown"]
+    assert "**老品**" in params["sku_markdown"]
+    assert "MAIN-2｜1 个子 SKU｜老品二" in params["sku_markdown"]
+
+
+def test_sender_builds_arrival_card_with_confirmed_template() -> None:
+    calls: list[tuple[str, dict, dict]] = []
+
+    def fake_post(url: str, headers: dict, body: dict) -> dict:
+        calls.append((url, headers, body))
+        if url.endswith("/oauth2/accessToken"):
+            return {"accessToken": "token-value"}
+        return {"cardInstanceId": "arrival-card-1"}
+
+    sender = DingTalkCardSender(
+        DingTalkCardConfig(client_id="cid", client_secret="secret", robot_code="robot-code"),
+        http_post=fake_post,
+    )
+
+    result = sender.send_arrival_card(
+        ArrivalCard(
+            receiver_dingtalk_user_id="receiver-user-id",
+            arrival_date="2026-07-12",
+            salesperson_name="销售A",
+            new_items=[ArrivalCardItem(main_sku="MAIN-1", child_sku_count=2, product_name="新品一")],
+            old_items=[],
+            action_url="https://example.com/?from=ding&role=operator",
+            out_track_id="arrival-2026-07-12-sales-a",
+        )
+    )
+
+    assert result["cardInstanceId"] == "arrival-card-1"
+    deliver_call = calls[1]
+    assert deliver_call[2]["cardTemplateId"] == DINGTALK_ARRIVAL_CARD_TEMPLATE_ID
+    assert deliver_call[2]["cardData"]["cardParamMap"]["card_title"] == "到货通知"
+    assert deliver_call[2]["cardData"]["cardParamMap"]["left_label"] == "主SKU数"
+    assert "new_items" not in deliver_call[2]["cardData"]["cardParamMap"]
 
 
 def test_masked_dingtalk_user_id_never_returns_full_value() -> None:

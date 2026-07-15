@@ -258,13 +258,13 @@ def test_traceability_export_adds_not_claim_sheet_with_feedback_and_images() -> 
 
 
 def test_traceability_export_filters_by_period_and_excludes_unconfirmed_not_claim() -> None:
-    prepare_approved_claim(source_sheet="开发0623期", source_row=1, main_sku="MAIN-W27", sub_sku="SUB-W27")
-    prepare_approved_claim(source_sheet="开发0630期", source_row=2, main_sku="MAIN-W28", sub_sku="SUB-W28")
-    prepare_reject_claim(source_sheet="开发0623期", source_row=3, main_sku="MAIN-REJECT-PENDING", review_status=None)
-    prepare_reject_claim(source_sheet="开发0623期", source_row=4, main_sku="MAIN-REJECT-CONFIRMED", review_status="confirmed_not_claim")
-    prepare_reject_claim(source_sheet="开发0630期", source_row=5, main_sku="MAIN-REJECT-OTHER", review_status="confirmed_not_claim")
+    prepare_approved_claim(source_sheet="选品1原始数据", business_period="2026年第29期", source_row=1, main_sku="MAIN-W27", sub_sku="SUB-W27")
+    prepare_approved_claim(source_sheet="选品1原始数据", business_period="2026年第30期", source_row=2, main_sku="MAIN-W28", sub_sku="SUB-W28")
+    prepare_reject_claim(source_sheet="选品1原始数据", business_period="2026年第29期", source_row=3, main_sku="MAIN-REJECT-PENDING", review_status=None)
+    prepare_reject_claim(source_sheet="选品1原始数据", business_period="2026年第29期", source_row=4, main_sku="MAIN-REJECT-CONFIRMED", review_status="confirmed_not_claim")
+    prepare_reject_claim(source_sheet="选品1原始数据", business_period="2026年第30期", source_row=5, main_sku="MAIN-REJECT-OTHER", review_status="confirmed_not_claim")
 
-    response = client.get("/stocking/traceability/export?source_sheet=开发0623期")
+    response = client.get("/stocking/traceability/export?business_period=2026年第29期")
 
     assert response.status_code == 200
     workbook = load_workbook(BytesIO(response.content), data_only=True)
@@ -296,6 +296,7 @@ def test_traceability_export_records_not_claim_rows_once() -> None:
 
 def prepare_approved_claim(
     source_sheet: str = "开发0623期",
+    business_period: str = "BATCH-TRACE",
     source_row: int = 1,
     main_sku: str = "MAIN-TRACE",
     sub_sku: str = "SUB-TRACE",
@@ -306,7 +307,7 @@ def prepare_approved_claim(
             source_file="选品1.xlsx",
             source_sheet=source_sheet,
             source_row=source_row,
-            batch="BATCH-TRACE",
+            batch=business_period,
             country="TH",
             site="泰国",
             developer_department="产品开发六部",
@@ -356,14 +357,20 @@ def prepare_approved_claim(
         return opportunity.id
 
 
-def prepare_reject_claim(source_sheet: str, source_row: int, main_sku: str, review_status: str | None) -> str:
+def prepare_reject_claim(
+    source_sheet: str,
+    source_row: int,
+    main_sku: str,
+    review_status: str | None,
+    business_period: str | None = None,
+) -> str:
     with SessionLocal() as db:
         opportunity = models.NewProductOpportunity(
             source_type="selection1_developer_claim_feedback",
             source_file="选品1.xlsx",
             source_sheet=source_sheet,
             source_row=source_row,
-            batch=source_sheet,
+            batch=business_period or source_sheet,
             country="PH",
             site="PH",
             main_sku=main_sku,

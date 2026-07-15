@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any
 
 from openpyxl import load_workbook
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app import models
@@ -48,6 +48,7 @@ def import_personnel_config(db: Session, source_file: str | Path, source_sheet: 
         created_count = 0
         updated_count = 0
         skipped_count = 0
+        next_order = int(db.scalar(select(func.max(models.OperatorAssignmentProfile.display_order))) or 0) + 1
         for row in worksheet.iter_rows(min_row=2, values_only=True):
             values = {field: _text(row[index]) for field, index in column_indexes.items() if index < len(row)}
             operator_name = values.get("operator_name")
@@ -61,7 +62,8 @@ def import_personnel_config(db: Session, source_file: str | Path, source_sheet: 
                 )
             )
             if profile is None:
-                profile = models.OperatorAssignmentProfile(operator_name=operator_name)
+                profile = models.OperatorAssignmentProfile(operator_name=operator_name, display_order=next_order)
+                next_order += 1
                 db.add(profile)
                 created_count += 1
             else:

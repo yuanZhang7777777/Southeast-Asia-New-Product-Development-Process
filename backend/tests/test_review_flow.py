@@ -116,7 +116,7 @@ def test_review_returned_for_supplement_requires_reason() -> None:
     assert "review_comment" in response.json()["detail"]
 
 
-def test_review_claim_submission_can_only_be_approved() -> None:
+def test_review_claim_submission_can_be_returned_for_supplement() -> None:
     opportunity_id = prepare_submission("claim", claim_daily_sales=1)
 
     response = client.post(
@@ -125,12 +125,16 @@ def test_review_claim_submission_can_only_be_approved() -> None:
             "opportunity_id": opportunity_id,
             "reviewer_name": "练玉君",
             "review_status": "returned_for_supplement",
-            "review_comment": "认领提交不走退回",
+            "review_comment": "认领单销依据不足",
         },
     )
 
-    assert response.status_code == 400
-    assert "not-claim" in response.json()["detail"]
+    assert response.status_code == 200
+    with SessionLocal() as db:
+        opportunity = db.get(models.NewProductOpportunity, opportunity_id)
+        returned_tasks = pending_tasks(db, opportunity_id, "sales_claim")
+    assert opportunity.current_status == "returned_for_supplement"
+    assert [(task.assignee_name, task.status) for task in returned_tasks] == [("销售A", "pending")]
 
 
 def test_review_cannot_confirm_claim_as_not_claim() -> None:

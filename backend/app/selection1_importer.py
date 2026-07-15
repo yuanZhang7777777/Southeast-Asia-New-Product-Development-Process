@@ -12,6 +12,7 @@ from app import models, schemas, services
 from app.excel_images import images_by_row, save_product_image
 from app.field_mapping import normalize_header
 from app.site_codes import normalize_site_code
+from app.workbook_sheets import resolve_sheet_name
 
 
 SOURCE_TYPE = "selection1_developer_claim_feedback"
@@ -41,6 +42,34 @@ MARKET_GROUPS = [
     ("新晋", "AL", "AM", "AN"),
 ]
 
+MARKET_GROUP_ALIASES = {
+    "最低价": {
+        "url": ["最低价链接", "平台综合推荐(前三页）最低价竞品链接1"],
+        "price": ["售价1", "售价1(PHP）", "竞品单价 / （链接1） / (比索）"],
+        "sales": ["月销1", "竞品子sku月销 / （链接1）"],
+    },
+    "most_orders": {
+        "url": ["月销最高链接链接1", "月销最高链接", "most / orders链接", "most orders链接", "平台综合推荐（前三页）销量最多竞品链接2"],
+        "price": ["售价2", "售价2(PHP）", "竞品单价 / （链接2） / (比索）"],
+        "sales": ["月销2", "竞品子sku月销 / （链接2）"],
+    },
+    "月销次高": {
+        "url": ["月销次高链接链接2", "月销次高链接"],
+        "price": ["售价(PHP）"],
+        "sales": ["月销"],
+    },
+    "月销第三高": {
+        "url": ["月销第三高链接链接3", "月销第三高链接"],
+        "price": ["售价(PHP）"],
+        "sales": ["月销"],
+    },
+    "新晋": {
+        "url": ["新晋链接", "平台综合推荐（前三页近3个月上架的）新晋竞品链接3"],
+        "price": ["售价3", "售价3(PHP）", "竞品单价（链接3）（比索）"],
+        "sales": ["月销3", "竞品子sku月销（链接3）"],
+    },
+}
+
 PRICING_SNAPSHOT_COLUMNS = {
     "AO": "参考单销",
     "AP": "参考定价",
@@ -52,6 +81,17 @@ PRICING_SNAPSHOT_COLUMNS = {
     "AV": "推广期利润率",
 }
 
+PRICING_ALIASES = {
+    "AO": ["参考单销"],
+    "AP": ["参考定价", "稳定期定价 / （PHP）", "稳定期参考定价 / （VND）"],
+    "AQ": ["一次毛利额 / （THB）", "一次毛利额 / （PHP）", "一次毛利额 / （VND）"],
+    "AR": ["一次毛利额 / （人民币）"],
+    "AS": ["一次毛利率", "稳定期利润率"],
+    "AT": ["预估单销"],
+    "AU": ["推广期定价"],
+    "AV": ["推广期利润率"],
+}
+
 CLAIM_COLUMNS = {
     "CC": "reject_reason",
     "CD": "salesperson_name",
@@ -61,31 +101,27 @@ CLAIM_COLUMNS = {
     "CH": "note",
 }
 
-SNAPSHOT_COLUMNS = tuple(
-    list(MAIN_COLUMNS)
-    + [column for group in MARKET_GROUPS for column in group[1:]]
-    + list(PRICING_SNAPSHOT_COLUMNS)
-    + list(CLAIM_COLUMNS)
-)
+SNAPSHOT_COLUMNS = tuple(get_column_letter(index) for index in range(1, column_index_from_string("BX") + 1)) + tuple(CLAIM_COLUMNS)
 MAX_SOURCE_COLUMN = column_index_from_string("CH")
 
 def import_selection1_workbook(db: Session, payload: schemas.Selection1ImportRequest) -> schemas.Selection1ImportResponse:
     source_path = resolve_source_file(payload.source_file)
+    business_period = (payload.business_period or "").strip() or payload.source_sheet.strip()
     import_batch = models.ImportBatch(
         source_type=SOURCE_TYPE,
         source_file=source_path.name,
         source_sheet=payload.source_sheet,
+        business_period=business_period,
         status="running",
     )
     db.add(import_batch)
     db.flush()
 
     workbook = load_workbook(source_path, read_only=False, data_only=True)
-    if payload.source_sheet not in workbook.sheetnames:
-        available = ", ".join(workbook.sheetnames)
-        raise ValueError(f"sheet not found: {payload.source_sheet}; available sheets: {available}")
+    source_sheet = resolve_sheet_name(workbook, payload.source_sheet)
+    import_batch.source_sheet = source_sheet
 
-    worksheet = workbook[payload.source_sheet]
+    worksheet = workbook[source_sheet]
     try:
         worksheet.reset_dimensions()
     except AttributeError:
@@ -112,7 +148,7 @@ def import_selection1_workbook(db: Session, payload: schemas.Selection1ImportReq
         attach_product_image(parsed, product_images.get(source_row), source_row)
         processed_count += 1
 
-        opportunity, created = upsert_opportunity(db, parsed, source_path.name, payload.source_sheet, source_row, import_batch.id)
+        opportunity, created = upsert_opportunity(db, parsed, source_path.name, source_sheet, source_row, business_period, import_batch.id)
         created_count += int(created)
         updated_count += int(not created)
 
@@ -129,7 +165,8 @@ def import_selection1_workbook(db: Session, payload: schemas.Selection1ImportReq
         None,
         {
             "source_file": source_path.name,
-            "source_sheet": payload.source_sheet,
+            "source_sheet": source_sheet,
+            "business_period": business_period,
             "imported_count": created_count + updated_count,
             "created_count": created_count,
             "updated_count": updated_count,
@@ -144,7 +181,8 @@ def import_selection1_workbook(db: Session, payload: schemas.Selection1ImportReq
     return schemas.Selection1ImportResponse(
         import_batch_id=import_batch.id,
         source_file=source_path.name,
-        source_sheet=payload.source_sheet,
+        source_sheet=source_sheet,
+        business_period=business_period,
         imported_count=created_count + updated_count,
         created_count=created_count,
         updated_count=updated_count,
@@ -192,7 +230,11 @@ def parse_selection1_row(row: tuple[Any, ...], headers_by_column: dict[str, list
         return None
 
     site = text_value(values["A"])
-    pricing_snapshot = {label: values[column] for column, label in PRICING_SNAPSHOT_COLUMNS.items() if values[column] not in (None, "")}
+    pricing_snapshot = {
+        label: source_value(raw_values, headers_by_column or {}, PRICING_ALIASES.get(column, [label]), column)
+        for column, label in PRICING_SNAPSHOT_COLUMNS.items()
+        if source_value(raw_values, headers_by_column or {}, PRICING_ALIASES.get(column, [label]), column) not in (None, "")
+    }
     feedback_parts = [text_value(values["CG"]), text_value(values["CH"])]
     claim_prefill = {
         "reject_reason": text_value(values["CC"]),
@@ -204,15 +246,16 @@ def parse_selection1_row(row: tuple[Any, ...], headers_by_column: dict[str, list
     parsed = {
         "main": {field: values[column] for column, field in MAIN_COLUMNS.items()},
         "country": derive_country(site),
-        "market_items": parse_market_items(values),
-        "reference_daily_sales": number_value(values["AO"]),
-        "reference_price": number_value(values["AP"]),
+        "market_items": parse_market_items(values, raw_values, headers_by_column or {}),
+        "reference_daily_sales": number_value(source_value(raw_values, headers_by_column or {}, PRICING_ALIASES["AO"], "AO")),
+        "reference_price": number_value(source_value(raw_values, headers_by_column or {}, PRICING_ALIASES["AP"], "AP")),
         "pricing_snapshot": pricing_snapshot,
         "claim_prefill": claim_prefill,
         "snapshot": {
             "source_type": SOURCE_TYPE,
             "allowed_columns": list(raw_values),
             "cells": values,
+            "headers_by_column": headers_by_column or {},
             "fields_by_column": fields_by_column(raw_values),
             "fields_by_header": fields_by_header(headers_by_column or {}, raw_values),
             "pricing_snapshot": pricing_snapshot,
@@ -223,16 +266,24 @@ def parse_selection1_row(row: tuple[Any, ...], headers_by_column: dict[str, list
 
 
 def upsert_opportunity(
-    db: Session, parsed: dict[str, Any], source_file: str, source_sheet: str, source_row: int, import_batch_id: str | None = None
+    db: Session,
+    parsed: dict[str, Any],
+    source_file: str,
+    source_sheet: str,
+    source_row: int,
+    business_period: str,
+    import_batch_id: str | None = None,
 ) -> tuple[models.NewProductOpportunity, bool]:
-    existing = db.scalar(
+    normalized_site = normalize_site_code(parsed["main"].get("site") or parsed["country"]) or ""
+    candidates = db.scalars(
         select(models.NewProductOpportunity).where(
             models.NewProductOpportunity.source_type == SOURCE_TYPE,
-            models.NewProductOpportunity.source_file == source_file,
-            models.NewProductOpportunity.source_sheet == source_sheet,
-            models.NewProductOpportunity.source_row == source_row,
+            models.NewProductOpportunity.batch == business_period,
+            models.NewProductOpportunity.main_sku == parsed["main"]["main_sku"],
+            models.NewProductOpportunity.sub_sku == parsed["main"]["sub_sku"],
         )
     )
+    existing = next((item for item in candidates if (normalize_site_code(item.site or item.country) or "") == normalized_site), None)
     opportunity_data = {
         **parsed["main"],
         "source_type": SOURCE_TYPE,
@@ -240,7 +291,7 @@ def upsert_opportunity(
         "source_sheet": source_sheet,
         "source_row": source_row,
         "import_batch_id": import_batch_id,
-        "batch": source_sheet,
+        "batch": business_period,
         "country": parsed["country"],
         "snapshot": parsed["snapshot"],
     }
@@ -273,7 +324,7 @@ def add_source_snapshot(db: Session, opportunity: models.NewProductOpportunity, 
             source_file=opportunity.source_file,
             source_sheet=opportunity.source_sheet,
             source_row=opportunity.source_row,
-            column_range="A:L,Z:AN,AO:AV,CC:CH",
+            column_range="A:BX,CC:CH",
             payload=opportunity.snapshot,
         )
     )
@@ -358,11 +409,12 @@ def ensure_import_claim_task(db: Session, opportunity: models.NewProductOpportun
     return False
 
 
-def parse_market_items(values: dict[str, Any]) -> list[dict[str, Any]]:
+def parse_market_items(values: dict[str, Any], raw_values: dict[str, Any], headers_by_column: dict[str, list[str]]) -> list[dict[str, Any]]:
     items = []
     for research_type, url_column, price_column, sales_column in MARKET_GROUPS:
-        competitor_url = text_value(values[url_column])
-        competitor_price = number_value(values[price_column])
+        aliases = MARKET_GROUP_ALIASES[research_type]
+        competitor_url = text_value(source_value(raw_values, headers_by_column, aliases["url"], url_column, values))
+        competitor_price = number_value(source_value(raw_values, headers_by_column, aliases["price"], price_column, values))
         if not competitor_url and competitor_price is None:
             continue
         items.append(
@@ -370,10 +422,27 @@ def parse_market_items(values: dict[str, Any]) -> list[dict[str, Any]]:
                 "research_type": research_type,
                 "competitor_url": competitor_url,
                 "competitor_price": competitor_price,
-                "competitor_monthly_sales": number_value(values[sales_column]),
+                "competitor_monthly_sales": number_value(source_value(raw_values, headers_by_column, aliases["sales"], sales_column, values)),
             }
         )
     return items
+
+
+def source_value(
+    raw_values: dict[str, Any],
+    headers_by_column: dict[str, list[str]],
+    aliases: list[str],
+    fallback_column: str,
+    fallback_values: dict[str, Any] | None = None,
+) -> Any:
+    alias_keys = {normalize_header(alias) for alias in aliases}
+    for column, headers in headers_by_column.items():
+        value = raw_values.get(column)
+        if value in (None, ""):
+            continue
+        if any(normalize_header(header) in alias_keys for header in headers):
+            return value
+    return (fallback_values or raw_values).get(fallback_column)
 
 
 def is_summary_row(values: dict[str, Any]) -> bool:

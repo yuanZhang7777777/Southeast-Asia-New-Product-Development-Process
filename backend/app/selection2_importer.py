@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from app import models, schemas, services
 from app.excel_images import images_by_row, save_product_image
 from app.field_mapping import normalize_header, number_value, text_value
+from app.workbook_sheets import resolve_sheet_name
 from app.workflow_status import OPPORTUNITY_ASSIGNED, OPPORTUNITY_PENDING_ASSIGNMENT, TASK_PENDING
 
 
@@ -33,11 +34,10 @@ def import_selection2_workbook(db: Session, payload: schemas.Selection2ImportReq
     db.flush()
 
     workbook = load_workbook(source_path, read_only=False, data_only=True)
-    if payload.source_sheet not in workbook.sheetnames:
-        available = ", ".join(workbook.sheetnames)
-        raise ValueError(f"sheet not found: {payload.source_sheet}; available sheets: {available}")
+    source_sheet = resolve_sheet_name(workbook, payload.source_sheet)
+    import_batch.source_sheet = source_sheet
 
-    worksheet = workbook[payload.source_sheet]
+    worksheet = workbook[source_sheet]
     try:
         worksheet.reset_dimensions()
     except AttributeError:
@@ -63,7 +63,7 @@ def import_selection2_workbook(db: Session, payload: schemas.Selection2ImportReq
         attach_product_image(parsed, product_images.get(source_row), source_row)
         processed_count += 1
 
-        opportunity, created = upsert_opportunity(db, parsed, source_path.name, payload.source_sheet, source_row, import_batch.id)
+        opportunity, created = upsert_opportunity(db, parsed, source_path.name, source_sheet, source_row, import_batch.id)
         created_count += int(created)
         updated_count += int(not created)
         prefill_claim_count += replace_source_claims(db, opportunity.id, parsed)
@@ -81,7 +81,7 @@ def import_selection2_workbook(db: Session, payload: schemas.Selection2ImportReq
         None,
         {
             "source_file": source_path.name,
-            "source_sheet": payload.source_sheet,
+            "source_sheet": source_sheet,
             "imported_count": created_count + updated_count,
             "created_count": created_count,
             "updated_count": updated_count,
@@ -92,7 +92,8 @@ def import_selection2_workbook(db: Session, payload: schemas.Selection2ImportReq
     return schemas.Selection2ImportResponse(
         import_batch_id=import_batch.id,
         source_file=source_path.name,
-        source_sheet=payload.source_sheet,
+        source_sheet=source_sheet,
+        business_period=source_sheet,
         imported_count=created_count + updated_count,
         created_count=created_count,
         updated_count=updated_count,
@@ -138,6 +139,7 @@ def parse_selection2_row(row: tuple[Any, ...], headers_by_column: dict[str, list
         "source_type": SOURCE_TYPE,
         "allowed_columns": list(raw_values),
         "cells": values,
+        "headers_by_column": headers_by_column or {},
         "fields_by_column": fields_by_column(raw_values),
         "fields_by_header": fields_by_header(headers_by_column or {}, raw_values),
         "claim_prefill": parse_claims(values),

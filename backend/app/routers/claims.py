@@ -9,7 +9,6 @@ from app import models, schemas, services
 from app.auth import AuthContext, auth_required, read_token, require_roles, role_mappings_for_user, roles_from_mappings
 from app.config import get_settings
 from app.db import get_db
-from app.dingtalk_card_sender import DingTalkCardConfig, DingTalkCardSender
 from app.excel_images import PUBLIC_UPLOAD_PREFIX, UPLOADED_SOURCES_ROOT
 from app.oss_storage import read_oss_object_by_public_url, upload_claim_evidence_image
 
@@ -35,14 +34,6 @@ def submit_claim(
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    db.flush()
-    settings = get_settings()
-    services.notify_supervisor_new_product_todo_card(
-        db,
-        f"claim-{claim.id}-{int(claim.last_updated_at.timestamp() * 1_000_000)}",
-        settings,
-        DingTalkCardSender(DingTalkCardConfig.from_settings(settings)),
-    )
     db.commit()
     return schemas.MessageResponse(message="claim submitted", id=claim.id)
 

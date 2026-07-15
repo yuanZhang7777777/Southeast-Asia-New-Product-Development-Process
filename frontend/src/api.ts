@@ -18,6 +18,7 @@ export type Opportunity = {
   image_url?: string | null;
   reason?: string | null;
   current_status: string;
+  latest_claim_record_id?: string | null;
   latest_claim_result?: string | null;
   latest_claim_salesperson?: string | null;
   latest_reject_reason?: string | null;
@@ -81,10 +82,44 @@ export type AvailableStockingItem = {
   review_status?: string | null;
 };
 
+export type PlmArrivalItem = {
+  arrival_type: "new_arrival" | "restock" | "unknown";
+  salesperson_name: string;
+  sub_sku?: string | null;
+  main_sku?: string | null;
+  country?: string | null;
+  warehouse?: string | null;
+  latest_storage_time?: string | null;
+  first_listing_time?: string | null;
+  available_quantity?: number | null;
+  real_stock_quantity?: number | null;
+  daily_sales?: number | null;
+};
+
+export type PlmArrivalSalespersonSummary = {
+  salesperson_name: string;
+  new_arrival_count: number;
+  restock_count: number;
+  unknown_count: number;
+  total_count: number;
+};
+
+export type PlmArrivalPreview = {
+  date: string;
+  bloc_name: string;
+  row_count: number;
+  new_arrival_count: number;
+  restock_count: number;
+  unknown_count: number;
+  by_salesperson: PlmArrivalSalespersonSummary[];
+  items: PlmArrivalItem[];
+};
+
 export type Selection1ImportResponse = {
   import_batch_id?: string | null;
   source_file: string;
   source_sheet: string;
+  business_period?: string | null;
   imported_count: number;
   created_count: number;
   updated_count: number;
@@ -92,6 +127,22 @@ export type Selection1ImportResponse = {
   market_research_count: number;
   prefill_claim_count: number;
   task_count: number;
+};
+
+export type Selection2ImportResponse = Selection1ImportResponse;
+
+export type ImportBatchSummary = {
+  id: string;
+  source_type: string;
+  source_file?: string | null;
+  source_sheet?: string | null;
+  business_period?: string | null;
+  imported_by?: string | null;
+  imported_at?: string | null;
+  created_count: number;
+  updated_count: number;
+  skipped_count: number;
+  status: string;
 };
 
 export type ExcelSheetListResponse = {
@@ -134,6 +185,8 @@ export type OperatorAssignmentProfile = {
   key_site?: string | null;
   key_category1?: string | null;
   key_category2?: string | null;
+  assignment_priority: number;
+  display_order?: number | null;
   enabled: boolean;
 };
 
@@ -161,6 +214,89 @@ export type UploadedEvidenceImage = {
   type: string;
   size: number;
   url: string;
+};
+
+export type SecondaryResearchPeer = {
+  claim_record_id: string;
+  salesperson_name?: string | null;
+  secondary_research_at?: string | null;
+  secondary_competitor_url?: string | null;
+  secondary_conclusion?: string | null;
+  product_positioning?: string | null;
+  secondary_research_submitted_at?: string | null;
+};
+
+export type SecondaryResearchItem = {
+  claim_record_id: string;
+  opportunity_id: string;
+  salesperson_name: string;
+  downstream_status: string;
+  arrival_detected_at?: string | null;
+  secondary_research_at?: string | null;
+  secondary_competitor_url?: string | null;
+  secondary_conclusion?: string | null;
+  product_positioning?: string | null;
+  secondary_evidence_images: UploadedEvidenceImage[];
+  secondary_research_submitted_at?: string | null;
+  sub_sku: string;
+  sub_sku_name?: string | null;
+  image_url?: string | null;
+  reason?: string | null;
+  snapshot: Record<string, unknown>;
+  peer_records: SecondaryResearchPeer[];
+};
+
+export type SecondaryResearchGroup = {
+  key: string;
+  source_type: string;
+  business_period?: string | null;
+  site?: string | null;
+  country?: string | null;
+  main_sku: string;
+  main_sku_name?: string | null;
+  salesperson_name: string;
+  items: SecondaryResearchItem[];
+};
+
+export type ProductBoardChildSku = {
+  opportunity_id: string;
+  sub_sku: string;
+  sub_sku_name?: string | null;
+  visible_status: string;
+};
+
+export type ProductBoardResponsibility = {
+  claim_record_id?: string | null;
+  task_id?: string | null;
+  opportunity_id: string;
+  salesperson_name?: string | null;
+  sub_sku: string;
+  claim_daily_sales?: number | null;
+  visible_status: string;
+  arrival_detected_at?: string | null;
+};
+
+export type ProductBoardGroup = {
+  key: string;
+  business_period?: string | null;
+  site?: string | null;
+  country?: string | null;
+  main_sku: string;
+  main_sku_name?: string | null;
+  image_url?: string | null;
+  child_skus: ProductBoardChildSku[];
+  responsibilities: ProductBoardResponsibility[];
+  summary_tags: string[];
+};
+
+export type ProductBoardFilter = {
+  owner?: string;
+  business_period?: string;
+  visible_status?: string;
+  arrival_date_from?: string;
+  arrival_date_to?: string;
+  site?: string;
+  query?: string;
 };
 
 export function getAuthToken() {
@@ -228,12 +364,30 @@ function filenameFromDisposition(disposition: string | null, fallbackName: strin
   }
 }
 
-type PeriodFilter = { source_sheet?: string; import_batch_id?: string };
+type PeriodFilter = { business_period?: string; source_sheet?: string; import_batch_id?: string };
 
 function query(params: PeriodFilter = {}) {
   const search = new URLSearchParams();
+  if (params.business_period) search.set("business_period", params.business_period);
   if (params.source_sheet) search.set("source_sheet", params.source_sheet);
   if (params.import_batch_id) search.set("import_batch_id", params.import_batch_id);
+  const value = search.toString();
+  return value ? `?${value}` : "";
+}
+
+function secondaryResearchQuery(salespersonName: string, businessPeriod: string) {
+  const search = new URLSearchParams();
+  if (salespersonName) search.set("salesperson_name", salespersonName);
+  if (businessPeriod) search.set("business_period", businessPeriod);
+  const value = search.toString();
+  return value ? `?${value}` : "";
+}
+
+function productBoardQuery(params: ProductBoardFilter = {}) {
+  const search = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value) search.set(key, value);
+  }
   const value = search.toString();
   return value ? `?${value}` : "";
 }
@@ -247,22 +401,30 @@ export const api = {
   me: () => request<AuthSession>("/auth/me"),
   changePassword: (payload: { old_password: string; new_password: string }) =>
     request<{ status: string }>("/auth/password", { method: "POST", body: JSON.stringify(payload) }),
-  opportunities: (limit = 5000, filter?: PeriodFilter) =>
-    request<Opportunity[]>(`/opportunities?limit=${limit}${query(filter).replace("?", "&")}`),
+  opportunities: (limit = 5000, filter?: PeriodFilter, includeDisabled = false) =>
+    request<Opportunity[]>(`/opportunities?limit=${limit}${query(filter).replace("?", "&")}${includeDisabled ? "&include_disabled=true" : ""}`),
   updateOpportunity: (id: string, payload: unknown) =>
     request<Opportunity>(`/opportunities/${id}`, { method: "PATCH", body: JSON.stringify(payload) }),
+  disableOpportunity: (id: string, payload: { disabled: boolean; reason?: string | null }) =>
+    request<{ message: string; id?: string | null }>(`/opportunities/${id}/disable`, { method: "POST", body: JSON.stringify(payload) }),
+  disableOpportunityGroup: (id: string, payload: { disabled: boolean; reason?: string | null }) =>
+    request<{ message: string; id?: string | null }>(`/opportunities/${id}/disable-group`, { method: "POST", body: JSON.stringify(payload) }),
+  importBatches: () => request<ImportBatchSummary[]>("/opportunities/import-batches"),
+  disableImportBatch: (id: string, payload: { disabled: boolean; reason?: string | null }) =>
+    request<{ message: string; id?: string | null }>(`/opportunities/import-batches/${id}/disable`, { method: "POST", body: JSON.stringify(payload) }),
   importOpportunities: (items: unknown[]) =>
     request<Opportunity[]>("/opportunities/import", { method: "POST", body: JSON.stringify({ items }) }),
   opportunitiesExport: (filter?: PeriodFilter) =>
     download(`/opportunities/export${query(filter)}`, "source-opportunities.xlsx"),
-  importSelection1: (source_sheet = "开发0623期", source_file?: string) =>
+  importSelection1: (source_sheet = "开发0623期", business_period?: string, source_file?: string) =>
     request<Selection1ImportResponse>("/opportunities/import/selection1", {
       method: "POST",
-      body: JSON.stringify({ source_sheet, source_file: source_file || undefined })
+      body: JSON.stringify({ source_sheet, business_period: business_period || undefined, source_file: source_file || undefined })
     }),
-  importSelection1File: (source_sheet: string, file: File) => {
+  importSelection1File: (source_sheet: string, business_period: string, file: File) => {
     const form = new FormData();
     form.append("source_sheet", source_sheet);
+    form.append("business_period", business_period);
     form.append("file", file);
     return request<Selection1ImportResponse>("/opportunities/import/selection1/upload", { method: "POST", body: form });
   },
@@ -272,7 +434,7 @@ export const api = {
     return request<ExcelSheetListResponse>("/opportunities/excel-sheets/upload", { method: "POST", body: form });
   },
   importSelection2: (source_sheet = "5.26期", source_file?: string) =>
-    request<Selection1ImportResponse>("/opportunities/import/selection2", {
+    request<Selection2ImportResponse>("/opportunities/import/selection2", {
       method: "POST",
       body: JSON.stringify({ source_sheet, source_file: source_file || undefined })
     }),
@@ -280,7 +442,7 @@ export const api = {
     const form = new FormData();
     form.append("source_sheet", source_sheet);
     form.append("file", file);
-    return request<Selection1ImportResponse>("/opportunities/import/selection2/upload", { method: "POST", body: form });
+    return request<Selection2ImportResponse>("/opportunities/import/selection2/upload", { method: "POST", body: form });
   },
   assignmentPreview: (opportunity_ids: string[], candidates: string[]) =>
     request<{ items: AssignmentPreviewItem[] }>("/assignments/preview", {
@@ -297,12 +459,28 @@ export const api = {
     form.append("file", file);
     return request<UploadedEvidenceImage>("/claims/evidence-images", { method: "POST", body: form });
   },
+  secondaryResearch: (salespersonName = "", businessPeriod = "") =>
+    request<SecondaryResearchGroup[]>(
+      `/secondary-research${secondaryResearchQuery(salespersonName, businessPeriod)}`
+    ),
+  productBoard: (filter?: ProductBoardFilter) => request<ProductBoardGroup[]>(`/product-board${productBoardQuery(filter)}`),
+  updateSecondaryResearch: (claimRecordId: string, salespersonName: string, payload: unknown) =>
+    request<SecondaryResearchItem>(
+      `/secondary-research/${claimRecordId}?salesperson_name=${encodeURIComponent(salespersonName)}`,
+      { method: "PATCH", body: JSON.stringify(payload) }
+    ),
+  submitSecondaryResearchGroup: (salespersonName: string, claimRecordIds: string[]) =>
+    request<SecondaryResearchItem[]>(
+      `/secondary-research/submit-group?salesperson_name=${encodeURIComponent(salespersonName)}`,
+      { method: "POST", body: JSON.stringify({ claim_record_ids: claimRecordIds }) }
+    ),
   review: (payload: unknown) => request<{ message: string; id: string }>("/reviews", { method: "POST", body: JSON.stringify(payload) }),
   stocking: () => request<StockingRequest[]>("/stocking/requests"),
   availableStocking: (filter?: PeriodFilter) => request<AvailableStockingItem[]>(`/stocking/available-list${query(filter)}`),
   availableStockingExport: (filter?: PeriodFilter) => download(`/stocking/available-list/export${query(filter)}`, "海外仓备货申请表.xlsx"),
   traceabilityExport: (filter?: PeriodFilter) => download(`/stocking/traceability/export${query(filter)}`, "新品中央字段导出.xlsx"),
   arrival: (payload: unknown) => request<unknown>("/arrival/records", { method: "POST", body: JSON.stringify(payload) }),
+  plmArrivalPreview: (date: string) => request<PlmArrivalPreview>(`/arrival/plm-preview?date=${encodeURIComponent(date)}`),
   summary: (payload: unknown) => request<unknown>("/summary/four-week", { method: "POST", body: JSON.stringify(payload) }),
   notify: (payload: unknown) => request<NotificationLog>("/notifications/test", { method: "POST", body: JSON.stringify(payload) }),
   notifications: () => request<NotificationLog[]>("/notifications/logs"),

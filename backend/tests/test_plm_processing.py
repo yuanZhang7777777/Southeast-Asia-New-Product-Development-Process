@@ -1,0 +1,275 @@
+import os
+import sys
+from datetime import timezone
+from pathlib import Path
+
+os.environ["DATABASE_URL"] = f"sqlite:///{Path(__file__).with_name('test_plm_processing.db')}"
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from openpyxl import Workbook  # noqa: E402
+from sqlalchemy import create_engine  # noqa: E402
+from sqlalchemy.orm import sessionmaker  # noqa: E402
+
+from app import models  # noqa: E402
+from app.db import Base  # noqa: E402
+from app import plm_processing  # noqa: E402
+from app.plm_processing import process_plm_arrival_workbook  # noqa: E402
+
+GROUP_EIGHT = "\u96c6\u56e2\u516b\u90e8"
+GROUP_ONE = "\u96c6\u56e2\u4e00\u90e8"
+SALES_A = "\u9500\u552eA"
+SALES_B = "\u9500\u552eB"
+PH = "\u83f2\u5f8b\u5bbe"
+TH = "\u6cf0\u56fd"
+
+engine = create_engine(os.environ["DATABASE_URL"])
+SessionLocal = sessionmaker(bind=engine)
+
+
+def setup_function() -> None:
+    Base.metadata.drop_all(bind=engine)
+    Base.metadata.create_all(bind=engine)
+
+
+def test_plm_processing_persists_all_rows_and_dry_run_does_not_open_secondary_research(tmp_path: Path) -> None:
+    workbook_path = tmp_path / "plm.xlsx"
+    build_workbook(workbook_path)
+    with SessionLocal() as db:
+        opportunity, claim = make_claim(" sub-a ", "PH", SALES_A, "waiting_arrival")
+        db.add_all([opportunity, claim])
+        db.flush()
+        db.add(
+            models.ReviewRecord(
+                opportunity_id=opportunity.id,
+                claim_record_id=claim.id,
+                reviewer_name="\u4e3b\u7ba1",
+                review_status="approved",
+            )
+        )
+        db.commit()
+
+        result = process_plm_arrival_workbook(
+            db,
+            workbook_path,
+            "2026-07-12",
+            source_file="plm.xlsx",
+            bloc_name=GROUP_EIGHT,
+            workflow_automation_enabled=False,
+        )
+
+        assert result["row_count"] == 4
+        assert result["new_arrival_count"] == 2
+        assert result["restock_count"] == 1
+        assert result["unknown_count"] == 1
+        assert result["matched_count"] == 1
+        assert result["arrival_record_count"] == 0
+        assert result["planned_responsibilities"] == [
+            {
+                "claim_record_id": claim.id,
+                "opportunity_id": opportunity.id,
+                "business_period": "2026-07-12",
+                "salesperson_name": SALES_A,
+                "site": "PH",
+                "country": "PH",
+                "main_sku": "MAIN-1",
+                "sub_sku": " sub-a ",
+                "product_name": "new",
+            }
+        ]
+        assert db.query(models.PlmArrivalBatch).count() == 1
+        items = db.query(models.PlmArrivalItem).order_by(models.PlmArrivalItem.source_row).all()
+        assert [item.arrival_type for item in items] == ["new_arrival", "restock", "unknown", "new_arrival"]
+        assert [item.match_status for item in items] == ["matched_dry_run", "not_new_arrival", "not_new_arrival", "unmatched"]
+        assert items[0].product_name == "new"
+        assert items[0].raw_payload["_matched_claim_record_ids"] == [claim.id]
+        assert db.get(models.SalesClaimForecast, claim.id).downstream_status == "waiting_arrival"
+        assert db.query(models.ArrivalRecord).count() == 0
+
+
+def test_plm_processing_automation_uses_utc_arrival_time_and_dedupes_source_hash(tmp_path: Path, monkeypatch) -> None:
+    workbook_path = tmp_path / "plm.xlsx"
+    build_workbook(workbook_path)
+    opened_arrivals = []
+
+    original_open_secondary_research = plm_processing.services.open_secondary_research
+
+    def capture_open_secondary_research(db, claim_record_id, arrived_at=None):
+        opened_arrivals.append(arrived_at)
+        return original_open_secondary_research(db, claim_record_id, arrived_at)
+
+    monkeypatch.setattr(plm_processing.services, "open_secondary_research", capture_open_secondary_research)
+
+    with SessionLocal() as db:
+        opportunity, claim = make_claim("SUB-A", "PH", SALES_A, "waiting_export")
+        db.add_all([opportunity, claim])
+        db.flush()
+        db.add(
+            models.ReviewRecord(
+                opportunity_id=opportunity.id,
+                claim_record_id=claim.id,
+                reviewer_name="\u4e3b\u7ba1",
+                review_status="approved",
+            )
+        )
+        db.commit()
+
+        first = process_plm_arrival_workbook(
+            db,
+            workbook_path,
+            "2026-07-12",
+            source_file="plm.xlsx",
+            bloc_name=GROUP_EIGHT,
+            workflow_automation_enabled=True,
+        )
+        second = process_plm_arrival_workbook(
+            db,
+            workbook_path,
+            "2026-07-12",
+            source_file="plm.xlsx",
+            bloc_name=GROUP_EIGHT,
+            workflow_automation_enabled=True,
+        )
+
+        assert first["arrival_record_count"] == 1
+        assert first["matched_count"] == 1
+        assert second["status"] == "duplicate"
+        assert second["planned_responsibilities"][0]["claim_record_id"] == claim.id
+        assert db.query(models.PlmArrivalBatch).count() == 1
+        assert db.query(models.PlmArrivalItem).count() == 4
+        assert db.query(models.ArrivalRecord).count() == 1
+        assert opened_arrivals[0].tzinfo == timezone.utc
+        assert opened_arrivals[0].isoformat() == "2026-07-12T02:00:00+00:00"
+        # SQLite drops tzinfo on roundtrip; the monkeypatch above asserts the pre-flush value is UTC-aware.
+        assert db.query(models.ArrivalRecord).one().arrived_at.isoformat() == "2026-07-12T02:00:00"
+        saved_claim = db.get(models.SalesClaimForecast, claim.id)
+        assert saved_claim.downstream_status == "waiting_secondary_research"
+        assert saved_claim.arrival_detected_at is not None
+
+
+def test_plm_processing_exact_match_ignores_non_platform_claim(tmp_path: Path) -> None:
+    workbook_path = tmp_path / "plm.xlsx"
+    build_workbook(workbook_path)
+    with SessionLocal() as db:
+        opportunity, claim = make_claim("SUB-A", "PH", SALES_A, "waiting_arrival", source_column="CC:CH")
+        db.add_all([opportunity, claim])
+        db.flush()
+        db.add(
+            models.ReviewRecord(
+                opportunity_id=opportunity.id,
+                claim_record_id=claim.id,
+                reviewer_name="\u4e3b\u7ba1",
+                review_status="approved",
+            )
+        )
+        db.commit()
+
+        result = process_plm_arrival_workbook(
+            db,
+            workbook_path,
+            "2026-07-12",
+            source_file="plm.xlsx",
+            bloc_name=GROUP_EIGHT,
+            workflow_automation_enabled=False,
+        )
+
+        assert result["matched_count"] == 0
+        assert result["planned_responsibilities"] == []
+        assert db.get(models.SalesClaimForecast, claim.id).downstream_status == "waiting_arrival"
+        assert db.query(models.PlmArrivalItem).filter_by(matched_claim_record_id=claim.id).count() == 0
+
+
+def test_plm_processing_automation_processes_same_exact_match_across_periods(tmp_path: Path) -> None:
+    workbook_path = tmp_path / "plm.xlsx"
+    build_workbook(workbook_path)
+    with SessionLocal() as db:
+        claims = []
+        for period in ["2026-W28", "2026-W29"]:
+            opportunity, claim = make_claim("SUB-A", "PH", SALES_A, "waiting_export", business_period=period)
+            db.add_all([opportunity, claim])
+            db.flush()
+            db.add(
+                models.ReviewRecord(
+                    opportunity_id=opportunity.id,
+                    claim_record_id=claim.id,
+                    reviewer_name="\u4e3b\u7ba1",
+                    review_status="approved",
+                )
+            )
+            claims.append(claim)
+        db.commit()
+
+        result = process_plm_arrival_workbook(
+            db,
+            workbook_path,
+            "2026-07-12",
+            source_file="plm.xlsx",
+            bloc_name=GROUP_EIGHT,
+            workflow_automation_enabled=True,
+        )
+
+        assert result["arrival_record_count"] == 2
+        assert result["matched_count"] == 2
+        assert sorted(item["business_period"] for item in result["planned_responsibilities"]) == ["2026-W28", "2026-W29"]
+        assert db.query(models.ArrivalRecord).count() == 2
+        assert {record.claim_record_id for record in db.query(models.ArrivalRecord).all()} == {claim.id for claim in claims}
+        assert {db.get(models.SalesClaimForecast, claim.id).downstream_status for claim in claims} == {
+            "waiting_secondary_research"
+        }
+
+
+def build_workbook(path: Path) -> None:
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.append(
+        [
+            "\u5546\u54c1\u540d\u79f0",
+            "\u56fd\u5bb6",
+            "\u5b50SKU",
+            "\u4e3bSKU",
+            "\u9500\u552e\u5458",
+            "\u96c6\u56e2",
+            "\u6d77\u5916\u4ed3",
+            "\u6700\u540e\u4e00\u6b21\u5165\u5e93\u65f6\u95f4",
+            "\u9996\u6b21\u4e0a\u67b6\u65f6\u95f4",
+            "\u6d77\u5916\u4ed3\u53ef\u53d1",
+            "\u771f\u4ed3\u5e93\u5b58",
+        ]
+    )
+    sheet.append(["new", PH, " SUB-A ", "MAIN-1", f" {SALES_A} ", GROUP_EIGHT, "PH\u4ed3", "2026-07-12 10:00:00", "2026-07-12 00:00:00", 12, 30])
+    sheet.append(["restock", PH, "SUB-B", "MAIN-2", SALES_A, GROUP_EIGHT, "PH\u4ed3", "2026-07-12 11:00:00", "2026-07-01", 3, 8])
+    sheet.append(["unknown", TH, "SUB-C", "MAIN-3", SALES_B, GROUP_EIGHT, "TH\u4ed3", "2026-07-12 12:00:00", None, 4, 9])
+    sheet.append(["wrong sales", PH, "SUB-A", "MAIN-1", SALES_B, GROUP_EIGHT, "PH\u4ed3", "2026-07-12 13:00:00", "2026-07-12", 5, 10])
+    sheet.append(["other group", PH, "SUB-D", "MAIN-4", SALES_A, GROUP_ONE, "PH\u4ed3", "2026-07-12", "2026-07-12", 1, 1])
+    workbook.save(path)
+
+
+def make_claim(
+    sub_sku: str,
+    site: str,
+    salesperson_name: str,
+    downstream_status: str,
+    source_column: str = "platform",
+    business_period: str = "2026-07-12",
+) -> tuple[models.NewProductOpportunity, models.SalesClaimForecast]:
+    opportunity = models.NewProductOpportunity(
+        id=models.new_id(),
+        source_type="selection1_developer_claim_feedback",
+        source_file="selection.xlsx",
+        source_sheet="sheet",
+        source_row=1,
+        batch=business_period,
+        country=site,
+        site=site,
+        main_sku="MAIN-1",
+        sub_sku=sub_sku,
+        current_status="claim_submitted",
+        snapshot={},
+    )
+    claim = models.SalesClaimForecast(
+        opportunity_id=opportunity.id,
+        salesperson_name=salesperson_name,
+        claim_result="claim",
+        source_column=source_column,
+        downstream_status=downstream_status,
+    )
+    return opportunity, claim

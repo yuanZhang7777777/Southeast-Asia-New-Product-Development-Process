@@ -44,6 +44,35 @@ def test_login_requires_enabled_role_mapping() -> None:
     assert response.status_code == 403
 
 
+def test_only_super_admin_can_create_role_mapping() -> None:
+    with SessionLocal() as db:
+        db.add_all(
+            [
+                models.RoleMapping(name="Manager A", role="manager", dingtalk_user_id="dt-manager", enabled=True),
+                models.RoleMapping(name="Admin A", role="super_admin", dingtalk_user_id="dt-admin", enabled=True),
+            ]
+        )
+        db.commit()
+
+    manager_login = client.post("/auth/dingtalk/login", json={"dingtalk_user_id": "dt-manager"})
+    admin_login = client.post("/auth/dingtalk/login", json={"dingtalk_user_id": "dt-admin"})
+    payload = {"name": "New Admin", "role": "super_admin"}
+
+    manager_response = client.post(
+        "/admin/role-mappings",
+        headers={"Authorization": f"Bearer {manager_login.json()['access_token']}"},
+        json=payload,
+    )
+    admin_response = client.post(
+        "/admin/role-mappings",
+        headers={"Authorization": f"Bearer {admin_login.json()['access_token']}"},
+        json=payload,
+    )
+
+    assert manager_response.status_code == 403
+    assert admin_response.status_code == 200
+
+
 def test_account_login_returns_token_and_current_user_roles() -> None:
     with SessionLocal() as db:
         db.add(models.RoleMapping(name="销售A", role="operator", dingtalk_user_id="dt-a", enabled=True))
@@ -309,6 +338,66 @@ def test_operator_token_only_lists_own_opportunities_and_tasks() -> None:
     manager_opportunities = client.get("/opportunities", headers={"Authorization": f"Bearer {manager_token}"}).json()
 
     assert {item["main_sku"] for item in manager_opportunities} == {"OWN", "OTHER", "UNASSIGNED"}
+
+
+def test_tasks_endpoint_hides_disabled_opportunity_tasks() -> None:
+    with SessionLocal() as db:
+        db.add(models.RoleMapping(name="Operator A", role="operator", dingtalk_user_id="dt-a", enabled=True))
+        active = models.NewProductOpportunity(source_type="test", main_sku="ACTIVE", sub_sku="S1", current_status="assigned")
+        disabled = models.NewProductOpportunity(source_type="test", main_sku="DISABLED", sub_sku="S1", current_status="disabled")
+        db.add_all([active, disabled])
+        db.flush()
+        active_flow = models.FlowInstance(opportunity_id=active.id)
+        disabled_flow = models.FlowInstance(opportunity_id=disabled.id)
+        db.add_all([active_flow, disabled_flow])
+        db.flush()
+        db.add_all(
+            [
+                models.FlowTask(flow_instance_id=active_flow.id, task_type="sales_claim", node_code="sales_claim", assignee_name="Operator A"),
+                models.FlowTask(flow_instance_id=disabled_flow.id, task_type="sales_claim", node_code="sales_claim", assignee_name="Operator A"),
+            ]
+        )
+        active_id = active.id
+        db.commit()
+
+    login = client.post("/auth/dingtalk/login", json={"dingtalk_user_id": "dt-a"})
+    token = login.json()["access_token"]
+
+    tasks = client.get("/tasks/my", headers={"Authorization": f"Bearer {token}"}).json()
+
+    assert [item["opportunity_id"] for item in tasks] == [active_id]
+
+
+def test_super_admin_operator_can_filter_tasks_for_selected_operator() -> None:
+    with SessionLocal() as db:
+        db.add_all(
+            [
+                models.RoleMapping(name="Admin", role="super_admin", dingtalk_user_id="dt-admin", enabled=True),
+                models.RoleMapping(name="Operator A", role="operator", dingtalk_user_id="dt-admin", enabled=True),
+            ]
+        )
+        own = models.NewProductOpportunity(source_type="test", main_sku="OWN", sub_sku="S1")
+        other = models.NewProductOpportunity(source_type="test", main_sku="OTHER", sub_sku="S1")
+        db.add_all([own, other])
+        db.flush()
+        own_flow = models.FlowInstance(opportunity_id=own.id)
+        other_flow = models.FlowInstance(opportunity_id=other.id)
+        db.add_all([own_flow, other_flow])
+        db.flush()
+        db.add_all(
+            [
+                models.FlowTask(flow_instance_id=own_flow.id, task_type="sales_claim", node_code="sales_claim", assignee_name="Operator A"),
+                models.FlowTask(flow_instance_id=other_flow.id, task_type="sales_claim", node_code="sales_claim", assignee_name="Operator B"),
+            ]
+        )
+        db.commit()
+
+    login = client.post("/auth/dingtalk/login", json={"dingtalk_user_id": "dt-admin"})
+    token = login.json()["access_token"]
+
+    tasks = client.get("/tasks/my?assignee_name=Operator B", headers={"Authorization": f"Bearer {token}"}).json()
+
+    assert [item["assignee_name"] for item in tasks] == ["Operator B"]
 
 
 def test_review_uses_authenticated_manager_as_actor() -> None:

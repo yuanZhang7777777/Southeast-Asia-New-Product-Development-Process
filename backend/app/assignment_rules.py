@@ -7,28 +7,34 @@ from app import schemas
 from app.site_codes import normalize_site_code
 
 
-def preview_main_sku_assignment_groups(opportunities: list[Any], profiles: list[Any]) -> list[schemas.AssignmentPreviewItem]:
+def preview_main_sku_assignment_groups(
+    opportunities: list[Any],
+    profiles: list[Any],
+    initial_loads: dict[str, int] | None = None,
+) -> list[schemas.AssignmentPreviewItem]:
     enabled_profiles = [profile for profile in profiles if getattr(profile, "enabled", True)]
     if not enabled_profiles:
         return []
 
-    grouped: dict[tuple[str | None, str | None, str], list[Any]] = defaultdict(list)
+    grouped: dict[tuple[str | None, str | None, str, str], list[Any]] = defaultdict(list)
     for opportunity in opportunities:
         grouped[
             (
                 getattr(opportunity, "source_type", None),
                 getattr(opportunity, "batch", None),
                 getattr(opportunity, "main_sku"),
+                _site_key(opportunity),
             )
         ].append(opportunity)
 
-    loads = {getattr(profile, "operator_name"): 0 for profile in enabled_profiles}
+    initial_loads = initial_loads or {}
+    loads = {getattr(profile, "operator_name"): int(initial_loads.get(getattr(profile, "operator_name"), 0)) for profile in enabled_profiles}
     output: list[schemas.AssignmentPreviewItem] = []
-    for (_source_type, _batch, main_sku), items in sorted(grouped.items(), key=lambda pair: (-len(pair[1]), pair[0][2])):
+    for (_source_type, _batch, main_sku, _site), items in sorted(grouped.items(), key=lambda pair: (-len(pair[1]), pair[0][2], pair[0][3])):
         chosen, reason = _choose_profile(items, enabled_profiles, loads)
         count = len(items)
         if chosen is not None:
-            loads[chosen.operator_name] += count
+            loads[chosen.operator_name] += 1
         output.append(
             schemas.AssignmentPreviewItem(
                 main_sku=main_sku,
@@ -51,12 +57,23 @@ def _choose_profile(items: list[Any], profiles: list[Any], loads: dict[str, int]
     scored = []
     for profile in site_profiles:
         category_rank = _category_rank(profile, category)
-        priority = (category_rank,)
-        scored.append((priority, loads[getattr(profile, "operator_name")], getattr(profile, "operator_name"), profile))
+        category_priority = 0 if category_rank < 2 else 2
+        priority = (category_priority,)
+        scored.append(
+            (
+                priority,
+                loads[getattr(profile, "operator_name")],
+                -_int_attr(profile, "assignment_priority"),
+                _int_attr(profile, "display_order"),
+                getattr(profile, "operator_name"),
+                profile,
+                category_rank,
+            )
+        )
 
-    best_priority, best_load, _name, chosen = min(scored)
-    same_priority_loads = [load for priority, load, _profile_name, _profile in scored if priority == best_priority]
-    reason = _reason(best_priority[0])
+    best_priority, best_load, _priority, _order, _name, chosen, best_category_rank = min(scored)
+    same_priority_loads = [load for priority, load, *_rest in scored if priority == best_priority]
+    reason = _reason(best_category_rank)
     if best_priority[0] != 2 and len(set(same_priority_loads)) > 1 and best_load == min(same_priority_loads):
         reason = f"{reason}；负载更低"
     return chosen, reason
@@ -88,6 +105,10 @@ def _first_text(items: list[Any], field: str) -> str | None:
         if value:
             return value
     return None
+
+
+def _site_key(item: Any) -> str:
+    return normalize_site_code(getattr(item, "site", None) or getattr(item, "country", None)) or ""
 
 
 def _same_site(left: Any, right: Any) -> bool:
@@ -123,3 +144,10 @@ def _norm(value: Any) -> str | None:
         return None
     text = str(value).strip()
     return text or None
+
+
+def _int_attr(item: Any, field: str) -> int:
+    try:
+        return int(getattr(item, field, 0) or 0)
+    except (TypeError, ValueError):
+        return 0
