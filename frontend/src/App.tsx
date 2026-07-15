@@ -42,8 +42,10 @@ import {
   setAuthToken,
   Task
 } from "./api";
-import { ClaimDraftState, createClaimDraft, patchClaimDraftGroup } from "./claimDrafts";
+import { ClaimDraftState, createClaimDraft, createClaimDraftFromLatest, patchClaimDraftGroup } from "./claimDrafts";
 import { ImportResults, recordImportResult } from "./importResults";
+import { businessPeriodsByNewest, filterOperatorClaimRows, latestBusinessPeriod, operatorClaimStatusOptions } from "./operatorClaimFilters";
+import { groupByBusinessIdentity, normalizeSiteText } from "./opportunityGroups";
 import { adjacentDetailTarget } from "./productDetailNavigation";
 import { ProductBoardView } from "./ProductBoardView";
 import { SecondaryResearchView } from "./SecondaryResearchView";
@@ -148,7 +150,7 @@ const viewMeta: Record<ViewKey, { title: string; desc: string }> = {
   source: { title: "源表导入", desc: "第一版只导入两张内部反馈表，写入平台数据库，不提供在线表自动写回入口。" },
   pool: { title: "新品机会池", desc: "默认按状态优先展示主 SKU 分组；展开后查看子 SKU 明细和来源追溯。" },
   assign: { title: "分配台", desc: "主管按主 SKU 整组生成推荐，可逐行调整最终分配；系统先按站点过滤候选人，再看重点品类1、重点品类2和负载。" },
-  claim: { title: "运营认领", desc: "分配任务必须认领或不认领；财根机会池允许其他销售员自认领，人数不限。" },
+  claim: { title: "运营认领", desc: "分配任务必须认领或不认领；财根机会池允许其他运营自认领，人数不限。" },
   review: { title: "主管复核", desc: "主管只能通过、确认不认领或退回补充，不允许代改运营填写内容。" },
   stock: { title: "导出中心", desc: "只导出 Excel。按子 SKU 明细出行，同一子 SKU 被不同销售员认领时另起一行。" },
   research: { title: "二次调研", desc: "按主 SKU 整组处理到货后的复查；全部子 SKU 在同一界面填写，草稿自动保存。" }
@@ -183,7 +185,7 @@ const defaultDashboardFilters: DashboardFilters = {
 
 const defaultListState: ListState = { query: "", page: 1, pageSize: 50 };
 
-const operatorClaimStatuses = new Set(["assigned", "open_claim_pool", "returned_for_supplement"]);
+const operatorClaimStatuses = new Set(["assigned", "open_claim_pool", "returned_for_supplement", "claim_submitted", "claim_rejected"]);
 const OSS_PUBLIC_BASE = "https://hz-sea-np-flow-prod.oss-cn-shanghai.aliyuncs.com";
 const DINGTALK_CORP_ID = import.meta.env.VITE_DINGTALK_CORP_ID || "";
 
@@ -228,6 +230,10 @@ function isOperatorClaimItem(item: Opportunity) {
 function isVisibleOperatorClaimItem(item: Opportunity, assignedOpportunityIds: Set<string>) {
   if (!operatorClaimStatuses.has(item.current_status)) return false;
   return assignedOpportunityIds.has(item.id);
+}
+
+function isOwnSubmittedClaim(item: Opportunity, activeOperator: string) {
+  return ["claim_submitted", "claim_rejected"].includes(item.current_status) && item.latest_claim_salesperson === activeOperator;
 }
 
 function isPoolItem(item: Opportunity, role: RoleKey) {
@@ -350,7 +356,7 @@ function App() {
     () =>
       new Set(
         tasks
-          .filter((task) => task.task_type === "sales_claim" && task.status === "pending" && task.assignee_name === activeOperator)
+          .filter((task) => task.task_type === "sales_claim" && ["pending", "completed"].includes(task.status) && task.assignee_name === activeOperator)
           .map((task) => task.opportunity_id)
           .filter((id): id is string => Boolean(id))
       ),
@@ -364,9 +370,10 @@ function App() {
       opportunities.filter(
         (item) =>
           isVisibleOperatorClaimItem(item, activeOperatorTaskOpportunityIds) ||
+          isOwnSubmittedClaim(item, activeOperator) ||
           (selectedSelfClaimIdSet.has(item.id) && isSelfClaimPoolItem(item))
       ),
-    [activeOperatorTaskOpportunityIds, opportunities, selectedSelfClaimIdSet]
+    [activeOperator, activeOperatorTaskOpportunityIds, opportunities, selectedSelfClaimIdSet]
   );
   const reviewRows = useMemo(
     () => opportunities.filter((item) => ["claim_submitted", "claim_rejected"].includes(item.current_status)),
@@ -1752,7 +1759,7 @@ const developmentFieldSpecs: DetailFieldSpec[] = [
 const costParameterColumns = columnsBetween("AQ", "BR");
 
 function hasOperatorSubmission(item: Opportunity) {
-  return Boolean(item.latest_claim_result || item.latest_claim_salesperson || item.latest_reject_reason || item.latest_feedback_summary || item.latest_claim_note);
+  return Boolean(item.latest_claim_result || item.latest_claim_salesperson || item.latest_claim_daily_sales != null || item.latest_reject_reason || item.latest_feedback_summary || item.latest_claim_note);
 }
 
 type SkuEditDraft = {
@@ -2046,6 +2053,7 @@ function ClaimReviewTable(props: { item: Opportunity }) {
           <tr>
             <th>运营</th>
             <th>认领结果</th>
+            <th>认领单销</th>
             <th>不认领原因</th>
             <th>调研结论</th>
             <th>主管复核</th>
@@ -2056,6 +2064,7 @@ function ClaimReviewTable(props: { item: Opportunity }) {
           <tr>
             <td>{child.latest_claim_salesperson || "-"}</td>
             <td>{claimResultLabel(child.latest_claim_result)}</td>
+            <td>{child.latest_claim_result === "claim" ? child.latest_claim_daily_sales ?? "-" : "-"}</td>
             <td>{child.latest_reject_reason || "-"}</td>
             <td>{child.latest_feedback_summary || "-"}</td>
             <td>{reviewStatusLabel(child.latest_review_status)}</td>
@@ -2784,32 +2793,6 @@ function siteDisplay(value?: string | null) {
   return normalized && normalized !== raw.toUpperCase() ? `${raw}(${normalized})` : raw;
 }
 
-function normalizeSiteText(value?: string | null) {
-  const text = value?.trim();
-  if (!text) return "";
-  const upper = text.toUpperCase();
-  const aliases: Record<string, string> = {
-    菲律宾: "PH",
-    菲: "PH",
-    PH: "PH",
-    泰国: "TH",
-    泰: "TH",
-    TH: "TH",
-    越南: "VN",
-    越: "VN",
-    VN: "VN",
-    马来西亚: "MY",
-    马来: "MY",
-    MY: "MY",
-    新加坡: "SG",
-    SG: "SG",
-    印度尼西亚: "ID",
-    印尼: "ID",
-    ID: "ID"
-  };
-  return aliases[text] || aliases[upper] || upper;
-}
-
 function sameText(left?: string | null, right?: string | null) {
   return Boolean(left?.trim() && right?.trim() && left.trim() === right.trim());
 }
@@ -2843,7 +2826,15 @@ function ClaimView(props: {
   onRemoveSelfClaim: (id: string) => void;
   onSubmit: (payload: unknown | unknown[]) => Promise<void>;
 }) {
-  const filteredRows = useMemo(() => filterOpportunitiesBySearch(props.rows, props.list.query), [props.rows, props.list.query]);
+  const periods = useMemo(() => businessPeriodsByNewest(props.rows), [props.rows]);
+  const newestPeriod = useMemo(() => latestBusinessPeriod(props.rows), [props.rows]);
+  const [businessPeriod, setBusinessPeriod] = useState("");
+  const [claimStatus, setClaimStatus] = useState("");
+  const workflowRows = useMemo(
+    () => filterOperatorClaimRows(props.rows, { businessPeriod, status: claimStatus as "" | "pending" | "claimed_pending_review" | "rejected_pending_review" | "returned" }),
+    [businessPeriod, claimStatus, props.rows]
+  );
+  const filteredRows = useMemo(() => filterOpportunitiesBySearch(workflowRows, props.list.query), [workflowRows, props.list.query]);
   const claimGroups = useMemo(() => groupOpportunities(filteredRows), [filteredRows]);
   const allClaimGroups = useMemo(() => groupOpportunities(props.rows), [props.rows]);
   const pageGroups = pageItems(claimGroups, props.list);
@@ -2856,11 +2847,15 @@ function ClaimView(props: {
   const [syncRejectToGroup, setSyncRejectToGroup] = useState(true);
 
   useEffect(() => {
+    setBusinessPeriod((current) => (current && periods.includes(current) ? current : newestPeriod));
+  }, [newestPeriod, periods]);
+
+  useEffect(() => {
     if (props.detailChildId && !props.rows.some((item) => item.id === props.detailChildId)) props.setDetailChildId(null);
   }, [props.detailChildId, props.rows, props.setDetailChildId]);
 
   function draftFor(item: Opportunity): ClaimDraft {
-    return props.drafts[item.id] || draftForId();
+    return props.drafts[item.id] || draftForOpportunity(item);
   }
 
   function patchDraft(itemId: string, patch: Partial<ClaimDraft>, group?: ProductGroup | null, syncReject = false) {
@@ -2910,7 +2905,7 @@ function ClaimView(props: {
               previewUrl: image.url ? undefined : image.previewUrl
             }))
           })
-        : "";
+        : item.latest_claim_note || "";
     return {
       opportunity_id: item.id,
       salesperson_name: props.activeOperator,
@@ -2932,7 +2927,11 @@ function ClaimView(props: {
     const payload = buildPayload(item, draft, true);
     if (!payload) return;
     await props.onSubmit(payload);
-    props.setDrafts((current) => ({ ...current, [item.id]: draftForId() }));
+    props.setDrafts((current) => {
+      const next = { ...current };
+      delete next[item.id];
+      return next;
+    });
     if (isSelfClaimPoolItem(item)) props.onRemoveSelfClaim(item.id);
   }
 
@@ -2953,7 +2952,7 @@ function ClaimView(props: {
     await props.onSubmit(readyItems.map((entry) => entry.payload));
     props.setDrafts((current) => {
       const next = { ...current };
-      for (const entry of readyItems) next[entry.item.id] = draftForId();
+      for (const entry of readyItems) delete next[entry.item.id];
       return next;
     });
     for (const entry of readyItems) {
@@ -2963,18 +2962,36 @@ function ClaimView(props: {
 
   function addEvidence(itemId: string, images: EvidenceImage[]) {
     if (!images.length) return;
-    const current = props.drafts[itemId] || draftForId();
+    const item = props.rows.find((row) => row.id === itemId);
+    const current = item ? draftFor(item) : draftForId();
     patchDraft(itemId, { evidenceImages: [...current.evidenceImages, ...images] });
   }
 
   function removeEvidence(itemId: string, imageId: string) {
-    const current = props.drafts[itemId] || draftForId();
+    const item = props.rows.find((row) => row.id === itemId);
+    const current = item ? draftFor(item) : draftForId();
     patchDraft(itemId, { evidenceImages: current.evidenceImages.filter((image) => image.id !== imageId) });
   }
 
   return (
     <div className="claim-workspace">
       <section className="claim-list-pane">
+        <div className="claim-workflow-filters">
+          <select aria-label="业务期数" value={businessPeriod} onChange={(event) => {
+            setBusinessPeriod(event.target.value);
+            props.setList((current) => ({ ...current, page: 1 }));
+          }}>
+            <option value="">全部期数</option>
+            {periods.map((period) => <option key={period} value={period}>{period}</option>)}
+          </select>
+          <select aria-label="操作状态" value={claimStatus} onChange={(event) => {
+            setClaimStatus(event.target.value);
+            props.setList((current) => ({ ...current, page: 1 }));
+          }}>
+            <option value="">全部操作状态</option>
+            {operatorClaimStatusOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+          </select>
+        </div>
         <ListControls label="运营认领" list={props.list} total={filteredRows.length} setList={(patch) => props.setList((current) => ({ ...current, ...patch }))} />
         {!props.rows.length && <EmptySmall text="没有待认领任务或财根机会池记录。" />}
         {!!props.rows.length && !filteredRows.length && <EmptySmall text="当前搜索条件下没有待认领任务。" />}
@@ -3088,7 +3105,7 @@ function ClaimDraftEditor(props: {
   onRemoveSelfClaim?: () => void;
 }) {
   const { draft } = props;
-  const primaryLabel = draft.mode === "claim" ? "认领日销" : "不认领原因";
+  const primaryLabel = draft.mode === "claim" ? "认领单销" : "不认领原因";
   return (
     <div className={props.compact ? "claim-editor compact" : "claim-editor drawer"}>
       <div className="mode-tabs">
@@ -3107,7 +3124,7 @@ function ClaimDraftEditor(props: {
           <input
             min="0"
             onChange={(event) => props.onPatch({ claimDailySales: event.target.value })}
-            placeholder="日销"
+            placeholder="单销"
             step="0.01"
             type="number"
             value={draft.claimDailySales}
@@ -3342,7 +3359,7 @@ function ClaimMatrixTable(props: {
               ))}
               <td className="claim-matrix-sticky-right">
                 <ClaimMatrixDraftEditor
-                  draft={props.drafts[item.id] || draftForId()}
+                  draft={props.drafts[item.id] || draftForOpportunity(item)}
                   item={item}
                   onAddEvidence={(images) => props.onAddEvidence(item, images)}
                   onMode={(mode) => props.onMode(item, mode)}
@@ -3381,11 +3398,11 @@ function ClaimMatrixDraftEditor(props: {
         </button>
       </div>
       <label className="claim-editor-field">
-        <span>{props.draft.mode === "claim" ? "认领日销" : "不认领原因"}</span>
+        <span>{props.draft.mode === "claim" ? "认领单销" : "不认领原因"}</span>
         <input
           min={props.draft.mode === "claim" ? "0" : undefined}
           onChange={(event) => props.onPatch(props.draft.mode === "claim" ? { claimDailySales: event.target.value } : { rejectReason: event.target.value })}
-          placeholder={props.draft.mode === "claim" ? "日销" : "必填原因"}
+          placeholder={props.draft.mode === "claim" ? "单销" : "必填原因"}
           step={props.draft.mode === "claim" ? "0.01" : undefined}
           type={props.draft.mode === "claim" ? "number" : "text"}
           value={props.draft.mode === "claim" ? props.draft.claimDailySales : props.draft.rejectReason}
@@ -3415,6 +3432,10 @@ function ClaimMatrixDraftEditor(props: {
 
 function draftForId(): ClaimDraft {
   return createClaimDraft<EvidenceImage>();
+}
+
+function draftForOpportunity(item: Opportunity): ClaimDraft {
+  return createClaimDraftFromLatest<EvidenceImage>(item);
 }
 
 function reviewDraftFor(item?: Opportunity | null): ReviewDraft {
@@ -3584,6 +3605,9 @@ function ReviewView(props: {
                 <p className="muted">
                   {item.latest_claim_salesperson || "运营"}提交了{item.current_status === "claim_submitted" ? "认领" : "不认领"}，主管不代改运营填写内容。
                 </p>
+                {item.current_status === "claim_submitted" && (
+                  <p className="muted">认领单销：{item.latest_claim_daily_sales ?? "未填写"}</p>
+                )}
                 {item.current_status === "claim_rejected" && item.latest_reject_reason && (
                   <p className="muted">不认领原因：{item.latest_reject_reason}</p>
                 )}
@@ -3666,6 +3690,12 @@ function OperatorSubmissionSummary({ item, title = "运营提交内容" }: { ite
         <span>提交结果</span>
         <b>{isNotClaim ? "不认领" : "认领"}</b>
       </div>
+      {!isNotClaim && (
+        <div className="submission-row">
+          <span>认领单销</span>
+          <b>{item.latest_claim_daily_sales ?? "未填写"}</b>
+        </div>
+      )}
       {isNotClaim && (
         <div className="submission-row">
           <span>不认领原因</span>
@@ -4132,13 +4162,7 @@ function EmptySmall({ text }: { text: string }) {
 }
 
 function groupOpportunities(items: Opportunity[]): ProductGroup[] {
-  const map = new Map<string, Opportunity[]>();
-  for (const item of items) {
-    const key = `${item.source_type || ""}|${item.main_sku}`;
-    if (!map.has(key)) map.set(key, []);
-    map.get(key)!.push(item);
-  }
-  return Array.from(map.entries()).map(([key, groupItems]) => ({
+  return groupByBusinessIdentity(items).map(({ key, items: groupItems }) => ({
     key,
     main_sku: groupItems[0].main_sku,
     items: groupItems,

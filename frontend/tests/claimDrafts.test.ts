@@ -1,7 +1,31 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createClaimDraft, patchClaimDraftGroup } from "../src/claimDrafts.ts";
+import { createClaimDraft, createClaimDraftFromLatest, patchClaimDraftGroup } from "../src/claimDrafts.ts";
+
+test("已提交认领从最新单销和调研结论恢复草稿", () => {
+  const draft = createClaimDraftFromLatest({
+    latest_claim_result: "claim",
+    latest_claim_daily_sales: 6,
+    latest_feedback_summary: "竞品稳定"
+  });
+
+  assert.equal(draft.mode, "claim");
+  assert.equal(draft.claimDailySales, "6");
+  assert.equal(draft.researchConclusion, "竞品稳定");
+});
+
+test("已提交不认领从最新原因恢复草稿", () => {
+  const draft = createClaimDraftFromLatest({
+    latest_claim_result: "reject",
+    latest_reject_reason: "利润不足",
+    latest_feedback_summary: "不建议进入"
+  });
+
+  assert.equal(draft.mode, "reject");
+  assert.equal(draft.rejectReason, "利润不足");
+  assert.equal(draft.researchConclusion, "不建议进入");
+});
 
 test("同一主 SKU 的认领与不认领保持独立", () => {
   const claimed = { ...createClaimDraft(), mode: "claim" as const, claimDailySales: "6" };

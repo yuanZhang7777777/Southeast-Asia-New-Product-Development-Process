@@ -474,7 +474,7 @@ function PeerMatrix({ group }: { group: SecondaryResearchGroup }) {
       <div className="research-matrix-head research-peer-grid">
         <span className="research-sku-cell">子 SKU</span>
         <span>当前负责人</span>
-        <span>认领日销</span>
+        <span>认领单销</span>
         <span>其他运营已提交记录</span>
       </div>
       {group.items.map((item) => (

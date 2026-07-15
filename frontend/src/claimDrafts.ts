@@ -10,6 +10,21 @@ export function createClaimDraft<TImage = unknown>(): ClaimDraftState<TImage> {
   return { mode: "claim", claimDailySales: "", rejectReason: "", researchConclusion: "", evidenceImages: [] };
 }
 
+export function createClaimDraftFromLatest<TImage = unknown>(item: {
+  latest_claim_result?: string | null;
+  latest_claim_daily_sales?: number | null;
+  latest_reject_reason?: string | null;
+  latest_feedback_summary?: string | null;
+}): ClaimDraftState<TImage> {
+  return {
+    mode: item.latest_claim_result === "reject" ? "reject" : "claim",
+    claimDailySales: item.latest_claim_daily_sales == null ? "" : String(item.latest_claim_daily_sales),
+    rejectReason: item.latest_reject_reason || "",
+    researchConclusion: item.latest_feedback_summary || "",
+    evidenceImages: []
+  };
+}
+
 export function patchClaimDraftGroup<TImage>(
   current: Record<string, ClaimDraftState<TImage>>,
   itemId: string,

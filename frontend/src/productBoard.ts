@@ -13,6 +13,7 @@ export type ProductBoardRow = ProductBoardGroup & {
   childCount: number;
   responsibilityCount: number;
   owners: string[];
+  ownersText: string;
   statuses: string[];
 };
 
@@ -43,6 +44,7 @@ export function buildProductBoardRows(groups: ProductBoardGroup[]): ProductBoard
       childCount: group.child_skus.length,
       responsibilityCount: group.responsibilities.length,
       owners,
+      ownersText: owners.join("、") || "-",
       statuses
     };
   });

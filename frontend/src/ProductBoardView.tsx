@@ -112,6 +112,7 @@ export function ProductBoardView({
               <th>期数</th>
               <th>站点</th>
               <th>子 SKU</th>
+              <th>已分配运营</th>
               <th>状态</th>
               <th>标签</th>
               <th>操作</th>
@@ -120,7 +121,7 @@ export function ProductBoardView({
           <tbody>
             {!visibleRows.length && (
               <tr>
-                <td colSpan={7}>当前条件下没有商品</td>
+                <td colSpan={8}>当前条件下没有商品</td>
               </tr>
             )}
             {visibleRows.map((row) => {
@@ -143,6 +144,7 @@ export function ProductBoardView({
                     <td>{row.business_period || "-"}</td>
                     <td>{row.site || row.country || "-"}</td>
                     <td>{row.childCount}</td>
+                    <td>{row.ownersText}</td>
                     <td>{row.statuses.map((item) => <StatusPill key={item} status={item} />)}</td>
                     <td>{hasMultipleOwners(row) && <span className="pill blue">多人认领</span>}</td>
                     <td>
@@ -159,7 +161,7 @@ export function ProductBoardView({
                   </tr>
                   {expanded[row.key] && (
                     <tr className="product-board-detail-row">
-                      <td colSpan={7}>
+                      <td colSpan={8}>
                         <ChildSkuTable row={row} onOpenDetail={onOpenDetail} />
                       </td>
                     </tr>
@@ -182,6 +184,7 @@ function ChildSkuTable({ row, onOpenDetail }: { row: ProductBoardRow; onOpenDeta
           <th>子 SKU</th>
           <th>名称</th>
           <th>负责人</th>
+          <th>认领单销</th>
           <th>状态</th>
         </tr>
       </thead>
@@ -189,6 +192,9 @@ function ChildSkuTable({ row, onOpenDetail }: { row: ProductBoardRow; onOpenDeta
         {row.child_skus.map((child) => {
           const responsibilities = row.responsibilities.filter((item) => item.opportunity_id === child.opportunity_id);
           const owners = responsibilities.map((item) => item.salesperson_name).filter(Boolean).join("、") || "-";
+          const claimDailySales = unique(
+            responsibilities.map((item) => item.claim_daily_sales).filter((value): value is number => value != null).map(String)
+          ).join("、") || "-";
           const statuses = responsibilities.length ? responsibilities.map((item) => item.visible_status) : [child.visible_status];
           return (
             <tr key={child.opportunity_id}>
@@ -199,6 +205,7 @@ function ChildSkuTable({ row, onOpenDetail }: { row: ProductBoardRow; onOpenDeta
               </td>
               <td>{child.sub_sku_name || "-"}</td>
               <td>{owners}</td>
+              <td>{claimDailySales}</td>
               <td>{unique(statuses).map((status) => <StatusPill key={status} status={status} />)}</td>
             </tr>
           );

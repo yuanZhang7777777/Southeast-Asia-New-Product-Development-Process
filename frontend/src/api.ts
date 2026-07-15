@@ -4,6 +4,7 @@ const AUTH_TOKEN_KEY = "np_flow_auth_token";
 export type Opportunity = {
   id: string;
   source_type?: string | null;
+  batch?: string | null;
   country?: string | null;
   site?: string | null;
   developer_department?: string | null;
@@ -21,6 +22,7 @@ export type Opportunity = {
   latest_claim_record_id?: string | null;
   latest_claim_result?: string | null;
   latest_claim_salesperson?: string | null;
+  latest_claim_daily_sales?: number | null;
   latest_reject_reason?: string | null;
   latest_feedback_summary?: string | null;
   latest_claim_note?: string | null;

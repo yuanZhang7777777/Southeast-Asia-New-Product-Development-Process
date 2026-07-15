@@ -52,7 +52,7 @@ test("product board rows keep one main SKU group per period and status filter re
   assert.deepEqual(rows.map((row) => row.key), ["2026-W29|PH|MAIN-1", "2026-W30|PH|MAIN-1"]);
   assert.equal(rows[0].childCount, 2);
   assert.equal(rows[0].responsibilityCount, 2);
-  assert.equal("ownersText" in rows[0], false);
+  assert.equal(rows[0].ownersText, "Owner A、Owner B");
 
   const waitingResearch = filterProductBoardRows(rows, { status: "waiting_secondary_research" });
 

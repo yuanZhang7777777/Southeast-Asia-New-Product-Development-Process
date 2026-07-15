@@ -1494,6 +1494,16 @@ textarea {
   min-width: 0;
 }
 
+.claim-workflow-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.claim-workflow-filters select {
+  min-width: 180px;
+}
+
 .claim-bulkbar,
 .claim-group-head {
   display: flex;
