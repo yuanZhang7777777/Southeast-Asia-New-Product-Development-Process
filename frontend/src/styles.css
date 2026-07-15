@@ -1529,6 +1529,14 @@ textarea {
   gap: 10px;
 }
 
+.review-layout > .form-card {
+  position: sticky;
+  top: 0;
+  align-self: start;
+  max-height: calc(100dvh - 320px);
+  overflow-y: auto;
+}
+
 .info,
 .form-card {
   border: 1px solid var(--line);
@@ -2648,6 +2656,12 @@ th {
 
   .dense-form {
     grid-template-columns: 1fr;
+  }
+
+  .review-layout > .form-card {
+    position: static;
+    max-height: none;
+    overflow: visible;
   }
 
   .form-grid {
