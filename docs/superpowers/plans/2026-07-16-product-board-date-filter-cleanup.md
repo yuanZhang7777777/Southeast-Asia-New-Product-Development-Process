@@ -56,6 +56,6 @@ Run: `npm test -- --run && npm run build`
 
 Expected: all tests pass and Vite build succeeds.
 
-- [ ] **Step 6: Deploy and smoke test development only**
+- [x] **Step 6: Deploy and smoke test development only**
 
 Build and update Compose project `hengzhe-new-product-dev`, then confirm `http://139.224.2.166:18081/api/health` returns `environment=development` and the deployed JS bundle no longer contains the removed date-control code path.
