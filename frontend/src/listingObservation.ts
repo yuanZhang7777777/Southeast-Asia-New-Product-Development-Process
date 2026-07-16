@@ -1,5 +1,22 @@
+import type { ListingRecord, ObservationPeriodRow, PendingListingTask } from "./api";
+
 export const PRODUCT_POSITIONINGS = ["引流款", "利润款", "淘汰款", "稳定款", "清仓款"] as const;
 export type ProductPositioning = typeof PRODUCT_POSITIONINGS[number];
+
+export type WorkbenchBusinessStatus =
+  | "all"
+  | "pending_listing"
+  | "pending_review"
+  | "first_round_completed"
+  | "stopped"
+  | "voided";
+
+export type ListingWorkbenchGroup = {
+  context: PendingListingTask;
+  listings: ListingRecord[];
+  periodRows: ObservationPeriodRow[];
+  pendingListing: boolean;
+};
 
 export type ListingDraft = {
   shop: string;
@@ -111,6 +128,62 @@ export function buildListingTaskContexts<
   );
 }
 
+export function buildListingWorkbenchGroups(
+  tasks: readonly PendingListingTask[],
+  listings: readonly ListingRecord[],
+  periodRows: readonly ObservationPeriodRow[],
+  defaultFirstPeriodStart: string
+): ListingWorkbenchGroup[] {
+  const contexts = buildListingTaskContexts(tasks, listings, defaultFirstPeriodStart) as PendingListingTask[];
+  return contexts.map((context) => {
+    const groupListings = listings.filter((listing) => listing.task_key === context.task_key);
+    const listingIds = new Set(groupListings.map((listing) => listing.id));
+    return {
+      context,
+      listings: groupListings,
+      periodRows: periodRows.filter((row) => listingIds.has(row.listing_record_id)),
+      pendingListing: groupListings.length === 0
+    };
+  });
+}
+
+export function filterListingWorkbenchGroups(
+  groups: readonly ListingWorkbenchGroup[],
+  status: WorkbenchBusinessStatus
+): ListingWorkbenchGroup[] {
+  const visible = groups.flatMap((group) => {
+    if (status === "pending_listing") return group.pendingListing ? [{ ...group, periodRows: [] }] : [];
+    if (status === "all") return [group];
+    const listingById = new Map(group.listings.map((listing) => [listing.id, listing]));
+    const periodRows = group.periodRows.filter((row) => {
+      const listing = listingById.get(row.listing_record_id);
+      if (!listing) return false;
+      if (status === "pending_review") {
+        return listing.status === "active" && row.tracking_status === "active" && row.status === "pending_review";
+      }
+      if (status === "first_round_completed") return Boolean(listing.first_round_completed_at);
+      if (status === "stopped") return listing.status === "active" && listing.tracking_status === "stopped";
+      return listing.status === "voided";
+    });
+    const visibleListingIds = new Set(periodRows.map((row) => row.listing_record_id));
+    const visibleListings = group.listings.filter((listing) => visibleListingIds.has(listing.id));
+    return periodRows.length ? [{ ...group, listings: visibleListings, periodRows }] : [];
+  });
+  return visible.sort((left, right) => {
+    const priority = (group: ListingWorkbenchGroup) => {
+      if (group.pendingListing) return 0;
+      const listingById = new Map(group.listings.map((listing) => [listing.id, listing]));
+      return group.periodRows.some((row) => {
+        const listing = listingById.get(row.listing_record_id);
+        return listing?.status === "active" && row.tracking_status === "active" && row.status === "pending_review";
+      }) ? 1 : 2;
+    };
+    return priority(left) - priority(right)
+      || left.context.main_sku.localeCompare(right.context.main_sku)
+      || left.context.salesperson_name.localeCompare(right.context.salesperson_name);
+  });
+}
+
 export function validateListingDrafts(rows: readonly ListingDraft[]): ListingDraftErrors[] {
   const errors = rows.map((row) => ({
     ...(!row.shop.trim() && { shop: "请填写店铺" }),
@@ -198,12 +271,12 @@ export function latestPeriodIdsByListing(rows: readonly { id: string; listing_re
 export function resolveWorkbenchScope(
   role: "operator" | "manager",
   canManage: boolean,
-  operatorName: string,
-  onlyMyTasks: boolean
+  operatorName: string
 ) {
-  if (!canManage) return { only_my_tasks: true };
-  if (role === "operator" && operatorName) return { salesperson_name: operatorName, only_my_tasks: false };
-  return { only_my_tasks: onlyMyTasks };
+  if (canManage && role === "operator") {
+    return operatorName ? { salesperson_name: operatorName } : null;
+  }
+  return {};
 }
 
 export function summarySalespersonScope(

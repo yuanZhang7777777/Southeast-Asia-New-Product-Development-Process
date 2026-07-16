@@ -1,10 +1,14 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
+import type { ListingRecord, ObservationPeriodRow, PendingListingTask } from "../src/api.ts";
 
 import {
+  buildListingWorkbenchGroups,
   buildListingTaskContexts,
   createRequestGate,
   defaultNextBusinessPeriodStart,
+  filterListingWorkbenchGroups,
   filterObservationRows,
   formatObservationMetric,
   formatPercent,
@@ -20,6 +24,127 @@ import {
   validateListingDrafts,
   visibleSelectedPeriodIds
 } from "../src/listingObservation.ts";
+
+function pendingTask(patch: Partial<PendingListingTask> = {}): PendingListingTask {
+  return {
+    task_key: "task-1",
+    source_type: "selection1",
+    business_period: "2026-07",
+    country: "菲律宾",
+    site: "PH",
+    main_sku: "SKU1",
+    main_sku_name: "商品1",
+    salesperson_name: "运营甲",
+    claim_record_ids: ["claim-1"],
+    default_first_period_start: "2026-07-23",
+    ...patch
+  };
+}
+
+function listingRecord(patch: Partial<ListingRecord> = {}): ListingRecord {
+  return {
+    id: "listing-1",
+    task_key: "task-1",
+    main_sku: "SKU1",
+    main_sku_name: "商品1",
+    country: "菲律宾",
+    site: "PH",
+    salesperson_name: "运营甲",
+    shop: "Shopee-PH",
+    item: "ITEM-1",
+    listing_strategy: "低价切入",
+    first_period_start: "2026-07-23",
+    status: "active",
+    tracking_status: "active",
+    first_round_completed_at: null,
+    ...patch
+  };
+}
+
+function observationRow(patch: Partial<ObservationPeriodRow> = {}): ObservationPeriodRow {
+  return {
+    id: "period-1",
+    listing_record_id: "listing-1",
+    main_sku: "SKU1",
+    main_sku_name: "商品1",
+    country: "菲律宾",
+    salesperson_name: "运营甲",
+    shop: "Shopee-PH",
+    item: "ITEM-1",
+    week_number: 1,
+    period_start: "2026-07-23",
+    period_end: "2026-07-29",
+    status: "pending_data",
+    tracking_status: "active",
+    order_count: null,
+    total_revenue: null,
+    gross_profit_amount: null,
+    gross_profit_rate: null,
+    product_positioning: null,
+    optimization_action: null,
+    four_week_summary: null,
+    first_round_completed_at: null,
+    ...patch
+  };
+}
+
+test("单表工作台按 task_key 分组且已有作废记录也不再算待刊登", () => {
+  const pending = pendingTask({ task_key: "task-pending", main_sku: "SAME", country: "菲律宾" });
+  const listed = pendingTask({ task_key: "task-listed", main_sku: "SAME", country: "越南" });
+  const listing = listingRecord({
+    id: "listing-1",
+    task_key: "task-listed",
+    main_sku: "SAME",
+    country: "越南",
+    status: "voided",
+    tracking_status: "stopped"
+  });
+  const period = observationRow({
+    id: "period-1",
+    listing_record_id: "listing-1",
+    main_sku: "SAME",
+    country: "越南",
+    status: "completed",
+    tracking_status: "stopped"
+  });
+
+  const groups = buildListingWorkbenchGroups([pending, listed], [listing], [period], "2026-07-23");
+
+  assert.equal(groups.length, 2);
+  assert.deepEqual(filterListingWorkbenchGroups(groups, "pending_listing").map((group) => group.context.task_key), ["task-pending"]);
+  assert.deepEqual(filterListingWorkbenchGroups(groups, "all").map((group) => group.context.task_key), ["task-pending", "task-listed"]);
+  assert.equal(groups.find((group) => group.context.task_key === "task-listed")?.periodRows.length, 1);
+});
+
+test("业务状态只返回可处理待复盘或对应里程碑记录", () => {
+  const groups = buildListingWorkbenchGroups(
+    [pendingTask({ task_key: "task-listed", main_sku: "SKU1" })],
+    [
+      listingRecord({ id: "active", task_key: "task-listed", main_sku: "SKU1" }),
+      listingRecord({ id: "stopped", task_key: "task-listed", main_sku: "SKU1", tracking_status: "stopped", first_round_completed_at: "2026-08-20T10:00:00+08:00" }),
+      listingRecord({ id: "voided", task_key: "task-listed", main_sku: "SKU1", status: "voided", tracking_status: "stopped", first_round_completed_at: "2026-08-20T10:00:00+08:00" })
+    ],
+    [
+      observationRow({ id: "review", listing_record_id: "active", main_sku: "SKU1", status: "pending_review" }),
+      observationRow({ id: "stopped-period", listing_record_id: "stopped", main_sku: "SKU1", status: "completed", tracking_status: "stopped", first_round_completed_at: "2026-08-20T10:00:00+08:00" }),
+      observationRow({ id: "voided-period", listing_record_id: "voided", main_sku: "SKU1", status: "completed", tracking_status: "stopped", first_round_completed_at: "2026-08-20T10:00:00+08:00" })
+    ],
+    "2026-07-23"
+  );
+
+  assert.deepEqual(filterListingWorkbenchGroups(groups, "pending_review")[0].periodRows.map((row) => row.id), ["review"]);
+  assert.deepEqual(filterListingWorkbenchGroups(groups, "stopped")[0].periodRows.map((row) => row.id), ["stopped-period"]);
+  assert.deepEqual(filterListingWorkbenchGroups(groups, "voided")[0].periodRows.map((row) => row.id), ["voided-period"]);
+  assert.deepEqual(filterListingWorkbenchGroups(groups, "first_round_completed")[0].periodRows.map((row) => row.id), ["stopped-period", "voided-period"]);
+  assert.deepEqual(filterListingWorkbenchGroups(groups, "voided")[0].listings.map((listing) => listing.id), ["voided"]);
+});
+
+test("主管默认全量而主管运营视角按所选运营查询", () => {
+  assert.deepEqual(resolveWorkbenchScope("manager", true, ""), {});
+  assert.deepEqual(resolveWorkbenchScope("operator", true, "运营甲"), { salesperson_name: "运营甲" });
+  assert.equal(resolveWorkbenchScope("operator", true, ""), null);
+  assert.deepEqual(resolveWorkbenchScope("operator", false, "伪造运营"), {});
+});
 
 test("刊登记录的店铺、Item、刊登策略和第一周周期全部必填", () => {
   const errors = validateListingDrafts([
@@ -204,19 +329,6 @@ test("周期复盘服务端行错误按提交顺序映射回周期", () => {
 
   assert.deepEqual(mapReviewServerRowErrors(error, rows), {
     "period-2": { optimization_action: "请填写优化操作", period_id: "周数据尚未就绪" }
-  });
-});
-
-test("主管切运营视角按所选运营查询，普通运营始终只查本人", () => {
-  assert.deepEqual(resolveWorkbenchScope("operator", true, "运营甲", true), {
-    salesperson_name: "运营甲",
-    only_my_tasks: false
-  });
-  assert.deepEqual(resolveWorkbenchScope("operator", false, "伪造运营", false), {
-    only_my_tasks: true
-  });
-  assert.deepEqual(resolveWorkbenchScope("manager", true, "", false), {
-    only_my_tasks: false
   });
 });
 
