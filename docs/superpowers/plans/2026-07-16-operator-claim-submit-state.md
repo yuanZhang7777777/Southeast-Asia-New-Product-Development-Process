@@ -108,6 +108,6 @@ Expected: all frontend tests pass.
 Run: `npm run build`
 Expected: TypeScript and Vite production build pass.
 
-- [ ] **Step 6: Commit and deploy**
+- [x] **Step 6: Commit and deploy**
 
 Commit the implementation, build a frontend-only candidate container, verify it through Caddy, atomically reload Caddy, persist the new container target, and verify `/api/health` remains `production / ok`.
