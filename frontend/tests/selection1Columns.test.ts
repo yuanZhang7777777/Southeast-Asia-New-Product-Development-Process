@@ -23,3 +23,8 @@ test("价格参考包含稳定期和推广期总成本", () => {
   assert.match(app, /label: "稳定期总成本"/);
   assert.match(app, /label: "推广期总成本"/);
 });
+
+test("运营认领价格模块展示 AQ 并格式化业务数字", () => {
+  assert.match(app, /key: "pricing", label: "价格 \/ 毛利", columns: columnsBetween\("AO", "AV"\) }/);
+  assert.match(app, /formatBusinessValue\(snapshotColumnText\(item, column\), headerLabel\(item, column\) \|\| selection1ColumnLabel\(column\)\)/);
+});

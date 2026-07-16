@@ -54,6 +54,7 @@ import { groupByBusinessIdentity, normalizeSiteText } from "./opportunityGroups"
 import { adjacentDetailTarget } from "./productDetailNavigation";
 import { ProductBoardView } from "./ProductBoardView";
 import { SecondaryResearchView } from "./SecondaryResearchView";
+import { selection1ColumnLabel } from "./selection1Columns";
 import { compactUrlLabel } from "./urlDisplay";
 
 type DingTalkAuthCodeResult = {
@@ -3365,7 +3366,7 @@ function ClaimDetailDrawer(props: {
 }) {
   const moduleTabs: { key: ClaimDrawerModuleKey; label: string; columns: string[] }[] = [
     { key: "market", label: "市场调研", columns: columnsBetween("Z", "AN") },
-    { key: "pricing", label: "价格 / 毛利", columns: columnsBetween("AO", "AV").filter((column) => column !== "AQ") },
+    { key: "pricing", label: "价格 / 毛利", columns: columnsBetween("AO", "AV") },
     { key: "development", label: "开发询价 / 包装", columns: columnsBetween("M", "Y") },
     { key: "cost", label: "成本 / 备货汇总", columns: columnsBetween("AW", "BX") }
   ];
@@ -3522,7 +3523,7 @@ function ClaimMatrixTable(props: {
               </td>
               {props.columns.map((column) => (
                 <td className={claimMatrixColumnClass(item, column)} key={column}>
-                  {renderMaybeLink(snapshotColumnText(item, column) || "-")}
+                  {renderMaybeLink(formatBusinessValue(snapshotColumnText(item, column), headerLabel(item, column) || selection1ColumnLabel(column)) || "-")}
                 </td>
               ))}
               <td className="claim-matrix-sticky-right">
