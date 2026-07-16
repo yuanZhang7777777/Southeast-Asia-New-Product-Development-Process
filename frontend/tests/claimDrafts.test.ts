@@ -1,7 +1,31 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createClaimDraft, createClaimDraftFromLatest, patchClaimDraftGroup } from "../src/claimDrafts.ts";
+import { claimSubmissionState, createClaimDraft, createClaimDraftFromLatest, patchClaimDraftGroup } from "../src/claimDrafts.ts";
+
+test("运营认领提交状态区分待填写、未提交和已提交", () => {
+  const saved = {
+    current_status: "claim_submitted",
+    latest_claim_result: "claim",
+    latest_claim_daily_sales: 6,
+    latest_feedback_summary: "竞品稳定"
+  };
+
+  assert.equal(claimSubmissionState({ current_status: "assigned" }), "pending");
+  assert.equal(
+    claimSubmissionState(
+      { current_status: "assigned" },
+      { ...createClaimDraft(), claimDailySales: "6" }
+    ),
+    "dirty"
+  );
+  assert.equal(claimSubmissionState(saved), "submitted");
+  assert.equal(claimSubmissionState(saved, createClaimDraftFromLatest(saved)), "submitted");
+  assert.equal(
+    claimSubmissionState(saved, { ...createClaimDraftFromLatest(saved), claimDailySales: "8" }),
+    "dirty"
+  );
+});
 
 test("已提交认领从最新单销和调研结论恢复草稿", () => {
   const draft = createClaimDraftFromLatest({

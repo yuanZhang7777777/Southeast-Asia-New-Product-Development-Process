@@ -26,7 +26,7 @@
 **Interfaces:**
 - Produces: `claimSubmissionState(item, draft?) => "pending" | "dirty" | "submitted"`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 assert.equal(claimSubmissionState({ current_status: "assigned" }), "pending");
@@ -35,12 +35,12 @@ assert.equal(claimSubmissionState({ current_status: "claim_submitted", latest_cl
 assert.equal(claimSubmissionState(saved, { ...createClaimDraftFromLatest(saved), claimDailySales: "8" }), "dirty");
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `node --test --test-name-pattern="提交状态" tests/claimDrafts.test.ts`
 Expected: FAIL because `claimSubmissionState` is not exported.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 ```ts
 export function claimSubmissionState(item, draft?) {
@@ -57,7 +57,7 @@ export function claimSubmissionState(item, draft?) {
 }
 ```
 
-- [ ] **Step 4: Run focused test to verify it passes**
+- [x] **Step 4: Run focused test to verify it passes**
 
 Run: `node --test --test-name-pattern="提交状态" tests/claimDrafts.test.ts`
 Expected: PASS.
@@ -73,7 +73,7 @@ Expected: PASS.
 - Consumes: `claimSubmissionState` from Task 1.
 - Produces: list and drawer status labels; `runAction(...) => Promise<boolean>`.
 
-- [ ] **Step 1: Integrate the three labels**
+- [x] **Step 1: Integrate the three labels**
 
 ```tsx
 <span className={`claim-save-state ${state}`}>
@@ -83,7 +83,7 @@ Expected: PASS.
 
 Use `提交修改` for dirty previously submitted rows, `已提交` for unchanged submitted rows, and `提交` otherwise.
 
-- [ ] **Step 2: Preserve drafts on failure**
+- [x] **Step 2: Preserve drafts on failure**
 
 ```ts
 const submitted = await props.onSubmit(payload);
@@ -92,15 +92,15 @@ if (!submitted) return;
 
 Make `runAction` return `true` only after the action succeeds, return `false` on error, and refresh silently so the success message is not overwritten by`已刷新`.
 
-- [ ] **Step 3: Seed edits from saved values**
+- [x] **Step 3: Seed edits from saved values**
 
 Before applying the first patch to an already submitted row, initialize its editable draft with `draftForOpportunity(item)` so editing one field does not erase other saved fields.
 
-- [ ] **Step 4: Update the authoritative feature status**
+- [x] **Step 4: Update the authoritative feature status**
 
 Document the three labels, explicit submit boundary, pre-review edits, and failure draft retention in `docs/02-功能实现状态.md`.
 
-- [ ] **Step 5: Verify**
+- [x] **Step 5: Verify**
 
 Run: `npm test`
 Expected: all frontend tests pass.

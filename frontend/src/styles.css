@@ -1882,6 +1882,38 @@ summary {
   color: #cf1322;
 }
 
+.claim-save-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  width: fit-content;
+  padding: 2px 6px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fafafa;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.claim-save-state.dirty {
+  border-color: #ffd591;
+  background: #fff7e6;
+  color: #ad4e00;
+}
+
+.claim-save-state.submitted {
+  border-color: #b7eb8f;
+  background: var(--green-soft);
+  color: #237804;
+}
+
+.claim-save-state small {
+  color: inherit;
+  font-size: 11px;
+  opacity: 0.75;
+}
+
 .claim-child-card {
   display: grid;
   gap: 10px;
@@ -2420,7 +2452,7 @@ summary {
   align-items: center;
 }
 
-.claim-matrix-sku > span > span:not(.status) {
+.claim-matrix-sku > span > span:not(.status):not(.claim-save-state) {
   color: var(--muted);
   font-size: 12px;
 }

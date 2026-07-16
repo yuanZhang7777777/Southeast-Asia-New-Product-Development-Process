@@ -6,6 +6,16 @@ export type ClaimDraftState<TImage = unknown> = {
   evidenceImages: TImage[];
 };
 
+type ClaimSubmissionSource = {
+  current_status: string;
+  latest_claim_result?: string | null;
+  latest_claim_daily_sales?: number | null;
+  latest_reject_reason?: string | null;
+  latest_feedback_summary?: string | null;
+};
+
+export type ClaimSubmissionState = "pending" | "dirty" | "submitted";
+
 export function createClaimDraft<TImage = unknown>(): ClaimDraftState<TImage> {
   return { mode: "claim", claimDailySales: "", rejectReason: "", researchConclusion: "", evidenceImages: [] };
 }
@@ -23,6 +33,28 @@ export function createClaimDraftFromLatest<TImage = unknown>(item: {
     researchConclusion: item.latest_feedback_summary || "",
     evidenceImages: []
   };
+}
+
+export function claimSubmissionState<TImage = unknown>(
+  item: ClaimSubmissionSource,
+  draft?: ClaimDraftState<TImage>
+): ClaimSubmissionState {
+  const submitted = ["claim_submitted", "claim_rejected"].includes(item.current_status) && Boolean(item.latest_claim_result);
+  if (!draft) return submitted ? "submitted" : "pending";
+
+  const saved = createClaimDraftFromLatest<TImage>(item);
+  const dailySales = draft.claimDailySales.trim();
+  const savedDailySales = saved.claimDailySales.trim();
+  const sameDailySales =
+    dailySales === savedDailySales ||
+    (dailySales !== "" && savedDailySales !== "" && Number(dailySales) === Number(savedDailySales));
+  const changed =
+    draft.mode !== saved.mode ||
+    !sameDailySales ||
+    draft.rejectReason.trim() !== saved.rejectReason.trim() ||
+    draft.researchConclusion.trim() !== saved.researchConclusion.trim() ||
+    draft.evidenceImages.length > 0;
+  return changed ? "dirty" : submitted ? "submitted" : "pending";
 }
 
 export function patchClaimDraftGroup<TImage>(

@@ -45,7 +45,7 @@ import {
   setAuthToken,
   Task
 } from "./api";
-import { ClaimDraftState, createClaimDraft, createClaimDraftFromLatest, patchClaimDraftGroup } from "./claimDrafts";
+import { ClaimDraftState, claimSubmissionState, createClaimDraft, createClaimDraftFromLatest, patchClaimDraftGroup } from "./claimDrafts";
 import { filterAssignmentItems, groupOperatorProfilesBySite, moveOperatorWithinSite, sortOperatorProfiles } from "./assignmentFilters";
 import { competitorGroupForColumn, competitorGroupForLabel } from "./competitorGroups";
 import { ImportResults, recordImportResult } from "./importResults";
@@ -655,9 +655,11 @@ function App() {
     try {
       await action();
       setStatusMessage(`${label}完成`);
-      await refresh();
+      await refresh({ silent: true });
+      return true;
     } catch (error) {
       setStatusMessage(error instanceof Error ? error.message : `${label}失败`);
+      return false;
     } finally {
       setLoading(false);
     }
@@ -733,7 +735,7 @@ function App() {
   }
 
   async function submitClaimPayload(payload: unknown | unknown[]) {
-    await runAction(Array.isArray(payload) ? "批量提交认领" : "提交认领", async () => {
+    return runAction(Array.isArray(payload) ? "批量提交认领" : "提交认领", async () => {
       const payloads = Array.isArray(payload) ? payload : [payload];
       for (const item of payloads) {
         await api.claim(item);
@@ -2993,7 +2995,7 @@ function ClaimView(props: {
   setDetailChildId: (value: string | null) => void;
   onOpenDetail: (group: ProductGroup, childId?: string | null) => void;
   onRemoveSelfClaim: (id: string) => void;
-  onSubmit: (payload: unknown | unknown[]) => Promise<void>;
+  onSubmit: (payload: unknown | unknown[]) => Promise<boolean>;
 }) {
   const periods = useMemo(() => businessPeriodsByNewest(props.rows), [props.rows]);
   const newestPeriod = useMemo(() => latestBusinessPeriod(props.rows), [props.rows]);
@@ -3028,16 +3030,18 @@ function ClaimView(props: {
   }
 
   function patchDraft(itemId: string, patch: Partial<ClaimDraft>, group?: ProductGroup | null, syncReject = false) {
-    props.setDrafts((current) =>
-      patchClaimDraftGroup(
-        current,
+    const item = props.rows.find((row) => row.id === itemId);
+    props.setDrafts((current) => {
+      const seeded = current[itemId] || !item ? current : { ...current, [itemId]: draftForOpportunity(item) };
+      return patchClaimDraftGroup(
+        seeded,
         itemId,
         patch,
         group?.items.map((item) => item.id),
         syncReject,
         group?.items[0]?.id === itemId
-      )
-    );
+      );
+    });
   }
 
   function setMode(itemId: string, mode: "claim" | "reject", group?: ProductGroup | null, syncReject = false) {
@@ -3095,7 +3099,8 @@ function ClaimView(props: {
     }
     const payload = buildPayload(item, draft, true);
     if (!payload) return;
-    await props.onSubmit(payload);
+    const submitted = await props.onSubmit(payload);
+    if (!submitted) return;
     props.setDrafts((current) => {
       const next = { ...current };
       delete next[item.id];
@@ -3111,14 +3116,16 @@ function ClaimView(props: {
     }
     const readyItems: { item: Opportunity; payload: unknown }[] = [];
     for (const item of items) {
+      if (claimSubmissionState(item, props.drafts[item.id]) === "submitted") continue;
       const payload = buildPayload(item, draftFor(item), false);
       if (payload) readyItems.push({ item, payload });
     }
     if (!readyItems.length) {
-      window.alert("没有已填写完整的子 SKU");
+      window.alert("没有已填写未提交的子 SKU");
       return;
     }
-    await props.onSubmit(readyItems.map((entry) => entry.payload));
+    const submitted = await props.onSubmit(readyItems.map((entry) => entry.payload));
+    if (!submitted) return;
     props.setDrafts((current) => {
       const next = { ...current };
       for (const entry of readyItems) delete next[entry.item.id];
@@ -3169,7 +3176,7 @@ function ClaimView(props: {
             <span>每个子 SKU 一行；可在列表填，也可打开右侧详情边看边填。</span>
             <button className="btn primary" onClick={() => void submitComplete(filteredRows)}>
               <Send size={15} />
-              一键提交全部已填写
+              一键提交全部未提交
             </button>
           </div>
         )}
@@ -3188,7 +3195,7 @@ function ClaimView(props: {
                 <p className="muted">开品理由：{groupReason(group)}</p>
               </div>
               <button className="btn" onClick={() => void submitComplete(group.items)}>
-                提交本组已填写
+                提交本组未提交
               </button>
             </div>
             <div className="claim-child-list compact">
@@ -3208,6 +3215,7 @@ function ClaimView(props: {
                         <b>{item.sub_sku_name || item.keyword || "-"}</b>
                       </p>
                       <div className="claim-row-meta">
+                        <ClaimSubmissionBadge draft={props.drafts[item.id]} item={item} />
                         {item.latest_claim_result && <span>上次：{item.latest_claim_result === "claim" ? "认领" : "不认领"}</span>}
                         {item.current_status === "returned_for_supplement" && item.latest_review_comment && <span className="red">退回：{item.latest_review_comment}</span>}
                       </div>
@@ -3223,7 +3231,8 @@ function ClaimView(props: {
                       onRemoveSelfClaim={() => props.onRemoveSelfClaim(item.id)}
                       onSubmit={() => void submitItem(item)}
                       showRemove={isSelfClaimPoolItem(item)}
-                      submitText="提交"
+                      submitDisabled={claimSubmissionState(item, props.drafts[item.id]) === "submitted"}
+                      submitText={claimSubmitButtonText(item, props.drafts[item.id])}
                     />
                     <button className="btn small" type="button" onClick={() => props.onOpenDetail(group, item.id)}>
                       详情
@@ -3260,11 +3269,29 @@ function ClaimView(props: {
   );
 }
 
+function claimSubmitButtonText(item: Opportunity, draft?: ClaimDraft) {
+  const state = claimSubmissionState(item, draft);
+  if (state === "submitted") return "已提交";
+  return item.latest_claim_result ? "提交修改" : "提交";
+}
+
+function ClaimSubmissionBadge(props: { item: Opportunity; draft?: ClaimDraft }) {
+  const state = claimSubmissionState(props.item, props.draft);
+  const label = state === "submitted" ? "已提交" : state === "dirty" ? "已填写未提交" : "待填写";
+  return (
+    <span className={`claim-save-state ${state}`}>
+      {label}
+      {state === "submitted" && <small>待主管复核</small>}
+    </span>
+  );
+}
+
 function ClaimDraftEditor(props: {
   item: Opportunity;
   draft: ClaimDraft;
   compact?: boolean;
   showRemove?: boolean;
+  submitDisabled?: boolean;
   submitText: string;
   onMode: (mode: "claim" | "reject") => void;
   onPatch: (patch: Partial<ClaimDraft>) => void;
@@ -3336,7 +3363,7 @@ function ClaimDraftEditor(props: {
             移除
           </button>
         )}
-        <button className="btn primary" type="button" onClick={props.onSubmit}>
+        <button className="btn primary" disabled={props.submitDisabled} type="button" onClick={props.onSubmit}>
           <Send size={15} />
           {props.submitText}
         </button>
@@ -3443,7 +3470,7 @@ function ClaimDetailDrawer(props: {
               <span className="tag">{activeTab.columns[0]}-{activeTab.columns[activeTab.columns.length - 1]}</span>
               <button className="btn primary" type="button" onClick={props.onSubmitGroup}>
                 <Send size={15} />
-                提交本主 SKU 已填写项
+                提交本主 SKU 未提交项
               </button>
             </div>
           </div>
@@ -3518,6 +3545,7 @@ function ClaimMatrixTable(props: {
                     <b>{item.sub_sku}</b>
                     <span>{item.sub_sku_name || item.keyword || "-"}</span>
                     {statusPill(item.current_status)}
+                    <ClaimSubmissionBadge draft={props.drafts[item.id]} item={item} />
                   </span>
                 </div>
               </td>
