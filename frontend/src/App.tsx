@@ -1707,7 +1707,9 @@ const pricingSpecs = [
   { column: "AS", label: "稳定期利润率", aliases: ["稳定期利润率", "一次毛利率"] },
   { column: "AT", label: "预估单销", aliases: ["预估单销"] },
   { column: "AU", label: "推广期定价", aliases: ["推广期定价"] },
-  { column: "AV", label: "推广期利润率", aliases: ["推广期利润率"] }
+  { column: "AV", label: "推广期利润率", aliases: ["推广期利润率"] },
+  { column: "AW", label: "稳定期总成本", aliases: ["稳定期总成本（PHP）（含头程+平台费+基础设施）", "稳定期总成本（THB）（含头程+平台费+基础设施）", "稳定期总成本（VND）（含头程+平台费+基础设施）"] },
+  { column: "AX", label: "推广期总成本", aliases: ["推广期总成本（PHP）（含头程+平台费+基础设施）", "推广期总成本（THB）（含头程+平台费+基础设施）", "推广期总成本（VND）（含头程+平台费+基础设施）"] }
 ] as const;
 
 const detailSections: { key: DetailSectionKey; label: string }[] = [

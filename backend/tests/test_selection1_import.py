@@ -330,6 +330,8 @@ def test_selection1_import_matches_current_pricing_headers_at_aj_and_am(tmp_path
     assert market_item.reference_price == 428
     assert pricing["稳定期定价"] == 428
     assert pricing["稳定期利润率"] == 0.0823262796879019
+    assert pricing["稳定期总成本"] == 392.764352293578
+    assert pricing["推广期总成本"] == 385.896352293578
     assert opportunity.snapshot["cells"]["AQ"] == 392.764352293578
     assert opportunity.snapshot["cells"]["AR"] == 385.896352293578
 
