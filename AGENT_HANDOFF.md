@@ -6,13 +6,13 @@
 
 The frozen front-stage flow is running in production. Continue from `docs/02-功能实现状态.md` and `docs/20-项目推进总控.md` unless the user explicitly starts a later-stage feature. Use Superpowers-style discipline and Ponytail scope control. Do not use Spec Kit again unless the user explicitly asks; the user said it can make the current work confusing. Do not put any agent/tooling content into product docs or product pages.
 
-Production is `http://101.132.26.138:8080`, SSH alias `hz-new-product-preprod`, current API release `v3a20af5`, frontend release `v37db0b7`, database `workflow_prod_20260715`. Future development target is `hz-new-product-dev` (`139.224.2.166:2323`), not the production host. Do not write SSH passwords or any other credentials into repo files, docs, commits, logs, or `.env.example`; use local secret storage or prompt-time input for deployment.
+Production is `http://101.132.26.138:8080`, SSH alias `hz-new-product-preprod`, current API/frontend release `vb373d65`, database `workflow_prod_20260715`. Future development target is `hz-new-product-dev` (`139.224.2.166:2323`), not the production host. Do not write SSH passwords or any other credentials into repo files, docs, commits, logs, or `.env.example`; use local secret storage or prompt-time input for deployment.
 
 ## Implementation Status
 
 - Completed: project setup, PostgreSQL/SQLite guard, Alembic migrations, two feedback workbook importers, personnel config import, one-click assignment, claim/not-claim submission metadata, supervisor review, stocking export, central traceability export, product dashboard, source upload, operator profile config UI, inline operator claim UI, local demo data script, Phase 12 source-routing / batch-claim / review-state clarification, and minimal DingTalk new-product todo card sender.
 - Current verification: backend full `pytest -q` passed `194` tests on 2026-07-16; frontend `npm test` passed `41` tests and `npm run build` passed. The latest Playwright/Edge allocation check covered 2048px and 1366px: all 16 enabled operators wrap into a responsive grid with zero horizontal overflow, and “提交分配 / 运营配置” remain adjacent. Earlier mobile, sticky workload, live draft-count and native drag-order checks also passed. Production release details are recorded in `docs/06-部署与服务器准备.md`.
-- Current release pointer: branch `lxc/pricing-review-edit`, implementation commit `37db0b7`; release documentation follows branch HEAD. Deployment and rollback details are in `docs/06-部署与服务器准备.md`.
+- Current release pointer: branch `lxc/pricing-review-edit`, deployed implementation commit `b373d65`; release documentation follows branch HEAD. Deployment and rollback details are in `docs/06-部署与服务器准备.md`.
 
 ## Latest Business Ground Truth
 
