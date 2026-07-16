@@ -2023,6 +2023,7 @@ def list_not_claim_traceability_rows(
     import_batch_id: str | None = None,
 ) -> list[tuple[models.NewProductOpportunity, models.SalesClaimForecast, models.ReviewRecord | None]]:
     filters = [
+        models.NewProductOpportunity.current_status != OPPORTUNITY_DISABLED,
         models.SalesClaimForecast.claim_result == CLAIM_RESULT_REJECT,
         models.SalesClaimForecast.source_column == "platform",
     ]
@@ -2044,7 +2045,14 @@ def list_not_claim_traceability_rows(
     ).all()
     output = []
     for opportunity, claim in rows:
-        review = latest_review(db, opportunity.id)
+        review = db.scalar(
+            select(models.ReviewRecord)
+            .where(
+                models.ReviewRecord.opportunity_id == opportunity.id,
+                models.ReviewRecord.claim_record_id == claim.id,
+            )
+            .order_by(models.ReviewRecord.created_at.desc())
+        )
         if review and review.review_status == REVIEW_CONFIRMED_NOT_CLAIM:
             output.append((opportunity, claim, review))
     return output

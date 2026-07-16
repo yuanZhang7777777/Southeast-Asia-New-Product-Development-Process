@@ -207,7 +207,7 @@ def test_traceability_export_adds_not_claim_sheet_with_feedback_and_images() -> 
         )
         db.add(opportunity)
         db.flush()
-        services.submit_claim(
+        claim = services.submit_claim(
             db,
             schemas.ClaimCreate(
                 opportunity_id=opportunity.id,
@@ -229,6 +229,7 @@ def test_traceability_export_adds_not_claim_sheet_with_feedback_and_images() -> 
             db,
             schemas.ReviewCreate(
                 opportunity_id=opportunity.id,
+                claim_record_id=claim.id,
                 reviewer_name="练玉君",
                 review_status="confirmed_not_claim",
                 review_comment="同意不认领",
@@ -277,6 +278,79 @@ def test_traceability_export_filters_by_period_and_excludes_unconfirmed_not_clai
     reject_sheet = workbook["不认领结果"]
     reject_values = [row[7].value for row in reject_sheet.iter_rows(min_row=2)]
     assert reject_values == ["MAIN-REJECT-CONFIRMED"]
+
+
+def test_traceability_export_excludes_disabled_not_claim_opportunities() -> None:
+    opportunity_id = prepare_reject_claim(
+        source_sheet="W-DISABLED",
+        source_row=1,
+        main_sku="MAIN-DISABLED",
+        review_status="confirmed_not_claim",
+    )
+    with SessionLocal() as db:
+        opportunity = db.get(models.NewProductOpportunity, opportunity_id)
+        assert opportunity is not None
+        opportunity.current_status = "disabled"
+        db.commit()
+
+    with SessionLocal() as db:
+        rows = services.list_not_claim_traceability_rows(db, source_sheet="W-DISABLED")
+
+    assert rows == []
+
+
+def test_traceability_export_requires_confirmation_for_each_not_claim_claim() -> None:
+    with SessionLocal() as db:
+        opportunity = models.NewProductOpportunity(
+            source_type="selection1_developer_claim_feedback",
+            source_file="选品1.xlsx",
+            source_sheet="W-CLAIM-SCOPE",
+            source_row=1,
+            batch="W-CLAIM-SCOPE",
+            country="PH",
+            site="PH",
+            main_sku="MAIN-CLAIM-SCOPE",
+            sub_sku="SUB-CLAIM-SCOPE",
+        )
+        db.add(opportunity)
+        db.flush()
+        confirmed = services.submit_claim(
+            db,
+            schemas.ClaimCreate(
+                opportunity_id=opportunity.id,
+                salesperson_name="销售已确认",
+                claim_result="reject",
+                reject_reason="市场容量不足",
+            ),
+        )
+        services.submit_claim(
+            db,
+            schemas.ClaimCreate(
+                opportunity_id=opportunity.id,
+                salesperson_name="销售未确认",
+                claim_result="reject",
+                reject_reason="市场容量不足",
+            ),
+        )
+        services.submit_review(
+            db,
+            schemas.ReviewCreate(
+                opportunity_id=opportunity.id,
+                claim_record_id=confirmed.id,
+                reviewer_name="练玉君",
+                review_status="confirmed_not_claim",
+            ),
+        )
+        db.commit()
+
+    response = client.get("/stocking/traceability/export?source_sheet=W-CLAIM-SCOPE")
+
+    assert response.status_code == 200
+    workbook = load_workbook(BytesIO(response.content), data_only=True)
+    sheet = workbook["不认领结果"]
+    headers = [cell.value for cell in sheet[1]]
+    rows = [dict(zip(headers, [cell.value for cell in row])) for row in sheet.iter_rows(min_row=2)]
+    assert {row["销售员"] for row in rows} == {"销售已确认"}
 
 
 def test_traceability_export_records_each_repeat_download() -> None:
@@ -379,7 +453,7 @@ def prepare_reject_claim(
         )
         db.add(opportunity)
         db.flush()
-        services.submit_claim(
+        claim = services.submit_claim(
             db,
             schemas.ClaimCreate(
                 opportunity_id=opportunity.id,
@@ -393,6 +467,7 @@ def prepare_reject_claim(
                 db,
                 schemas.ReviewCreate(
                     opportunity_id=opportunity.id,
+                    claim_record_id=claim.id,
                     reviewer_name="练玉君",
                     review_status=review_status,
                     review_comment="确认不认领",
