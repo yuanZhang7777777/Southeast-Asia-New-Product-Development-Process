@@ -32,7 +32,7 @@
 - Consumes: `PendingListingTask`、`ListingRecord`、`ObservationPeriodRow` 及现有 `buildListingTaskContexts(...)`。
 - Produces: `WorkbenchBusinessStatus`、`ListingWorkbenchGroup`、`buildListingWorkbenchGroups(...)`、`filterListingWorkbenchGroups(...)` 和简化后的 `resolveWorkbenchScope(...)`。
 
-- [ ] **Step 1: 写失败测试，覆盖分组、默认待刊登、全部与权限范围**
+- [x] **Step 1: 写失败测试，覆盖分组、默认待刊登、全部与权限范围**
 
 在 `frontend/tests/listingObservation.test.ts` 增加导入：
 
@@ -172,13 +172,13 @@ test("主管默认全量而主管运营视角按所选运营查询", () => {
 });
 ```
 
-- [ ] **Step 2: 运行聚焦测试并确认按预期失败**
+- [x] **Step 2: 运行聚焦测试并确认按预期失败**
 
 Run: `cd frontend && node --test tests/listingObservation.test.ts`
 
 Expected: FAIL，提示新的导出不存在或旧 `resolveWorkbenchScope` 签名/结果不匹配。
 
-- [ ] **Step 3: 写最小纯函数实现**
+- [x] **Step 3: 写最小纯函数实现**
 
 在 `frontend/src/listingObservation.ts` 使用类型导入并实现：
 
@@ -270,13 +270,13 @@ export function resolveWorkbenchScope(
 
 `null` 表示具备主管权限的账号切到运营视角但尚未选择运营。页面此时清空工作台数据并显示“请先选择运营”，不得向后端发送可能返回全量数据的请求。
 
-- [ ] **Step 4: 运行聚焦测试并确认通过**
+- [x] **Step 4: 运行聚焦测试并确认通过**
 
 Run: `cd frontend && node --test tests/listingObservation.test.ts`
 
 Expected: PASS，包含新增的分组、状态和权限范围用例。
 
-- [ ] **Step 5: 提交 Task 1**
+- [x] **Step 5: 提交 Task 1**
 
 ```bash
 git add frontend/src/listingObservation.ts frontend/tests/listingObservation.test.ts
