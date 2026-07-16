@@ -12,6 +12,15 @@ type ClaimSubmissionSource = {
   latest_claim_daily_sales?: number | null;
   latest_reject_reason?: string | null;
   latest_feedback_summary?: string | null;
+  latest_claim_note?: string | null;
+};
+
+export type ClaimEvidenceImage = {
+  name: string;
+  type: string;
+  size: number;
+  url?: string;
+  previewUrl?: string;
 };
 
 export type ClaimSubmissionState = "pending" | "dirty" | "submitted";
@@ -35,6 +44,25 @@ export function createClaimDraftFromLatest<TImage = unknown>(item: {
   };
 }
 
+export function parseClaimEvidenceImages(note?: string | null): ClaimEvidenceImage[] {
+  if (!note) return [];
+  try {
+    const parsed = JSON.parse(note) as { evidence_images?: unknown };
+    if (!Array.isArray(parsed.evidence_images)) return [];
+    return parsed.evidence_images
+      .filter((image): image is Record<string, unknown> => Boolean(image) && typeof image === "object")
+      .map((image) => ({
+        name: typeof image.name === "string" && image.name ? image.name : "图片附件",
+        type: typeof image.type === "string" ? image.type : "",
+        size: typeof image.size === "number" ? image.size : 0,
+        ...(typeof image.url === "string" && image.url ? { url: image.url } : {}),
+        ...(typeof image.previewUrl === "string" && image.previewUrl ? { previewUrl: image.previewUrl } : {})
+      }));
+  } catch {
+    return [];
+  }
+}
+
 export function claimSubmissionState<TImage = unknown>(
   item: ClaimSubmissionSource,
   draft?: ClaimDraftState<TImage>
@@ -48,13 +76,26 @@ export function claimSubmissionState<TImage = unknown>(
   const sameDailySales =
     dailySales === savedDailySales ||
     (dailySales !== "" && savedDailySales !== "" && Number(dailySales) === Number(savedDailySales));
+  const savedEvidence = parseClaimEvidenceImages(item.latest_claim_note).map(evidenceImageKey);
+  const draftEvidence = draft.evidenceImages.map(evidenceImageKey);
   const changed =
     draft.mode !== saved.mode ||
     !sameDailySales ||
     draft.rejectReason.trim() !== saved.rejectReason.trim() ||
     draft.researchConclusion.trim() !== saved.researchConclusion.trim() ||
-    draft.evidenceImages.length > 0;
+    JSON.stringify(draftEvidence) !== JSON.stringify(savedEvidence);
   return changed ? "dirty" : submitted ? "submitted" : "pending";
+}
+
+function evidenceImageKey(image: unknown) {
+  if (!image || typeof image !== "object") return "";
+  const value = image as Record<string, unknown>;
+  return JSON.stringify([
+    typeof value.name === "string" ? value.name : "",
+    typeof value.type === "string" ? value.type : "",
+    typeof value.size === "number" ? value.size : 0,
+    typeof value.url === "string" ? value.url : typeof value.previewUrl === "string" ? value.previewUrl : ""
+  ]);
 }
 
 export function patchClaimDraftGroup<TImage>(

@@ -1,7 +1,17 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { claimSubmissionState, createClaimDraft, createClaimDraftFromLatest, patchClaimDraftGroup } from "../src/claimDrafts.ts";
+import { claimSubmissionState, createClaimDraft, createClaimDraftFromLatest, parseClaimEvidenceImages, patchClaimDraftGroup } from "../src/claimDrafts.ts";
+
+test("历史认领图片从已提交 note 恢复", () => {
+  assert.deepEqual(
+    parseClaimEvidenceImages(JSON.stringify({
+      evidence_images: [{ name: "market.png", type: "image/png", size: 123, url: "/uploaded-sources/market.png" }]
+    })),
+    [{ name: "market.png", type: "image/png", size: 123, url: "/uploaded-sources/market.png" }]
+  );
+  assert.deepEqual(parseClaimEvidenceImages("不是 JSON"), []);
+});
 
 test("运营认领提交状态区分待填写、未提交和已提交", () => {
   const saved = {
@@ -23,6 +33,25 @@ test("运营认领提交状态区分待填写、未提交和已提交", () => {
   assert.equal(claimSubmissionState(saved, createClaimDraftFromLatest(saved)), "submitted");
   assert.equal(
     claimSubmissionState(saved, { ...createClaimDraftFromLatest(saved), claimDailySales: "8" }),
+    "dirty"
+  );
+});
+
+test("恢复已提交图片不会误报未提交，增删图片才标记修改", () => {
+  const saved = {
+    current_status: "claim_submitted",
+    latest_claim_result: "claim",
+    latest_claim_daily_sales: 6,
+    latest_claim_note: JSON.stringify({ evidence_images: [{ name: "saved.png", url: "/saved.png" }] })
+  };
+  const draft = {
+    ...createClaimDraftFromLatest(saved),
+    evidenceImages: [{ name: "saved.png", url: "/saved.png" }]
+  };
+
+  assert.equal(claimSubmissionState(saved, draft), "submitted");
+  assert.equal(
+    claimSubmissionState(saved, { ...draft, evidenceImages: [...draft.evidenceImages, { name: "new.png" }] }),
     "dirty"
   );
 });

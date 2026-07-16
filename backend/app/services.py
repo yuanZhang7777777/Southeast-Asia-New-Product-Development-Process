@@ -2396,6 +2396,8 @@ def selection_source_label(opportunity: models.NewProductOpportunity) -> str:
 
 
 def claim_prefill_salesperson(opportunity: models.NewProductOpportunity) -> str | None:
+    if opportunity.source_type == "selection1_developer_claim_feedback":
+        return None
     snapshot = opportunity.snapshot or {}
     claim = snapshot.get("claim_prefill") if isinstance(snapshot, dict) else None
     if isinstance(claim, dict):

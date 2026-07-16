@@ -11,7 +11,7 @@ from openpyxl import Workbook, load_workbook  # noqa: E402
 
 from app.db import Base, engine  # noqa: E402
 from app.main import app  # noqa: E402
-from app import models  # noqa: E402
+from app import models, services  # noqa: E402
 from app.db import SessionLocal  # noqa: E402
 
 
@@ -28,6 +28,32 @@ def test_health() -> None:
 
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
+
+
+def test_selection1_source_salesperson_is_traceability_only() -> None:
+    selection1 = models.NewProductOpportunity(
+        source_type="selection1_developer_claim_feedback",
+        source_file="selection1.xlsx",
+        source_sheet="Sheet1",
+        source_row=3,
+        main_sku="MAIN-1",
+        sub_sku="SUB-1",
+        current_status="pending_assignment",
+        snapshot={"claim_prefill": {"salesperson_name": "源表销售"}, "cells": {"CD": "源表销售"}},
+    )
+    selection2 = models.NewProductOpportunity(
+        source_type="selection2_caigen_claim_feedback",
+        source_file="selection2.xlsx",
+        source_sheet="Sheet1",
+        source_row=3,
+        main_sku="MAIN-2",
+        sub_sku="SUB-2",
+        current_status="pending_assignment",
+        snapshot={"claim_prefill": {"salesperson_name": "财根运营"}},
+    )
+
+    assert services.claim_prefill_salesperson(selection1) is None
+    assert services.claim_prefill_salesperson(selection2) == "财根运营"
 
 
 def test_opportunities_default_limit_covers_assignment_batches() -> None:
@@ -276,7 +302,7 @@ def test_selection1_import_is_idempotent_and_exportable(tmp_path: Path) -> None:
     assert second_import.status_code == 200
     assert first_import.json()["imported_count"] == 1
     assert first_import.json()["market_research_count"] == 2
-    assert first_import.json()["prefill_claim_count"] == 1
+    assert first_import.json()["prefill_claim_count"] == 0
     assert first_import.json()["task_count"] == 0
     assert second_import.json()["created_count"] == 0
     assert second_import.json()["updated_count"] == 1
@@ -295,7 +321,7 @@ def test_selection1_import_is_idempotent_and_exportable(tmp_path: Path) -> None:
         source_claims = db.query(models.SalesClaimForecast).filter_by(source_column="CC:CH").all()
         snapshots = db.query(models.SourceRecordSnapshot).all()
     assert len(market_items) == 2
-    assert len(source_claims) == 1
+    assert len(source_claims) == 0
     assert snapshots[0].column_range == "A:BX,CC:CH"
     assert "M" in snapshots[0].payload["cells"]
     assert "AW" in snapshots[0].payload["cells"]

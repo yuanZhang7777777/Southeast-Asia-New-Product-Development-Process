@@ -20,3 +20,41 @@ test("主管复核按认领类型筛选并提供批量通过和拒绝", () => {
   assert.match(app, /批量拒绝/);
   assert.match(app, /api\.bulkReview/);
 });
+
+test("运营未提交状态紧邻操作按钮且模式切换不清空已填内容", () => {
+  const editor = app.slice(app.indexOf("function ClaimDraftEditor"), app.indexOf("function ClaimDetailDrawer"));
+  const matrixEditor = app.slice(app.indexOf("function ClaimMatrixDraftEditor"), app.indexOf("function draftForId"));
+  const setMode = app.slice(app.indexOf("function setMode"), app.indexOf("function buildPayload"));
+
+  assert.match(editor, /claim-editor-actions[\s\S]*ClaimSubmissionBadge/);
+  assert.match(matrixEditor, /ClaimSubmissionBadge/);
+  assert.match(setMode, /patchDraft\(itemId, \{ mode \}/);
+  assert.doesNotMatch(setMode, /rejectReason|claimDailySales/);
+});
+
+test("分配台使用紧凑工具栏、配置抽屉和去重运营卡片", () => {
+  const assignView = app.slice(app.indexOf("function AssignView"), app.indexOf("function assignmentItemKey"));
+
+  assert.match(app, /workflow-nav/);
+  assert.match(assignView, /assignment-commandbar/);
+  assert.match(assignView, /assignment-config-overlay/);
+  assert.match(assignView, /assignment-config-drawer/);
+  assert.match(assignView, /priority-badge/);
+  assert.match(assignView, /operator-category-tags/);
+  assert.doesNotMatch(assignView, /operatorProfileBrief\(profile\)/);
+});
+
+test("主管统计栏缩窄并使用单列指标", () => {
+  const layoutRule = styles.match(/\.layout\s*\{([^}]*)\}/)?.[1] || "";
+  const sideMetricsRule = styles.match(/\.side\s+\.metrics\s*\{([^}]*)\}/)?.[1] || "";
+
+  assert.match(layoutRule, /170px/);
+  assert.match(sideMetricsRule, /grid-template-columns:\s*1fr/);
+});
+
+test("窄屏分配明细只在表格内部横向滚动", () => {
+  const viewportRule = styles.match(/\.assignment-table-panel,\s*\.assignment-table-scroll\s*\{([^}]*)\}/)?.[1] || "";
+
+  assert.match(viewportRule, /min-width:\s*0/);
+  assert.match(viewportRule, /max-width:\s*100%/);
+});

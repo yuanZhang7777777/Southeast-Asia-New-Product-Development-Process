@@ -45,7 +45,7 @@ import {
   setAuthToken,
   Task
 } from "./api";
-import { ClaimDraftState, claimSubmissionState, createClaimDraft, createClaimDraftFromLatest, patchClaimDraftGroup } from "./claimDrafts";
+import { ClaimDraftState, claimSubmissionState, createClaimDraft, createClaimDraftFromLatest, parseClaimEvidenceImages, patchClaimDraftGroup } from "./claimDrafts";
 import { filterAssignmentItems, groupOperatorProfilesBySite, moveOperatorWithinSite, sortOperatorProfiles } from "./assignmentFilters";
 import { competitorGroupForColumn, competitorGroupForLabel } from "./competitorGroups";
 import { ImportResults, recordImportResult } from "./importResults";
@@ -54,7 +54,7 @@ import { groupByBusinessIdentity, normalizeSiteText } from "./opportunityGroups"
 import { adjacentDetailTarget } from "./productDetailNavigation";
 import { ProductBoardView } from "./ProductBoardView";
 import { SecondaryResearchView } from "./SecondaryResearchView";
-import { selection1ColumnLabel } from "./selection1Columns";
+import { isSourceClaimInputLabel, selection1ColumnLabel } from "./selection1Columns";
 import { compactUrlLabel } from "./urlDisplay";
 
 type DingTalkAuthCodeResult = {
@@ -982,30 +982,31 @@ function App() {
       </header>
 
       <main className="wrap">
-        <section className="panel hub">
-          <div className="hub-actions">
-            <button className={activeView === "dashboard" ? "flow-step active" : "flow-step"} onClick={() => setActiveView("dashboard")}>
-              <LayoutDashboard size={16} />
-              商品看板
-            </button>
-            <button className={activeView !== "dashboard" ? "flow-step active" : "flow-step"} onClick={() => setActiveView("pool")}>
-              <Database size={16} />
-              机会池流程
-            </button>
+        <nav className="panel workflow-nav">
+          <div className="workflow-nav-main">
+            <div className="hub-actions">
+              <button className={activeView === "dashboard" ? "flow-step active" : "flow-step"} onClick={() => setActiveView("dashboard")}>
+                <LayoutDashboard size={16} />
+                商品看板
+              </button>
+              <button className={activeView !== "dashboard" ? "flow-step active" : "flow-step"} onClick={() => setActiveView("pool")}>
+                <Database size={16} />
+                机会池流程
+              </button>
+            </div>
+            <div className="workflow-flow">
+              {visibleFlow.map((item, index) => (
+                <span className="flow-node" key={item.view}>
+                  {index > 0 && <span className="arrow">→</span>}
+                  <button className={activeView === item.view ? "flow-step active" : "flow-step"} onClick={() => setActiveView(item.view)}>
+                    {item.icon}
+                    {item.label}
+                  </button>
+                </span>
+              ))}
+            </div>
           </div>
           <span className="hub-note">当前为测试阶段：真实钉钉自动推送保持关闭</span>
-        </section>
-
-        <nav className="panel flow">
-          {visibleFlow.map((item, index) => (
-            <span className="flow-node" key={item.view}>
-              {index > 0 && <span className="arrow">→</span>}
-              <button className={activeView === item.view ? "flow-step active" : "flow-step"} onClick={() => setActiveView(item.view)}>
-                {item.icon}
-                {item.label}
-              </button>
-            </span>
-          ))}
         </nav>
 
         <section className={["claim", "research"].includes(activeView) && !detailGroup ? "layout claim-full-layout" : "layout"}>
@@ -2526,6 +2527,15 @@ function AssignView(props: {
   const [siteFilter, setSiteFilter] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("");
   const [operatorFilter, setOperatorFilter] = useState("");
+  const [profilePanelOpen, setProfilePanelOpen] = useState(false);
+  useEffect(() => {
+    if (!profilePanelOpen) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setProfilePanelOpen(false);
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [profilePanelOpen]);
   const patchProfile = (id: string, patch: Partial<OperatorAssignmentProfile>) => {
     props.setOperatorProfiles(props.operatorProfiles.map((profile) => (profile.id === id ? { ...profile, ...patch } : profile)));
   };
@@ -2558,36 +2568,34 @@ function AssignView(props: {
   return (
     <div className="assign-layout">
       <section className="info assignment-table-panel">
-        <div className="section-head">
-          <h3>待分配主 SKU</h3>
-          <div className="action-row">
+        <div className="assignment-commandbar">
+          <div className="assignment-command-title">
+            <h3>待分配主 SKU</h3>
             <span className="tag">已选 {selectedCount} 组 / {childSelectedCount} 子 SKU</span>
             <span className="tag">未分配 {props.previewItems.length ? props.previewItems.length - selectedCount : pendingGroups.length} 组</span>
           </div>
-        </div>
-        <div className="assignment-filter-bar">
-          <select value={siteFilter} onChange={(event) => {
+          <select className="assignment-compact-select" aria-label="按站点筛选" value={siteFilter} onChange={(event) => {
             setSiteFilter(event.target.value);
             props.setList((current) => ({ ...current, page: 1 }));
           }}>
             <option value="">全部站点</option>
             {siteOptions.map((site) => <option key={site} value={site}>{site}</option>)}
           </select>
-          <select value={categoryFilter} onChange={(event) => {
+          <select className="assignment-compact-select category" aria-label="按一级类目筛选" value={categoryFilter} onChange={(event) => {
             setCategoryFilter(event.target.value);
             props.setList((current) => ({ ...current, page: 1 }));
           }}>
             <option value="">全部一级类目</option>
             {categoryOptions.map((category) => <option key={category} value={category}>{category}</option>)}
           </select>
-          <select value={operatorFilter} onChange={(event) => {
+          <select className="assignment-compact-select" aria-label="按运营筛选" value={operatorFilter} onChange={(event) => {
             setOperatorFilter(event.target.value);
             props.setList((current) => ({ ...current, page: 1 }));
           }}>
             <option value="">全部运营</option>
             {enabledProfiles.map((profile) => <option key={profile.id} value={profile.operator_name}>{profile.operator_name}</option>)}
           </select>
-          <button className="btn" type="button" onClick={() => {
+          <button className="btn small assignment-clear" type="button" onClick={() => {
             setSiteFilter("");
             setCategoryFilter("");
             setOperatorFilter("");
@@ -2595,25 +2603,38 @@ function AssignView(props: {
           }}>
             <X size={14} />清空
           </button>
+          <ListControls
+            label="分配台"
+            list={props.list}
+            total={filteredItems.length}
+            searchPlaceholder="搜索主 SKU / 子 SKU / 商品名，多个关键词用空格分隔"
+            setList={(patch) => props.setList((current) => ({ ...current, ...patch }))}
+          />
+          <button className="btn small assignment-config-trigger" type="button" onClick={() => setProfilePanelOpen(true)}>
+            <Users size={14} />
+            运营配置
+          </button>
         </div>
-        <ListControls
-          label="分配台"
-          list={props.list}
-          total={filteredItems.length}
-          searchPlaceholder="搜索主 SKU / 子 SKU / 商品名，多个关键词用空格分隔"
-          setList={(patch) => props.setList((current) => ({ ...current, ...patch }))}
-        />
         <div className="assignment-workload-grid">
           {enabledProfiles.map((profile) => {
             const load = workload[profile.operator_name] || emptyAssignmentLoad();
             const maxGroups = Math.max(1, ...Object.values(workload).map((item) => item.groups));
             return (
               <div className="assignment-workload-card" key={profile.id}>
-                <div className="section-head compact">
-                  <b>{profile.operator_name}</b>
+                <div className="assignment-operator-head">
+                  <div className="assignment-operator-name">
+                    {profile.assignment_priority > 0 && (
+                      <span className={`priority-badge priority-${Math.min(profile.assignment_priority, 3)}`}>优先 {profile.assignment_priority}</span>
+                    )}
+                    <b>{profile.operator_name}</b>
+                  </div>
                   <span className="tag">{profile.key_site || "-"}</span>
                 </div>
-                <p className="muted">{operatorProfileBrief(profile)}</p>
+                <div className="operator-category-tags">
+                  {profile.key_category1 && <span title={`重点品类1：${profile.key_category1}`}>品类1 · {profile.key_category1}</span>}
+                  {profile.key_category2 && <span title={`重点品类2：${profile.key_category2}`}>品类2 · {profile.key_category2}</span>}
+                  {!profile.key_category1 && !profile.key_category2 && <span className="muted">未配置重点品类</span>}
+                </div>
                 <div className="assignment-load-bar">
                   <span style={{ width: `${Math.max(8, (load.groups / maxGroups) * 100)}%` }} />
                 </div>
@@ -2658,102 +2679,116 @@ function AssignView(props: {
           </div>
         )}
       </section>
-      <section className="info assignment-config-panel">
-        <div className="section-head">
-          <h3>
-            <Users size={16} />
-            运营配置
-          </h3>
-          <button className="btn primary" onClick={props.onSaveProfiles}>
-            <Save size={15} />
-            保存运营配置
-          </button>
-        </div>
-        <p className="muted">维护运营、重点站点、重点品类1、重点品类2和站点内顺序。新增或调整后，下一次生成推荐立即生效。</p>
-        <div className="profile-table">
-          <div className="profile-row head">
-            <span>启用</span>
-            <span>运营</span>
-            <span>重点站点</span>
-            <span>重点品类1</span>
-            <span>重点品类2</span>
-            <span>优先级</span>
-            <span>排序</span>
-            <span>删除</span>
-          </div>
-          {profileGroups.flatMap((profileGroup) => profileGroup.items.map((profile, profileIndex) => (
-            <div className="profile-row" data-site={profileGroup.site} key={profile.id}>
-              <input
-                type="checkbox"
-                checked={profile.enabled}
-                onChange={(event) => patchProfile(profile.id, { enabled: event.target.checked })}
-                aria-label={`${profile.operator_name} 是否启用`}
-              />
-              <input value={profile.operator_name} onChange={(event) => patchProfile(profile.id, { operator_name: event.target.value })} />
-              <input value={profile.key_site || ""} onChange={(event) => patchProfile(profile.id, { key_site: event.target.value })} />
-              <input value={profile.key_category1 || ""} onChange={(event) => patchProfile(profile.id, { key_category1: event.target.value })} />
-              <input value={profile.key_category2 || ""} onChange={(event) => patchProfile(profile.id, { key_category2: event.target.value })} />
-              <input
-                type="number"
-                value={profile.assignment_priority || 0}
-                onChange={(event) => patchProfile(profile.id, { assignment_priority: Number(event.target.value || 0) })}
-              />
-              <div className="action-row compact-actions">
-                <button className="btn" disabled={profileIndex === 0} onClick={() => moveProfile(profile.id, -1)} title="在同站点上移" type="button">
-                  <ArrowUp size={14} />
-                </button>
-                <button className="btn" disabled={profileIndex === profileGroup.items.length - 1} onClick={() => moveProfile(profile.id, 1)} title="在同站点下移" type="button">
-                  <ArrowDown size={14} />
-                </button>
+      {profilePanelOpen && (
+        <div className="assignment-config-overlay" role="dialog" aria-modal="true" aria-label="运营配置">
+          <button className="assignment-config-backdrop" type="button" aria-label="关闭运营配置" onClick={() => setProfilePanelOpen(false)} />
+          <section className="assignment-config-drawer">
+            <div className="assignment-config-header">
+              <div>
+                <h3>
+                  <Users size={17} />
+                  运营配置
+                </h3>
+                <p className="muted">维护站点、重点品类、优先级和站点内顺序；保存后下一次生成推荐生效。</p>
               </div>
-              <div className="action-row compact-actions">
-                <button className="btn" onClick={() => props.onDeleteProfile(profile.id)} title="删除">
-                  <Trash2 size={15} />
+              <div className="action-row">
+                <button className="btn primary" onClick={props.onSaveProfiles}>
+                  <Save size={15} />
+                  保存运营配置
+                </button>
+                <button className="btn" type="button" title="关闭" onClick={() => setProfilePanelOpen(false)}>
+                  <X size={16} />
                 </button>
               </div>
             </div>
-          )))}
-          <div className="profile-row new">
-            <input
-              type="checkbox"
-              checked={props.newProfile.enabled}
-              onChange={(event) => props.setNewProfile({ ...props.newProfile, enabled: event.target.checked })}
-              aria-label="新运营是否启用"
-            />
-            <input
-              value={props.newProfile.operator_name}
-              onChange={(event) => props.setNewProfile({ ...props.newProfile, operator_name: event.target.value })}
-              placeholder="运营"
-            />
-            <input
-              value={props.newProfile.key_site || ""}
-              onChange={(event) => props.setNewProfile({ ...props.newProfile, key_site: event.target.value })}
-              placeholder="站点缩写，如 PH / TH / SG"
-            />
-            <input
-              value={props.newProfile.key_category1 || ""}
-              onChange={(event) => props.setNewProfile({ ...props.newProfile, key_category1: event.target.value })}
-              placeholder="重点品类1"
-            />
-            <input
-              value={props.newProfile.key_category2 || ""}
-              onChange={(event) => props.setNewProfile({ ...props.newProfile, key_category2: event.target.value })}
-              placeholder="重点品类2"
-            />
-            <input
-              type="number"
-              value={props.newProfile.assignment_priority || 0}
-              onChange={(event) => props.setNewProfile({ ...props.newProfile, assignment_priority: Number(event.target.value || 0) })}
-              placeholder="优先级"
-            />
-            <span />
-            <button className="btn primary" onClick={props.onAddProfile}>
-              <Plus size={15} />
-              新增
-            </button>
-          </div>
+            <div className="assignment-config-body">
+              <div className="profile-table">
+                <div className="profile-row head">
+                  <span>启用</span>
+                  <span>运营</span>
+                  <span>重点站点</span>
+                  <span>重点品类1</span>
+                  <span>重点品类2</span>
+                  <span>优先级</span>
+                  <span>排序</span>
+                  <span>删除</span>
+                </div>
+                {profileGroups.flatMap((profileGroup) => profileGroup.items.map((profile, profileIndex) => (
+                  <div className="profile-row" data-site={profileGroup.site} key={profile.id}>
+                    <input
+                      type="checkbox"
+                      checked={profile.enabled}
+                      onChange={(event) => patchProfile(profile.id, { enabled: event.target.checked })}
+                      aria-label={`${profile.operator_name} 是否启用`}
+                    />
+                    <input value={profile.operator_name} onChange={(event) => patchProfile(profile.id, { operator_name: event.target.value })} />
+                    <input value={profile.key_site || ""} onChange={(event) => patchProfile(profile.id, { key_site: event.target.value })} />
+                    <input value={profile.key_category1 || ""} onChange={(event) => patchProfile(profile.id, { key_category1: event.target.value })} />
+                    <input value={profile.key_category2 || ""} onChange={(event) => patchProfile(profile.id, { key_category2: event.target.value })} />
+                    <input
+                      type="number"
+                      value={profile.assignment_priority || 0}
+                      onChange={(event) => patchProfile(profile.id, { assignment_priority: Number(event.target.value || 0) })}
+                    />
+                    <div className="action-row compact-actions">
+                      <button className="btn" disabled={profileIndex === 0} onClick={() => moveProfile(profile.id, -1)} title="在同站点上移" type="button">
+                        <ArrowUp size={14} />
+                      </button>
+                      <button className="btn" disabled={profileIndex === profileGroup.items.length - 1} onClick={() => moveProfile(profile.id, 1)} title="在同站点下移" type="button">
+                        <ArrowDown size={14} />
+                      </button>
+                    </div>
+                    <div className="action-row compact-actions">
+                      <button className="btn" onClick={() => props.onDeleteProfile(profile.id)} title="删除">
+                        <Trash2 size={15} />
+                      </button>
+                    </div>
+                  </div>
+                )))}
+                <div className="profile-row new">
+                  <input
+                    type="checkbox"
+                    checked={props.newProfile.enabled}
+                    onChange={(event) => props.setNewProfile({ ...props.newProfile, enabled: event.target.checked })}
+                    aria-label="新运营是否启用"
+                  />
+                  <input
+                    value={props.newProfile.operator_name}
+                    onChange={(event) => props.setNewProfile({ ...props.newProfile, operator_name: event.target.value })}
+                    placeholder="运营"
+                  />
+                  <input
+                    value={props.newProfile.key_site || ""}
+                    onChange={(event) => props.setNewProfile({ ...props.newProfile, key_site: event.target.value })}
+                    placeholder="站点缩写，如 PH / TH / SG"
+                  />
+                  <input
+                    value={props.newProfile.key_category1 || ""}
+                    onChange={(event) => props.setNewProfile({ ...props.newProfile, key_category1: event.target.value })}
+                    placeholder="重点品类1"
+                  />
+                  <input
+                    value={props.newProfile.key_category2 || ""}
+                    onChange={(event) => props.setNewProfile({ ...props.newProfile, key_category2: event.target.value })}
+                    placeholder="重点品类2"
+                  />
+                  <input
+                    type="number"
+                    value={props.newProfile.assignment_priority || 0}
+                    onChange={(event) => props.setNewProfile({ ...props.newProfile, assignment_priority: Number(event.target.value || 0) })}
+                    placeholder="优先级"
+                  />
+                  <span />
+                  <button className="btn primary" onClick={props.onAddProfile}>
+                    <Plus size={15} />
+                    新增
+                  </button>
+                </div>
+              </div>
+            </div>
+          </section>
         </div>
-      </section>
+      )}
     </div>
   );
 }
@@ -3045,14 +3080,7 @@ function ClaimView(props: {
   }
 
   function setMode(itemId: string, mode: "claim" | "reject", group?: ProductGroup | null, syncReject = false) {
-    patchDraft(
-      itemId,
-      mode === "claim"
-        ? { mode, rejectReason: "" }
-        : { mode, claimDailySales: "" },
-      group,
-      syncReject
-    );
+    patchDraft(itemId, { mode }, group, syncReject);
   }
 
   function buildPayload(item: Opportunity, draft: ClaimDraft, requireComplete: boolean) {
@@ -3215,7 +3243,6 @@ function ClaimView(props: {
                         <b>{item.sub_sku_name || item.keyword || "-"}</b>
                       </p>
                       <div className="claim-row-meta">
-                        <ClaimSubmissionBadge draft={props.drafts[item.id]} item={item} />
                         {item.latest_claim_result && <span>上次：{item.latest_claim_result === "claim" ? "认领" : "不认领"}</span>}
                         {item.current_status === "returned_for_supplement" && item.latest_review_comment && <span className="red">退回：{item.latest_review_comment}</span>}
                       </div>
@@ -3357,6 +3384,7 @@ function ClaimDraftEditor(props: {
         onRemove={props.onRemoveEvidence}
       />
       <div className="claim-editor-actions">
+        <ClaimSubmissionBadge draft={props.draft} item={props.item} />
         {props.showRemove && props.onRemoveSelfClaim && (
           <button className="btn small" type="button" onClick={props.onRemoveSelfClaim}>
             <Trash2 size={14} />
@@ -3391,16 +3419,21 @@ function ClaimDetailDrawer(props: {
   onSubmitGroup: () => void;
   onRemoveSelfClaim: (item: Opportunity) => void;
 }) {
+  const first = props.group.first;
   const moduleTabs: { key: ClaimDrawerModuleKey; label: string; columns: string[] }[] = [
     { key: "market", label: "市场调研", columns: columnsBetween("Z", "AN") },
     { key: "pricing", label: "价格 / 毛利", columns: columnsBetween("AO", "AV") },
     { key: "development", label: "开发询价 / 包装", columns: columnsBetween("M", "Y") },
-    { key: "cost", label: "成本 / 备货汇总", columns: columnsBetween("AW", "BX") }
+    {
+      key: "cost",
+      label: "成本 / 备货汇总",
+      columns: columnsBetween("AW", "BX").filter((column) => !isSourceClaimInputLabel(headerLabel(first, column) || selection1ColumnLabel(column)))
+    }
   ];
   const [activeModule, setActiveModule] = useState<ClaimDrawerModuleKey>("market");
   const activeTab = moduleTabs.find((tab) => tab.key === activeModule) || moduleTabs[0];
   const basicColumns = columnsBetween("A", "L").filter((column) => !["I", "J"].includes(column));
-  const first = props.group.first;
+  const dirtyCount = props.group.items.filter((item) => claimSubmissionState(item, props.drafts[item.id]) === "dirty").length;
   const summaryMeta = [first.site || first.country, first.developer_department, first.developer_name, first.category_level1, first.product_type]
     .filter(Boolean)
     .join(" · ");
@@ -3470,7 +3503,7 @@ function ClaimDetailDrawer(props: {
               <span className="tag">{activeTab.columns[0]}-{activeTab.columns[activeTab.columns.length - 1]}</span>
               <button className="btn primary" type="button" onClick={props.onSubmitGroup}>
                 <Send size={15} />
-                提交本主 SKU 未提交项
+                提交本主 SKU 未提交项{dirtyCount ? `（${dirtyCount}）` : ""}
               </button>
             </div>
           </div>
@@ -3545,7 +3578,6 @@ function ClaimMatrixTable(props: {
                     <b>{item.sub_sku}</b>
                     <span>{item.sub_sku_name || item.keyword || "-"}</span>
                     {statusPill(item.current_status)}
-                    <ClaimSubmissionBadge draft={props.drafts[item.id]} item={item} />
                   </span>
                 </div>
               </td>
@@ -3623,6 +3655,7 @@ function ClaimMatrixDraftEditor(props: {
         onFiles={(files) => void readEvidenceFiles(files, props.item.id).then(props.onAddEvidence)}
         onRemove={props.onRemoveEvidence}
       />
+      <ClaimSubmissionBadge draft={props.draft} item={props.item} />
       {props.showRemove && (
         <button className="btn small" type="button" onClick={props.onRemoveSelfClaim}>
           <Trash2 size={14} />移除
@@ -3640,7 +3673,18 @@ function draftForId(): ClaimDraft {
 }
 
 function draftForOpportunity(item: Opportunity): ClaimDraft {
-  return createClaimDraftFromLatest<EvidenceImage>(item);
+  const draft = createClaimDraftFromLatest<EvidenceImage>(item);
+  return {
+    ...draft,
+    evidenceImages: parseClaimEvidenceImages(item.latest_claim_note).map((image, index) => ({
+      id: `saved-${item.id}-${index}`,
+      name: image.name,
+      type: image.type,
+      size: image.size,
+      previewUrl: imageSrc(image.url || image.previewUrl || ""),
+      url: image.url || image.previewUrl
+    }))
+  };
 }
 
 function reviewDraftFor(item?: Opportunity | null): ReviewDraft {
@@ -4536,26 +4580,12 @@ function formatFileSize(size: number) {
 }
 
 function parseSubmittedEvidenceImages(note?: string | null): SubmittedEvidenceImage[] {
-  if (!note) return [];
-  try {
-    const parsed = JSON.parse(note) as { evidence_images?: unknown };
-    if (!Array.isArray(parsed.evidence_images)) return [];
-    return parsed.evidence_images
-      .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object")
-      .map((item) => ({
-        name: typeof item.name === "string" && item.name ? item.name : "图片附件",
-        type: typeof item.type === "string" ? item.type : "",
-        size: typeof item.size === "number" ? item.size : 0,
-        previewUrl: evidenceImageSrc(item)
-      }));
-  } catch {
-    return [];
-  }
-}
-
-function evidenceImageSrc(item: Record<string, unknown>) {
-  const source = typeof item.url === "string" ? item.url : typeof item.previewUrl === "string" ? item.previewUrl : "";
-  return source ? imageSrc(source) : undefined;
+  return parseClaimEvidenceImages(note).map((image) => ({
+    name: image.name,
+    type: image.type,
+    size: image.size,
+    previewUrl: imageSrc(image.url || image.previewUrl || "") || undefined
+  }));
 }
 
 async function readEvidenceFiles(files: FileList | File[], opportunityId: string) {

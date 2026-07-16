@@ -17,7 +17,7 @@ import {
   syncSecondaryResearchDraftPatch,
   SecondaryResearchDraft
 } from "./secondaryResearchDrafts";
-import { selection1ColumnLabel } from "./selection1Columns";
+import { isSourceClaimInputLabel, selection1ColumnLabel } from "./selection1Columns";
 import { formatBusinessNumber } from "./businessFormat";
 
 type ModuleKey = "secondary" | "market" | "pricing" | "development" | "cost" | "claims";
@@ -441,7 +441,9 @@ function SourceModuleMatrix({
   group: SecondaryResearchGroup;
   moduleKey: Exclude<ModuleKey, "secondary" | "claims">;
 }) {
-  const columns = moduleColumns[moduleKey];
+  const columns = moduleColumns[moduleKey].filter(
+    (column) => !isSourceClaimInputLabel(columnHeader(group.items[0], column))
+  );
   return (
     <div className="research-matrix source-module-matrix" style={{ "--research-column-count": columns.length } as CSSProperties}>
       <div className="research-matrix-head research-source-grid">
@@ -519,7 +521,11 @@ function formatDateTime(value?: string | null) {
 }
 
 function columnHeader(item: SecondaryResearchItem, column: string) {
-  return valueText(record(item.snapshot.headers_by_column)[column]) || selection1ColumnLabel(column);
+  const headers = record(item.snapshot.headers_by_column)[column];
+  if (Array.isArray(headers)) {
+    return headers.map(valueText).filter(Boolean).join(" / ") || selection1ColumnLabel(column);
+  }
+  return valueText(headers) || selection1ColumnLabel(column);
 }
 
 function record(value: unknown): Record<string, unknown> {

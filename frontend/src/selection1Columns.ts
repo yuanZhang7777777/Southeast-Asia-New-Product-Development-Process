@@ -80,3 +80,8 @@ const SELECTION1_COLUMN_LABELS: Record<string, string> = {
 export function selection1ColumnLabel(column: string) {
   return SELECTION1_COLUMN_LABELS[column] || column;
 }
+
+export function isSourceClaimInputLabel(label: string) {
+  const normalized = label.replace(/\s+/g, "");
+  return ["不认领理由", "不认领原因", "主销售员"].some((field) => normalized.includes(field));
+}

@@ -96,16 +96,9 @@ PRICING_ALIASES = {
     "AX": ["推广期总成本（PHP）（含头程+平台费+基础设施）", "推广期总成本（THB）（含头程+平台费+基础设施）", "推广期总成本（VND）（含头程+平台费+基础设施）"],
 }
 
-CLAIM_COLUMNS = {
-    "CC": "reject_reason",
-    "CD": "salesperson_name",
-    "CE": "claim_result",
-    "CF": "claim_daily_sales",
-    "CG": "feedback_summary",
-    "CH": "note",
-}
+TRACEABILITY_COLUMNS = ("CC", "CD", "CE", "CF", "CG", "CH")
 
-SNAPSHOT_COLUMNS = tuple(get_column_letter(index) for index in range(1, column_index_from_string("BX") + 1)) + tuple(CLAIM_COLUMNS)
+SNAPSHOT_COLUMNS = tuple(get_column_letter(index) for index in range(1, column_index_from_string("BX") + 1)) + TRACEABILITY_COLUMNS
 MAX_SOURCE_COLUMN = column_index_from_string("CH")
 
 def import_selection1_workbook(db: Session, payload: schemas.Selection1ImportRequest) -> schemas.Selection1ImportResponse:
@@ -157,8 +150,6 @@ def import_selection1_workbook(db: Session, payload: schemas.Selection1ImportReq
         updated_count += int(not created)
 
         market_research_count += replace_market_research(db, opportunity.id, parsed)
-        if replace_source_claim_prefill(db, opportunity.id, parsed):
-            prefill_claim_count += 1
         if ensure_import_claim_task(db, opportunity, parsed):
             task_count += 1
 
@@ -239,14 +230,6 @@ def parse_selection1_row(row: tuple[Any, ...], headers_by_column: dict[str, list
         for column, label in PRICING_SNAPSHOT_COLUMNS.items()
         if source_value(raw_values, headers_by_column or {}, PRICING_ALIASES.get(column, [label]), column) not in (None, "")
     }
-    feedback_parts = [text_value(values["CG"]), text_value(values["CH"])]
-    claim_prefill = {
-        "reject_reason": text_value(values["CC"]),
-        "salesperson_name": text_value(values["CD"]),
-        "claim_result": normalize_claim_result(values["CE"]),
-        "claim_daily_sales": number_value(values["CF"]),
-        "feedback_summary": "\n".join(part for part in feedback_parts if part),
-    }
     parsed = {
         "main": {field: values[column] for column, field in MAIN_COLUMNS.items()},
         "country": derive_country(site),
@@ -254,7 +237,6 @@ def parse_selection1_row(row: tuple[Any, ...], headers_by_column: dict[str, list
         "reference_daily_sales": number_value(source_value(raw_values, headers_by_column or {}, PRICING_ALIASES["AO"], "AO")),
         "reference_price": number_value(source_value(raw_values, headers_by_column or {}, PRICING_ALIASES["AP"], "AP")),
         "pricing_snapshot": pricing_snapshot,
-        "claim_prefill": claim_prefill,
         "snapshot": {
             "source_type": SOURCE_TYPE,
             "allowed_columns": list(raw_values),
@@ -263,7 +245,6 @@ def parse_selection1_row(row: tuple[Any, ...], headers_by_column: dict[str, list
             "fields_by_column": fields_by_column(raw_values),
             "fields_by_header": fields_by_header(headers_by_column or {}, raw_values),
             "pricing_snapshot": pricing_snapshot,
-            "claim_prefill": claim_prefill,
         },
     }
     return parsed
@@ -382,33 +363,7 @@ def replace_market_research(db: Session, opportunity_id: str, parsed: dict[str, 
     return count
 
 
-def replace_source_claim_prefill(db: Session, opportunity_id: str, parsed: dict[str, Any]) -> bool:
-    claim = parsed["claim_prefill"]
-    db.execute(
-        delete(models.SalesClaimForecast).where(
-            models.SalesClaimForecast.opportunity_id == opportunity_id,
-            models.SalesClaimForecast.source_column == "CC:CH",
-        )
-    )
-    if not any(claim.values()):
-        return False
-    db.add(
-        models.SalesClaimForecast(
-            opportunity_id=opportunity_id,
-            platform="Shopee",
-            salesperson_name=claim["salesperson_name"],
-            claim_result=claim["claim_result"],
-            claim_daily_sales=claim["claim_daily_sales"],
-            reject_reason=claim["reject_reason"],
-            feedback_summary=claim["feedback_summary"],
-            source_column="CC:CH",
-        )
-    )
-    return True
-
-
 def ensure_import_claim_task(db: Session, opportunity: models.NewProductOpportunity, parsed: dict[str, Any]) -> bool:
-    # Selection1 source claim columns are retained as reference/prefill only.
     # Supervisor assignment is the only first-version entry to operator tasks.
     return False
 
@@ -467,15 +422,6 @@ def is_repeated_header_row(values: dict[str, Any]) -> bool:
 
 def derive_country(site: str | None) -> str | None:
     return normalize_site_code(site)
-
-
-def normalize_claim_result(value: Any) -> str | None:
-    text = text_value(value)
-    if text in {"是", "认领", "claim", "CLAIM", "yes", "YES"}:
-        return "claim"
-    if text in {"否", "不认领", "reject", "REJECT", "no", "NO"}:
-        return "reject"
-    return None
 
 
 def clean_cell(value: Any) -> Any:

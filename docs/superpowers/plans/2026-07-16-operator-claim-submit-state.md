@@ -14,6 +14,7 @@
 - 接口失败时保留草稿。
 - 不新增数据库字段、后端接口或依赖。
 - 页面不展示“写入数据库”等技术术语。
+- 选品1源表认领字段只保留来源追溯，不作为平台草稿或分配推荐。
 
 ---
 
@@ -111,3 +112,19 @@ Expected: TypeScript and Vite production build pass.
 - [x] **Step 6: Commit and deploy**
 
 Commit the implementation, build a frontend-only candidate container, verify it through Caddy, atomically reload Caddy, persist the new container target, and verify `/api/health` remains `production / ok`.
+
+### Task 3: 认领草稿完整恢复与选品1来源隔离
+
+**Files:**
+- Modify: `frontend/src/claimDrafts.ts`
+- Modify: `frontend/src/App.tsx`
+- Modify: `frontend/src/SecondaryResearchView.tsx`
+- Modify: `backend/app/selection1_importer.py`
+- Modify: `backend/app/services.py`
+
+- [x] 历史平台调研图片恢复到运营编辑器，恢复本身不触发未提交状态。
+- [x] 状态提示移动到提交操作附近，详情组提交按钮显示未提交数量。
+- [x] 认领 / 不认领往返切换保留另一模式已填内容。
+- [x] 选品1源表 CC:CH 只保留来源快照，不生成认领记录或分配推荐。
+- [x] 按真实表头隐藏源表不认领理由和主销售员，不误伤旧期数物流字段。
+- [x] 前端测试、生产构建和选品1导入回归通过。
