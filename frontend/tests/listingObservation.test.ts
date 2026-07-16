@@ -156,6 +156,16 @@ test("主管运营视角未选运营时页面在请求前清空并短路", () =>
   assert.match(listingObservationViewSource, /请先选择运营/);
 });
 
+test("刊登观察页面使用单表和业务状态筛选且不暴露内部待取数", () => {
+  assert.doesNotMatch(listingObservationViewSource, /const TABS/);
+  assert.doesNotMatch(listingObservationViewSource, /listing-tabs/);
+  assert.doesNotMatch(listingObservationViewSource, /只看待我处理/);
+  assert.doesNotMatch(listingObservationViewSource, /待取数/);
+  assert.match(listingObservationViewSource, /业务状态/);
+  assert.match(listingObservationViewSource, /观察中/);
+  assert.match(listingObservationViewSource, /新增店铺 \+ Item/);
+});
+
 test("刊登记录的店铺、Item、刊登策略和第一周周期全部必填", () => {
   const errors = validateListingDrafts([
     { shop: " ", item: "", listing_strategy: "\n", first_period_start: "" }

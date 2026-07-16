@@ -3432,6 +3432,10 @@ th {
   border-top: 2px solid #93c5fd;
 }
 
+.listing-main-group-row td { background: #f4f7fb; border-top: 2px solid #dbe3ee; }
+.listing-group-toggle { display: inline-flex; align-items: center; gap: 8px; border: 0; background: transparent; color: inherit; cursor: pointer; }
+.listing-group-editor-row > td { padding: 14px; background: #fbfcfe; }
+
 .listing-period-table select,
 .listing-period-table textarea {
   min-width: 140px;

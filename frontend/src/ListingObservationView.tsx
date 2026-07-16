@@ -1,18 +1,18 @@
 import { ChevronDown, ChevronUp, Plus, RefreshCw, Trash2, X } from "lucide-react";
-import { KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   api,
   ListingRecord,
   ListingWorkbenchResponse,
-  ListingWorkbenchView,
   ObservationPeriodRow,
   PendingListingTask
 } from "./api";
 import {
-  buildListingTaskContexts,
+  buildListingWorkbenchGroups,
   createRequestGate,
   defaultNextBusinessPeriodStart,
+  filterListingWorkbenchGroups,
   filterObservationRows,
   formatObservationMetric,
   formatPercent,
@@ -33,21 +33,15 @@ import {
   sortObservationRows,
   validateListingDrafts,
   validateObservationReviews,
-  visibleSelectedPeriodIds
+  visibleSelectedPeriodIds,
+  WorkbenchBusinessStatus
 } from "./listingObservation";
 
 const EMPTY_DATA: ListingWorkbenchResponse = { pending_listing_tasks: [], listing_records: [], period_rows: [] };
-const TABS: Array<{ key: ListingWorkbenchView; label: string }> = [
-  { key: "pending_listing", label: "待刊登" },
-  { key: "pending_data", label: "待取数" },
-  { key: "pending_review", label: "待复盘" },
-  { key: "first_round_completed", label: "首轮观察完成" },
-  { key: "all", label: "全部" }
-];
-
-type WorkbenchFilters = ObservationFilters & { only_my_tasks: boolean };
+type WorkbenchFilters = ObservationFilters & { business_status: WorkbenchBusinessStatus };
 
 const DEFAULT_FILTERS: WorkbenchFilters = {
+  business_status: "pending_listing",
   query: "",
   country: "",
   salesperson_name: "",
@@ -56,8 +50,7 @@ const DEFAULT_FILTERS: WorkbenchFilters = {
   status: "",
   week_number: "",
   product_positioning: "",
-  tracking_status: "",
-  only_my_tasks: true
+  tracking_status: ""
 };
 
 export function ListingObservationView(props: {
@@ -66,10 +59,10 @@ export function ListingObservationView(props: {
   canManage: boolean;
   onStatus: (message: string) => void;
 }) {
-  const [view, setView] = useState<ListingWorkbenchView>("pending_listing");
   const [data, setData] = useState<ListingWorkbenchResponse>(EMPTY_DATA);
   const [filters, setFilters] = useState<WorkbenchFilters>(DEFAULT_FILTERS);
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [expandedGroups, setExpandedGroups] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [listingDrafts, setListingDrafts] = useState<Record<string, ListingDraft[]>>({});
   const [listingErrors, setListingErrors] = useState<Record<string, ListingDraftErrors[]>>({});
@@ -121,48 +114,81 @@ export function ListingObservationView(props: {
 
   useEffect(() => {
     void loadWorkbench();
-  }, [props.role, props.canManage, props.operatorName, filters.only_my_tasks]);
+  }, [props.role, props.canManage, props.operatorName]);
 
   useEffect(() => { if (summaryPeriodId) summaryDialog.current?.focus(); }, [summaryPeriodId]);
   useEffect(() => { if (newPeriod) newPeriodDialog.current?.focus(); }, [newPeriod?.listingId]);
   useEffect(() => { if (editingListing) editDialog.current?.focus(); }, [editingListing?.record.id]);
   useEffect(() => { if (voidingListing) voidDialog.current?.focus(); }, [voidingListing?.record.id]);
 
-  const rowsForView = useMemo(() => data.period_rows.filter((row) => {
-    if (view === "pending_data") return row.status === "pending_data";
-    if (view === "pending_review") return row.status === "pending_review";
-    if (view === "first_round_completed") return Boolean(row.first_round_completed_at);
-    return true;
-  }), [data.period_rows, view]);
-  const visibleRows = useMemo(() => sortObservationRows(filterObservationRows(rowsForView, filters)), [filters, rowsForView]);
-  const taskContexts = useMemo(() => buildListingTaskContexts(
+  const effectiveFilters = props.role === "manager"
+    ? filters
+    : { ...filters, salesperson_name: "" };
+  const groups = useMemo(() => buildListingWorkbenchGroups(
     data.pending_listing_tasks,
     data.listing_records,
+    data.period_rows,
     defaultNextBusinessPeriodStart()
-  ) as PendingListingTask[], [data.listing_records, data.pending_listing_tasks]);
-  const visibleTasks = useMemo(() => taskContexts.filter((task) => {
-    const query = filters.query?.trim().toLocaleLowerCase();
-    if (query && ![task.main_sku, task.main_sku_name].some((value) => value?.toLocaleLowerCase().includes(query))) return false;
-    if (filters.country && task.country !== filters.country) return false;
-    if (filters.salesperson_name && task.salesperson_name !== filters.salesperson_name) return false;
-    return true;
-  }), [taskContexts, filters.country, filters.query, filters.salesperson_name]);
+  ), [data]);
+  const businessGroups = useMemo(
+    () => filterListingWorkbenchGroups(groups, filters.business_status),
+    [filters.business_status, groups]
+  );
+  const hasPeriodFilters = Boolean(
+    effectiveFilters.shop
+    || effectiveFilters.period_start
+    || effectiveFilters.status
+    || effectiveFilters.week_number
+    || effectiveFilters.product_positioning
+    || effectiveFilters.tracking_status
+  );
+  const visibleGroups = useMemo(
+    () => businessGroups.flatMap((group) => {
+      const periodRows = sortObservationRows(filterObservationRows(group.periodRows, effectiveFilters));
+      const text = effectiveFilters.query?.trim().toLocaleLowerCase();
+      const contextMatches = !text || [group.context.main_sku, group.context.main_sku_name]
+        .some((value) => value?.toLocaleLowerCase().includes(text));
+      const commonMatches = (!effectiveFilters.country || group.context.country === effectiveFilters.country)
+        && (!effectiveFilters.salesperson_name || group.context.salesperson_name === effectiveFilters.salesperson_name);
+      if (!commonMatches) return [];
+      if (group.pendingListing) {
+        return contextMatches && !hasPeriodFilters ? [{ ...group, periodRows: [] }] : [];
+      }
+      const visibleListingIds = new Set(periodRows.map((row) => row.listing_record_id));
+      const listings = group.listings.filter((listing) => visibleListingIds.has(listing.id));
+      return periodRows.length ? [{ ...group, listings, periodRows }] : [];
+    }),
+    [businessGroups, effectiveFilters, hasPeriodFilters]
+  );
+  const visibleRows = visibleGroups.flatMap((group) => group.periodRows);
   const countries = useMemo(() => unique([
-    ...taskContexts.map((task) => task.country || ""),
+    ...groups.map((group) => group.context.country || ""),
     ...data.period_rows.map((row) => row.country || "")
-  ]), [data]);
+  ]), [data.period_rows, groups]);
   const owners = useMemo(() => unique([
-    ...taskContexts.map((task) => task.salesperson_name),
+    ...groups.map((group) => group.context.salesperson_name),
     ...data.period_rows.map((row) => row.salesperson_name)
-  ]), [data]);
-  const reviewableIds = visibleRows.filter(canReview).map((row) => row.id);
-  const visibleSelectedIds = visibleSelectedPeriodIds(selectedPeriods, visibleRows.filter(canReview));
+  ]), [data.period_rows, groups]);
+  const listingById = useMemo(
+    () => new Map(data.listing_records.map((listing) => [listing.id, listing])),
+    [data.listing_records]
+  );
+  const reviewableRows = visibleRows.filter((row) => canReview(row, listingById.get(row.listing_record_id)));
+  const reviewableIds = reviewableRows.map((row) => row.id);
+  const visibleSelectedIds = visibleSelectedPeriodIds(selectedPeriods, reviewableRows);
   const allReviewableSelected = reviewableIds.length > 0 && reviewableIds.every((id) => visibleSelectedIds.includes(id));
   const summaryRow = data.period_rows.find((row) => row.id === summaryPeriodId) || null;
+  const summaryListing = summaryRow ? listingById.get(summaryRow.listing_record_id) : undefined;
   const latestPeriodIds = useMemo(() => latestPeriodIdsByListing(data.period_rows), [data.period_rows]);
 
   function setFilter<K extends keyof WorkbenchFilters>(key: K, value: WorkbenchFilters[K]) {
     setFilters((current) => ({ ...current, [key]: value }));
+  }
+
+  function toggleGroup(taskKey: string) {
+    setExpandedGroups((current) => current.includes(taskKey)
+      ? current.filter((key) => key !== taskKey)
+      : [...current, taskKey]);
   }
 
   function rememberDialogFocus() {
@@ -430,23 +456,18 @@ export function ListingObservationView(props: {
 
   return (
     <div className="listing-workbench" ref={workbenchRoot} tabIndex={-1}>
-      <div className="listing-tabs" role="tablist">
-        {TABS.map((tab) => (
-          <button
-            type="button"
-            role="tab"
-            aria-selected={view === tab.key}
-            aria-controls="listing-workbench-panel"
-            key={tab.key}
-            className={view === tab.key ? "active" : ""}
-            onClick={() => setView(tab.key)}
-          >
-            {tab.label}
-          </button>
-        ))}
-      </div>
-
       <div className="listing-filters">
+        <label>
+          业务状态
+          <select value={filters.business_status} onChange={(event) => setFilter("business_status", event.target.value as WorkbenchBusinessStatus)}>
+            <option value="all">全部</option>
+            <option value="pending_listing">待刊登</option>
+            <option value="pending_review">待复盘</option>
+            <option value="first_round_completed">首轮观察完成</option>
+            <option value="stopped">停止跟踪</option>
+            <option value="voided">已作废</option>
+          </select>
+        </label>
         <label className="listing-search">
           关键词
           <input value={filters.query} onChange={(event) => setFilter("query", event.target.value)} placeholder="主 SKU / Item / 商品名称" />
@@ -467,50 +488,34 @@ export function ListingObservationView(props: {
             </select>
           </label>
         )}
-        {view !== "pending_listing" && (
-          <>
-            <label>
-              业务周期
-              <input type="date" value={filters.period_start} onChange={(event) => setFilter("period_start", event.target.value)} />
-            </label>
-            <label>
-              店铺
-              <input value={filters.shop} onChange={(event) => setFilter("shop", event.target.value)} placeholder="包含匹配" />
-            </label>
-            <label>
-              周期状态
-              <select value={filters.status} onChange={(event) => setFilter("status", event.target.value)}>
-                <option value="">全部</option>
-                <option value="pending_data">待取数</option>
-                <option value="pending_review">待复盘</option>
-                <option value="completed">已完成</option>
-              </select>
-            </label>
-          </>
-        )}
-        <label className="listing-mine-filter">
-          <input
-            type="checkbox"
-            checked={filters.only_my_tasks}
-            disabled={props.role === "operator"}
-            onChange={(event) => setFilter("only_my_tasks", event.target.checked)}
-          />
-          只看待我处理{props.role === "operator" && props.operatorName ? `（${props.operatorName}）` : ""}
+        <label>
+          业务周期
+          <input type="date" value={filters.period_start} onChange={(event) => setFilter("period_start", event.target.value)} />
         </label>
-        <button className="btn" type="button" onClick={() => setFilters({ ...DEFAULT_FILTERS, only_my_tasks: props.role === "operator" || DEFAULT_FILTERS.only_my_tasks })}>
+        <label>
+          店铺
+          <input value={filters.shop} onChange={(event) => setFilter("shop", event.target.value)} placeholder="包含匹配" />
+        </label>
+        <label>
+          周期处理状态
+          <select value={filters.status} onChange={(event) => setFilter("status", event.target.value)}>
+            <option value="">全部</option>
+            <option value="pending_review">待复盘</option>
+            <option value="completed">本周已复盘</option>
+          </select>
+        </label>
+        <button className="btn" type="button" onClick={() => setFilters(DEFAULT_FILTERS)}>
           清空筛选
         </button>
         <button className="btn" type="button" onClick={() => void loadWorkbench()} disabled={loading}>
           <RefreshCw size={14} />刷新
         </button>
-        {view !== "pending_listing" && (
-          <button className="btn" type="button" onClick={() => setAdvancedOpen((open) => !open)}>
-            高级筛选{advancedOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-          </button>
-        )}
+        <button className="btn" type="button" onClick={() => setAdvancedOpen((open) => !open)}>
+          高级筛选{advancedOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+        </button>
       </div>
 
-      {advancedOpen && view !== "pending_listing" && (
+      {advancedOpen && (
         <div className="listing-advanced-filters">
           <label>
             周次
@@ -538,161 +543,189 @@ export function ListingObservationView(props: {
         </div>
       )}
 
-      <div id="listing-workbench-panel" role="tabpanel" className="listing-workbench-panel">
-      {props.canManage && props.role === "operator" && !props.operatorName ? (
-        <div className="empty-state">请先选择运营</div>
-      ) : (
-        <>
-      {(view === "pending_listing" || view === "all") && (
-        <PendingListingTasks
-          tasks={visibleTasks}
-          records={data.listing_records}
-          periods={data.period_rows}
-          drafts={listingDrafts}
-          errors={listingErrors}
-          loading={loading}
-          onAdd={addListingDraft}
-          onUpdate={updateListingDraft}
-          onRemove={removeListingDraft}
-          onSubmit={(task) => void submitListings(task)}
-          onEdit={openListingEditor}
-          onTracking={(record) => void changeListingTracking(record)}
-          onVoid={openVoidListing}
-          canVoid={props.canManage}
-        />
-      )}
-      {view !== "pending_listing" && (
-        <>
-          <div className="listing-batchbar">
-            <span>当前显示 {visibleRows.length} 条 Item 周期</span>
-            <button className="btn primary" type="button" disabled={loading || !visibleSelectedIds.length} onClick={() => void submitReviews()}>
-              提交已选复盘（{visibleSelectedIds.length}）
-            </button>
-          </div>
-          <div className="listing-table-scroll">
-            <table className="listing-period-table">
-              <thead>
-                <tr>
-                  <th className="listing-sticky sticky-0">
-                    <input
-                      type="checkbox"
-                      aria-label="选择当前页全部待复盘周期"
-                      checked={allReviewableSelected}
-                      onChange={(event) => setSelectedPeriods((current) => event.target.checked
-                        ? unique([...current, ...reviewableIds])
-                        : current.filter((id) => !reviewableIds.includes(id)))}
-                    />
-                  </th>
-                  <th className="listing-sticky sticky-1">主 SKU</th>
-                  <th className="listing-sticky sticky-2">店铺</th>
-                  <th className="listing-sticky sticky-3">Item</th>
-                  <th className="listing-sticky sticky-4">负责人</th>
-                  <th className="listing-sticky sticky-5">周次</th>
-                  <th className="listing-sticky sticky-6">业务周期</th>
-                  <th>状态</th>
-                  <th>订单量</th>
-                  <th>总收入</th>
-                  <th>一次毛利额</th>
-                  <th>一次毛利率</th>
-                  <th>产品定位</th>
-                  <th>优化操作</th>
-                  <th>操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                {visibleRows.map((row, index) => {
-                  const draft = reviewDrafts[row.id] || reviewDraft(row);
-                  const editable = canReview(row);
-                  const isLastPeriod = latestPeriodIds[row.listing_record_id] === row.id;
-                  const groupKey = `${row.main_sku}|${row.country || ""}|${row.salesperson_name}`;
-                  const previous = visibleRows[index - 1];
-                  const previousKey = previous ? `${previous.main_sku}|${previous.country || ""}|${previous.salesperson_name}` : "";
-                  return (
-                    <tr key={row.id} className={index === 0 || groupKey !== previousKey ? "listing-group-start" : ""}>
-                      <td className="listing-sticky sticky-0">
-                        {editable && (
-                          <input
-                            type="checkbox"
-                            aria-label={`选择 ${row.item} 第 ${row.week_number} 周`}
-                            checked={selectedPeriods.includes(row.id)}
-                            onChange={(event) => setSelectedPeriods((current) => event.target.checked
-                              ? unique([...current, row.id])
-                              : current.filter((id) => id !== row.id))}
-                          />
-                        )}
-                      </td>
-                      <td className="listing-sticky sticky-1"><b>{row.main_sku}</b><small>{row.main_sku_name || "-"}</small></td>
-                      <td className="listing-sticky sticky-2">{row.shop}</td>
-                      <td className="listing-sticky sticky-3"><b>{row.item}</b><small>{row.country || "-"}{row.tracking_status === "stopped" ? " · 停止跟踪" : ""}</small></td>
-                      <td className="listing-sticky sticky-4">{row.salesperson_name}</td>
-                      <td className="listing-sticky sticky-5">第 {row.week_number} 周</td>
-                      <td className="listing-sticky sticky-6">{row.period_start}<small>至 {row.period_end}</small></td>
-                      <td><span className={`pill ${periodStatusClass(row.status)}`}>{periodStatusLabel(row.status)}</span></td>
-                      <td>{formatObservationMetric(row.order_count)}</td>
-                      <td>{formatObservationMetric(row.total_revenue)}</td>
-                      <td>{formatObservationMetric(row.gross_profit_amount)}</td>
-                      <td>{row.status === "pending_data" ? "周数据未获取" : formatPercent(row.gross_profit_rate)}</td>
-                      <td>
-                        {editable ? (
-                          <>
-                            <select
-                              className={reviewErrors[row.id]?.product_positioning ? "listing-error-input" : ""}
-                              value={draft.product_positioning}
-                              onChange={(event) => updateReview(row.id, { product_positioning: event.target.value as ProductPositioning | "" })}
-                            >
-                              <option value="">请选择</option>
-                              {PRODUCT_POSITIONINGS.map((positioning) => <option value={positioning} key={positioning}>{positioning}</option>)}
-                            </select>
-                            <FieldError message={reviewErrors[row.id]?.product_positioning} />
-                          </>
-                        ) : draft.product_positioning || "-"}
-                      </td>
-                      <td>
-                        {editable ? (
-                          <>
-                            <textarea
-                              className={reviewErrors[row.id]?.optimization_action ? "listing-error-input" : ""}
-                              value={draft.optimization_action}
-                              onChange={(event) => updateReview(row.id, { optimization_action: event.target.value })}
-                              placeholder="填写本周期优化操作"
+      <div id="listing-workbench-panel" className="listing-workbench-panel">
+        {props.canManage && props.role === "operator" && !props.operatorName ? (
+          <div className="empty-state">请先选择运营</div>
+        ) : (
+          <>
+            <div className="listing-batchbar">
+              <span>当前显示 {visibleRows.length} 条 Item 周期</span>
+              <button className="btn primary" type="button" disabled={loading || !visibleSelectedIds.length} onClick={() => void submitReviews()}>
+                提交已选复盘（{visibleSelectedIds.length}）
+              </button>
+            </div>
+            <div className="listing-table-scroll">
+              <table className="listing-period-table listing-grouped-table">
+                <thead>
+                  <tr>
+                    <th className="listing-sticky sticky-0">
+                      <input
+                        type="checkbox"
+                        aria-label="选择当前页全部待复盘周期"
+                        checked={allReviewableSelected}
+                        onChange={(event) => setSelectedPeriods((current) => event.target.checked
+                          ? unique([...current, ...reviewableIds])
+                          : current.filter((id) => !reviewableIds.includes(id)))}
+                      />
+                    </th>
+                    <th className="listing-sticky sticky-1">主 SKU</th>
+                    <th className="listing-sticky sticky-2">店铺</th>
+                    <th className="listing-sticky sticky-3">Item</th>
+                    <th className="listing-sticky sticky-4">负责人</th>
+                    <th className="listing-sticky sticky-5">周次</th>
+                    <th className="listing-sticky sticky-6">业务周期</th>
+                    <th>业务状态</th>
+                    <th>订单量</th>
+                    <th>总收入</th>
+                    <th>一次毛利额</th>
+                    <th>一次毛利率</th>
+                    <th>产品定位</th>
+                    <th>优化操作</th>
+                    <th>操作</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {visibleGroups.map((group) => (
+                    <Fragment key={group.context.task_key}>
+                      <tr className="listing-main-group-row">
+                        <td colSpan={15}>
+                          <button type="button" className="listing-group-toggle" onClick={() => toggleGroup(group.context.task_key)}>
+                            {expandedGroups.includes(group.context.task_key) ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
+                            <b>{group.context.main_sku}</b>
+                            <span>{group.context.main_sku_name || "-"}</span>
+                            <span>{group.context.country || group.context.site || "-"}</span>
+                            <span>{group.context.salesperson_name}</span>
+                            {group.pendingListing && <span className="pill amber">待刊登</span>}
+                          </button>
+                          <button type="button" className="btn small" onClick={() => {
+                            setExpandedGroups((current) => current.includes(group.context.task_key)
+                              ? current
+                              : [...current, group.context.task_key]);
+                            addListingDraft(group.context);
+                          }}>
+                            <Plus size={13} />{group.pendingListing ? "填写刊登" : "新增店铺 + Item"}
+                          </button>
+                        </td>
+                      </tr>
+                      {expandedGroups.includes(group.context.task_key) && (
+                        <tr className="listing-group-editor-row">
+                          <td colSpan={15}>
+                            <PendingListingTasks
+                              tasks={[group.context]}
+                              records={group.listings}
+                              periods={data.period_rows}
+                              drafts={listingDrafts}
+                              errors={listingErrors}
+                              loading={loading}
+                              onAdd={addListingDraft}
+                              onUpdate={updateListingDraft}
+                              onRemove={removeListingDraft}
+                              onSubmit={(task) => void submitListings(task)}
+                              onEdit={openListingEditor}
+                              onTracking={(record) => void changeListingTracking(record)}
+                              onVoid={openVoidListing}
+                              canVoid={props.canManage}
                             />
-                            <FieldError message={reviewErrors[row.id]?.optimization_action} />
-                          </>
-                        ) : draft.optimization_action || "-"}
-                      </td>
-                      <td className="listing-row-actions">
-                        <FieldError message={reviewErrors[row.id]?.period_id} />
-                        {row.week_number === 4 && row.status !== "pending_data" && (
-                          <button className="btn small" type="button" onClick={() => openSummary(row.id)}>
-                            {draft.four_week_summary ? "查看总结" : "填写总结"}
-                          </button>
-                        )}
-                        {isLastPeriod && (
-                          <button className="btn small" type="button" disabled={loading} onClick={() => void changeTracking(row)}>
-                            {row.tracking_status === "active" ? "停止跟踪" : "恢复跟踪"}
-                          </button>
-                        )}
-                        {isLastPeriod && row.first_round_completed_at && (
-                          <button
-                            className="btn small"
-                            type="button"
-                            onClick={() => openNewPeriod(row.listing_record_id)}
-                          >
-                            <Plus size={13} />新增周期
-                          </button>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-            {!visibleRows.length && <div className="empty-state">没有符合条件的 Item 周期</div>}
-          </div>
-        </>
-      )}
-        </>
-      )}
+                          </td>
+                        </tr>
+                      )}
+                      {group.periodRows.map((row) => {
+                        const draft = reviewDrafts[row.id] || reviewDraft(row);
+                        const listing = listingById.get(row.listing_record_id);
+                        const editable = canReview(row, listing);
+                        const isLastPeriod = latestPeriodIds[row.listing_record_id] === row.id;
+                        return (
+                          <tr key={row.id}>
+                            <td className="listing-sticky sticky-0">
+                              {editable && (
+                                <input
+                                  type="checkbox"
+                                  aria-label={`选择 ${row.item} 第 ${row.week_number} 周`}
+                                  checked={selectedPeriods.includes(row.id)}
+                                  onChange={(event) => setSelectedPeriods((current) => event.target.checked
+                                    ? unique([...current, row.id])
+                                    : current.filter((id) => id !== row.id))}
+                                />
+                              )}
+                            </td>
+                            <td className="listing-sticky sticky-1"><b>{row.main_sku}</b><small>{row.main_sku_name || "-"}</small></td>
+                            <td className="listing-sticky sticky-2">{row.shop}</td>
+                            <td className="listing-sticky sticky-3"><b>{row.item}</b><small>{row.country || "-"}{row.tracking_status === "stopped" ? " · 停止跟踪" : ""}</small></td>
+                            <td className="listing-sticky sticky-4">{row.salesperson_name}</td>
+                            <td className="listing-sticky sticky-5">第 {row.week_number} 周</td>
+                            <td className="listing-sticky sticky-6">{row.period_start}<small>至 {row.period_end}</small></td>
+                            <td><span className={`pill ${periodStatusClass(row, listing)}`}>{periodStatusLabel(row, listing)}</span></td>
+                            <td>{row.status === "pending_data" ? "-" : formatObservationMetric(row.order_count)}</td>
+                            <td>{row.status === "pending_data" ? "-" : formatObservationMetric(row.total_revenue)}</td>
+                            <td>{row.status === "pending_data" ? "-" : formatObservationMetric(row.gross_profit_amount)}</td>
+                            <td>{row.status === "pending_data" ? "-" : formatPercent(row.gross_profit_rate)}</td>
+                            <td>
+                              {editable ? (
+                                <>
+                                  <select
+                                    className={reviewErrors[row.id]?.product_positioning ? "listing-error-input" : ""}
+                                    value={draft.product_positioning}
+                                    onChange={(event) => updateReview(row.id, { product_positioning: event.target.value as ProductPositioning | "" })}
+                                  >
+                                    <option value="">请选择</option>
+                                    {PRODUCT_POSITIONINGS.map((positioning) => <option value={positioning} key={positioning}>{positioning}</option>)}
+                                  </select>
+                                  <FieldError message={reviewErrors[row.id]?.product_positioning} />
+                                </>
+                              ) : draft.product_positioning || "-"}
+                            </td>
+                            <td>
+                              {editable ? (
+                                <>
+                                  <textarea
+                                    className={reviewErrors[row.id]?.optimization_action ? "listing-error-input" : ""}
+                                    value={draft.optimization_action}
+                                    onChange={(event) => updateReview(row.id, { optimization_action: event.target.value })}
+                                    placeholder="填写本周期优化操作"
+                                  />
+                                  <FieldError message={reviewErrors[row.id]?.optimization_action} />
+                                </>
+                              ) : draft.optimization_action || "-"}
+                            </td>
+                            <td className="listing-row-actions">
+                              <FieldError message={reviewErrors[row.id]?.period_id} />
+                              {row.week_number === 4 && row.status !== "pending_data" && (
+                                <button className="btn small" type="button" onClick={() => openSummary(row.id)}>
+                                  {draft.four_week_summary ? "查看总结" : "填写总结"}
+                                </button>
+                              )}
+                              {isLastPeriod && listing?.status === "active" && (
+                                <button className="btn small" type="button" disabled={loading} onClick={() => void changeTracking(row)}>
+                                  {row.tracking_status === "active" ? "停止跟踪" : "恢复跟踪"}
+                                </button>
+                              )}
+                              {isLastPeriod && listing?.status === "active" && row.first_round_completed_at && (
+                                <button
+                                  className="btn small"
+                                  type="button"
+                                  onClick={() => openNewPeriod(row.listing_record_id)}
+                                >
+                                  <Plus size={13} />新增周期
+                                </button>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </Fragment>
+                  ))}
+                </tbody>
+              </table>
+              {!visibleGroups.length && (
+                <div className="empty-state">
+                  {filters.business_status === "pending_listing"
+                    ? "当前没有待刊登主 SKU，可选择全部查看观察记录"
+                    : "没有符合条件的 Item 周期"}
+                </div>
+              )}
+            </div>
+          </>
+        )}
       </div>
 
       {summaryRow && (
@@ -712,14 +745,14 @@ export function ListingObservationView(props: {
             <textarea
               className={reviewErrors[summaryRow.id]?.four_week_summary ? "listing-error-input" : ""}
               value={(reviewDrafts[summaryRow.id] || reviewDraft(summaryRow)).four_week_summary}
-              disabled={!canReview(summaryRow)}
+              disabled={!canReview(summaryRow, summaryListing)}
               onChange={(event) => updateReview(summaryRow.id, { four_week_summary: event.target.value })}
               placeholder="总结首轮四周表现、主要问题和后续动作"
             />
             <FieldError message={reviewErrors[summaryRow.id]?.four_week_summary} />
             <div className="listing-dialog-actions">
               <button className="btn primary" type="button" onClick={closeSummary}>
-                {canReview(summaryRow) ? "保存填写" : "关闭"}
+                {canReview(summaryRow, summaryListing) ? "保存填写" : "关闭"}
               </button>
             </div>
           </div>
@@ -849,7 +882,7 @@ export function ListingObservationSummary(props: {
             <b>{listing.shop} · {listing.item}</b>
             <span>刊登策略：{listing.listing_strategy}</span>
             <span>首周：{listing.first_period_start}</span>
-            <span>{listing.status === "voided" ? "已作废" : listing.tracking_status === "stopped" ? "停止跟踪" : listing.first_round_completed_at ? "首轮观察完成" : "观察中"}</span>
+            <span>{listingStatusLabel(listing)}</span>
           </div>
         ))}
       </div>
@@ -894,7 +927,7 @@ function PendingListingTasks(props: {
   onVoid: (record: ListingRecord) => void;
   canVoid: boolean;
 }) {
-  if (!props.tasks.length) return <div className="empty-state">当前没有待刊登的主 SKU</div>;
+  if (!props.tasks.length) return <div className="empty-state">点击“新增店铺 + Item”开始填写刊登信息。</div>;
   return (
     <div className="pending-listing-tasks">
       {props.tasks.map((task) => {
@@ -922,23 +955,20 @@ function PendingListingTasks(props: {
                   <table className="pending-listing-table listing-existing-table">
                     <thead><tr><th>店铺</th><th>Item</th><th>刊登策略</th><th>起始周期</th><th>状态</th><th>操作</th></tr></thead>
                     <tbody>
-                      {records.map((record) => {
-                        const fetched = hasFetchedMetrics(props.periods.filter((period) => period.listing_record_id === record.id));
-                        return (
-                          <tr key={record.id}>
-                            <td>{record.shop}</td>
-                            <td>{record.item}</td>
-                            <td>{record.listing_strategy}</td>
-                            <td>{record.first_period_start}</td>
-                            <td>{record.status === "voided" ? "已作废" : record.tracking_status === "stopped" ? "停止跟踪" : fetched ? "已取数" : "待取数"}</td>
-                            <td className="listing-row-actions">
-                              {record.status === "active" && <button className="btn small" type="button" onClick={() => props.onEdit(record)}>纠错</button>}
-                              {record.status === "active" && <button className="btn small" type="button" onClick={() => props.onTracking(record)}>{record.tracking_status === "active" ? "停止跟踪" : "恢复跟踪"}</button>}
-                              {props.canVoid && record.status === "active" && <button className="btn small" type="button" onClick={() => props.onVoid(record)}>作废</button>}
-                            </td>
-                          </tr>
-                        );
-                      })}
+                      {records.map((record) => (
+                        <tr key={record.id}>
+                          <td>{record.shop}</td>
+                          <td>{record.item}</td>
+                          <td>{record.listing_strategy}</td>
+                          <td>{record.first_period_start}</td>
+                          <td>{listingStatusLabel(record)}</td>
+                          <td className="listing-row-actions">
+                            {record.status === "active" && <button className="btn small" type="button" onClick={() => props.onEdit(record)}>纠错</button>}
+                            {record.status === "active" && <button className="btn small" type="button" onClick={() => props.onTracking(record)}>{record.tracking_status === "active" ? "停止跟踪" : "恢复跟踪"}</button>}
+                            {props.canVoid && record.status === "active" && <button className="btn small" type="button" onClick={() => props.onVoid(record)}>作废</button>}
+                          </td>
+                        </tr>
+                      ))}
                     </tbody>
                   </table>
                 </div>
@@ -961,7 +991,7 @@ function PendingListingTasks(props: {
                   </tbody>
                 </table>
               </div>
-            ) : <div className="pending-listing-empty">点击“新增一条”，填写店铺、Item、刊登策略和第一周起始周期。</div>}
+            ) : <div className="pending-listing-empty">点击“新增店铺 + Item”，填写店铺、Item、刊登策略和第一周起始周期。</div>}
             <div className="pending-listing-submit">
               <span>同一主 SKU 可新增多条；任一行校验失败，整批都不会写入。</span>
               <button className="btn primary" type="button" disabled={props.loading || !rows.length} onClick={() => props.onSubmit(task)}>
@@ -985,20 +1015,30 @@ function reviewDraft(row: ObservationPeriodRow): ObservationReviewDraft {
   };
 }
 
-function canReview(row: ObservationPeriodRow) {
-  return row.status === "pending_review" && row.tracking_status === "active";
+function canReview(row: ObservationPeriodRow, listing?: ListingRecord) {
+  return listing?.status === "active"
+    && row.status === "pending_review"
+    && row.tracking_status === "active";
 }
 
-function periodStatusLabel(status: ObservationPeriodRow["status"]) {
-  if (status === "pending_data") return "待取数";
-  if (status === "pending_review") return "待复盘";
-  return "已完成";
+function periodStatusLabel(row: ObservationPeriodRow, listing?: ListingRecord) {
+  if (listing?.status === "voided") return "已作废";
+  if (row.tracking_status === "stopped") return "停止跟踪";
+  if (row.status === "pending_data") return "观察中";
+  if (row.status === "pending_review") return "待复盘";
+  return "本周已复盘";
 }
 
-function periodStatusClass(status: ObservationPeriodRow["status"]) {
-  if (status === "pending_data") return "gray";
-  if (status === "pending_review") return "amber";
-  return "green";
+function periodStatusClass(row: ObservationPeriodRow, listing?: ListingRecord) {
+  if (listing?.status === "voided" || row.tracking_status === "stopped" || row.status === "pending_data") return "gray";
+  return row.status === "pending_review" ? "amber" : "green";
+}
+
+function listingStatusLabel(record: ListingRecord) {
+  if (record.status === "voided") return "已作废";
+  if (record.tracking_status === "stopped") return "停止跟踪";
+  if (record.first_round_completed_at) return "首轮观察完成";
+  return "观察中";
 }
 
 function FieldError({ message }: { message?: string }) {
