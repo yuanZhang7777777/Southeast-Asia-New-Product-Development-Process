@@ -1,6 +1,6 @@
 import os
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 os.environ["DATABASE_URL"] = f"sqlite:///{Path(__file__).with_name('test_workflow.db')}"
@@ -401,6 +401,49 @@ def test_bulk_confirmed_not_claim_rows_are_claim_scoped_and_exported() -> None:
     assert None not in review_claim_ids
 
 
+def test_historical_null_not_claim_confirmation_exports_only_latest_existing_submission() -> None:
+    _, older_claim_id, latest_claim_id = prepare_historical_null_reject_review(
+        "W-LEGACY-NOT-CLAIM",
+        "confirmed_not_claim",
+    )
+
+    response = client.get("/stocking/traceability/export?source_sheet=W-LEGACY-NOT-CLAIM")
+
+    assert response.status_code == 200
+    workbook = load_workbook(BytesIO(response.content), data_only=True)
+    sheet = workbook["不认领结果"]
+    headers = [cell.value for cell in sheet[1]]
+    rows = [dict(zip(headers, [cell.value for cell in row])) for row in sheet.iter_rows(min_row=2)]
+    assert [row["销售员"] for row in rows] == ["销售最新提交"]
+    with SessionLocal() as db:
+        exported_claim_ids = {row.claim_record_id for row in db.query(models.ExportRow)}
+    assert older_claim_id not in exported_claim_ids
+    assert exported_claim_ids == {latest_claim_id}
+
+
+def test_historical_null_return_targets_only_latest_existing_submission() -> None:
+    opportunity_id, older_claim_id, latest_claim_id = prepare_historical_null_reject_review(
+        "W-LEGACY-RETURN",
+        "returned_for_supplement",
+    )
+
+    with SessionLocal() as db:
+        older_review = services.latest_review_for_claim(
+            db,
+            opportunity_id,
+            db.get(models.SalesClaimForecast, older_claim_id),
+        )
+        latest_review = services.latest_review_for_claim(
+            db,
+            opportunity_id,
+            db.get(models.SalesClaimForecast, latest_claim_id),
+        )
+
+    assert older_review is None
+    assert latest_review is not None
+    assert latest_review.review_status == "returned_for_supplement"
+
+
 def test_traceability_export_records_each_repeat_download() -> None:
     prepare_reject_claim(source_sheet="W27", source_row=1, main_sku="MAIN-NOT-CLAIM-ONCE", review_status="confirmed_not_claim")
 
@@ -523,6 +566,63 @@ def prepare_reject_claim(
             )
         db.commit()
         return opportunity.id
+
+
+def prepare_historical_null_reject_review(source_sheet: str, review_status: str) -> tuple[str, str, str]:
+    reviewed_at = datetime(2026, 7, 1, 8, tzinfo=timezone.utc)
+    with SessionLocal() as db:
+        opportunity = models.NewProductOpportunity(
+            source_type="selection1_developer_claim_feedback",
+            source_file="选品1.xlsx",
+            source_sheet=source_sheet,
+            source_row=1,
+            batch=source_sheet,
+            country="PH",
+            site="PH",
+            main_sku=f"MAIN-{source_sheet}",
+            sub_sku=f"SUB-{source_sheet}",
+            current_status="已确认不认领" if review_status == "confirmed_not_claim" else "returned_for_supplement",
+        )
+        db.add(opportunity)
+        db.flush()
+        older_submitted_at = reviewed_at - timedelta(minutes=2)
+        latest_submitted_at = reviewed_at - timedelta(minutes=1)
+        older_claim = models.SalesClaimForecast(
+            opportunity_id=opportunity.id,
+            salesperson_name="销售较早提交",
+            claim_result="reject",
+            reject_reason="较早不认领",
+            source_column="platform",
+            created_at=older_submitted_at,
+            first_submitted_at=older_submitted_at,
+            last_updated_at=older_submitted_at,
+        )
+        latest_claim = models.SalesClaimForecast(
+            opportunity_id=opportunity.id,
+            salesperson_name="销售最新提交",
+            claim_result="reject",
+            reject_reason="最新不认领",
+            source_column="platform",
+            created_at=latest_submitted_at,
+            first_submitted_at=latest_submitted_at,
+            last_updated_at=latest_submitted_at,
+        )
+        db.add_all(
+            [
+                older_claim,
+                latest_claim,
+                models.ReviewRecord(
+                    opportunity_id=opportunity.id,
+                    reviewer_name="历史主管",
+                    review_status=review_status,
+                    created_at=reviewed_at,
+                ),
+            ]
+        )
+        db.flush()
+        result = (opportunity.id, older_claim.id, latest_claim.id)
+        db.commit()
+        return result
 
 
 def write_uploaded_product_image() -> str:

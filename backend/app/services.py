@@ -1021,8 +1021,12 @@ def create_returned_claim_task(db: Session, opportunity_id: str, actor_name: str
     audit(db, "claim.returned_for_supplement", "flow_task", task.id, {"opportunity_id": opportunity_id}, actor_name)
 
 
-def latest_platform_submission(db: Session, opportunity_id: str) -> models.SalesClaimForecast | None:
-    return db.scalar(
+def latest_platform_submission(
+    db: Session,
+    opportunity_id: str,
+    created_before: datetime | None = None,
+) -> models.SalesClaimForecast | None:
+    query = (
         select(models.SalesClaimForecast)
         .where(
             models.SalesClaimForecast.opportunity_id == opportunity_id,
@@ -1030,6 +1034,9 @@ def latest_platform_submission(db: Session, opportunity_id: str) -> models.Sales
         )
         .order_by(models.SalesClaimForecast.last_updated_at.desc(), models.SalesClaimForecast.created_at.desc())
     )
+    if created_before is not None:
+        query = query.where(models.SalesClaimForecast.created_at <= created_before)
+    return db.scalar(query)
 
 
 def open_secondary_research(
@@ -2369,17 +2376,26 @@ def latest_review_for_claim(
     opportunity_id: str,
     claim: models.SalesClaimForecast,
 ) -> models.ReviewRecord | None:
-    return db.scalar(
+    reviews = db.scalars(
         select(models.ReviewRecord)
         .where(
             models.ReviewRecord.opportunity_id == opportunity_id,
-            or_(
-                models.ReviewRecord.claim_record_id == claim.id,
-                models.ReviewRecord.claim_record_id.is_(None) & (models.ReviewRecord.created_at >= claim.created_at),
-            ),
+            or_(models.ReviewRecord.claim_record_id == claim.id, models.ReviewRecord.claim_record_id.is_(None)),
         )
         .order_by(models.ReviewRecord.created_at.desc(), models.ReviewRecord.claim_record_id.desc())
     )
+    for review in reviews:
+        if review.claim_record_id == claim.id:
+            return review
+        if not _same_or_later(review.created_at, claim.created_at):
+            continue
+        if review.review_status == REVIEW_APPROVED:
+            return review
+        if review.review_status in {REVIEW_CONFIRMED_NOT_CLAIM, REVIEW_RETURNED_FOR_SUPPLEMENT}:
+            latest_submission = latest_platform_submission(db, opportunity_id, created_before=review.created_at)
+            if latest_submission and latest_submission.id == claim.id:
+                return review
+    return None
 
 
 def latest_review(db: Session, opportunity_id: str) -> models.ReviewRecord | None:

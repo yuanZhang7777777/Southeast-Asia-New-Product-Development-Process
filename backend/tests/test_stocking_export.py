@@ -103,7 +103,9 @@ def test_stocking_export_repeats_current_rows_without_regressing_later_status() 
 
     with SessionLocal() as db:
         claim = db.query(models.SalesClaimForecast).filter_by(opportunity_id=opportunity_id).one()
+        opportunity = db.get(models.NewProductOpportunity, opportunity_id)
         claim.downstream_status = "waiting_secondary_research"
+        opportunity.current_status = "已确认不认领"
         db.commit()
 
     second = client.get("/stocking/available-list/export?business_period=BATCH-EXPORT")
@@ -120,7 +122,7 @@ def test_stocking_export_repeats_current_rows_without_regressing_later_status() 
             entity_id=opportunity_id,
         ).all()
         assert claim.downstream_status == "waiting_secondary_research"
-        assert opportunity.current_status == "waiting_arrival"
+        assert opportunity.current_status == "已确认不认领"
         assert len(rows) == 2
         assert len(transition_audits) == 1
 
