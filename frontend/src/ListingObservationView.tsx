@@ -91,11 +91,18 @@ export function ListingObservationView(props: {
 
   async function loadWorkbench() {
     const requestId = requestGate.current.start();
+    const scope = resolveWorkbenchScope(props.role, props.canManage, props.operatorName);
+    if (!scope) {
+      setData(EMPTY_DATA);
+      setSelectedPeriods([]);
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     try {
       const response = await api.listingWorkbench({
         view: "all",
-        ...resolveWorkbenchScope(props.role, props.canManage, props.operatorName, filters.only_my_tasks)
+        ...scope
       });
       if (!requestGate.current.isCurrent(requestId)) return;
       setData(response);
@@ -532,6 +539,10 @@ export function ListingObservationView(props: {
       )}
 
       <div id="listing-workbench-panel" role="tabpanel" className="listing-workbench-panel">
+      {props.canManage && props.role === "operator" && !props.operatorName ? (
+        <div className="empty-state">请先选择运营</div>
+      ) : (
+        <>
       {(view === "pending_listing" || view === "all") && (
         <PendingListingTasks
           tasks={visibleTasks}
@@ -678,6 +689,8 @@ export function ListingObservationView(props: {
             </table>
             {!visibleRows.length && <div className="empty-state">没有符合条件的 Item 周期</div>}
           </div>
+        </>
+      )}
         </>
       )}
       </div>

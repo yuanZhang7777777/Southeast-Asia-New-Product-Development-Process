@@ -25,6 +25,8 @@ import {
   visibleSelectedPeriodIds
 } from "../src/listingObservation.ts";
 
+const listingObservationViewSource = readFileSync(new URL("../src/ListingObservationView.tsx", import.meta.url), "utf8");
+
 function pendingTask(patch: Partial<PendingListingTask> = {}): PendingListingTask {
   return {
     task_key: "task-1",
@@ -144,6 +146,14 @@ test("主管默认全量而主管运营视角按所选运营查询", () => {
   assert.deepEqual(resolveWorkbenchScope("operator", true, "运营甲"), { salesperson_name: "运营甲" });
   assert.equal(resolveWorkbenchScope("operator", true, ""), null);
   assert.deepEqual(resolveWorkbenchScope("operator", false, "伪造运营"), {});
+});
+
+test("主管运营视角未选运营时页面在请求前清空并短路", () => {
+  const loadWorkbenchSource = listingObservationViewSource.match(/async function loadWorkbench\(\) \{[\s\S]*?\n  \}\n\n  useEffect/)?.[0] || "";
+  assert.match(loadWorkbenchSource, /const scope = resolveWorkbenchScope\(props\.role, props\.canManage, props\.operatorName\);/);
+  assert.match(loadWorkbenchSource, /if \(!scope\) \{[\s\S]*?setData\(EMPTY_DATA\);[\s\S]*?setSelectedPeriods\(\[\]\);[\s\S]*?setLoading\(false\);[\s\S]*?return;[\s\S]*?\}/);
+  assert.ok(loadWorkbenchSource.indexOf("if (!scope)") < loadWorkbenchSource.indexOf("api.listingWorkbench"));
+  assert.match(listingObservationViewSource, /请先选择运营/);
 });
 
 test("刊登记录的店铺、Item、刊登策略和第一周周期全部必填", () => {
