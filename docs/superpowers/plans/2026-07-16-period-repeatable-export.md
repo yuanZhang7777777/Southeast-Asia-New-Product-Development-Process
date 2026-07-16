@@ -474,7 +474,7 @@ git commit -m "feat: add period export workbench"
 
 - [x] **Step 1: Run complete local verification**
 
-> Final review follow-up, 2026-07-16: local implementation head `c32e436` passed backend full `202` tests in `396.99s`, frontend `npm test` (`45`), and the production build. New/bulk review rows are claim-scoped; historical null `claim_record_id` reviews apply only to claims already present at review time. The branch remains unmerged and undeployed; no service restart occurred.
+> Final re-review, 2026-07-16: local implementation head `41080bc` passed backend full `204` tests in `422.53s`, frontend `npm test` (`45`), and the production build. New/bulk review rows are claim-scoped; a historical null approval covers all claims already present at review time, while historical null confirmation/return applies only to the latest platform submission present then. The branch remains unmerged and undeployed; no service restart occurred.
 
 From `backend`:
 
