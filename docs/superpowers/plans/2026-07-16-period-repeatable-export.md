@@ -48,7 +48,7 @@
 - Consumes: existing `list_available_stocking_items`, `list_not_claim_traceability_rows`, and `record_export_batch`.
 - Produces: the same public HTTP parameters; internal one-time exclusion arguments are removed, selection is based on current approval, and repeated state transitions are idempotent.
 
-- [ ] **Step 1: Add the failing repeat-download test**
+- [x] **Step 1: Add the failing repeat-download test**
 
 Add this test to `backend/tests/test_stocking_export.py`:
 
@@ -119,7 +119,7 @@ assert {row.main_sku for row in exported} == {"MAIN-NOT-CLAIM-ONCE"}
 assert len({row.export_batch_id for row in exported}) == 2
 ```
 
-- [ ] **Step 2: Run the focused tests and verify RED**
+- [x] **Step 2: Run the focused tests and verify RED**
 
 Run from `backend`:
 
@@ -129,7 +129,7 @@ E:\Project\Hengzhe-New-Product-Workflow\.venv\Scripts\python.exe -m pytest tests
 
 Expected: the three repeat-download assertions fail because earlier `ExportRow` records are excluded; the disable-guard preservation test already passes.
 
-- [ ] **Step 3: Remove one-time exclusion from the shared eligibility functions**
+- [x] **Step 3: Remove one-time exclusion from the shared eligibility functions**
 
 In `list_available_stocking_items`, keep only current business eligibility in the SQL filters:
 
@@ -155,7 +155,7 @@ In `list_not_claim_traceability_rows`, delete its exported-claim subquery and ex
 
 Remove `exclude_exported_scope` from both service signatures and remove `exclude_exported_scope="traceability"` from the traceability router call. No public query parameter changes.
 
-- [ ] **Step 4: Guard first-export state transitions**
+- [x] **Step 4: Guard first-export state transitions**
 
 Replace the unconditional claim update in `record_export_batch` with:
 
@@ -180,13 +180,13 @@ if opportunity and opportunity.current_status == OPPORTUNITY_READY_FOR_STOCKING:
     )
 ```
 
-- [ ] **Step 5: Run focused backend tests and verify GREEN**
+- [x] **Step 5: Run focused backend tests and verify GREEN**
 
 Run the Step 2 command again.
 
 Expected: `4 passed`; the second workbooks contain all current approved rows, each download has its own audit rows, the later claim state remains unchanged, and disabled opportunities stay excluded.
 
-- [ ] **Step 6: Commit Task 1**
+- [x] **Step 6: Commit Task 1**
 
 ```powershell
 git add backend/app/services.py backend/app/routers/stocking.py backend/tests/test_stocking_export.py backend/tests/test_traceability_export.py
@@ -206,7 +206,7 @@ git commit -m "fix: allow repeatable current exports"
 - Produces: `AvailableStockingItem.business_period: str | None`; imported production rows have a value, while legacy period-less rows remain visible only through their existing APIs and cannot trigger an unscoped download.
 - Response item: `{business_period, latest_imported_at, stocking_count, traceability_count}`.
 
-- [ ] **Step 1: Add the failing period-summary test**
+- [x] **Step 1: Add the failing period-summary test**
 
 Add `from datetime import datetime, timezone` to `backend/tests/test_traceability_export.py`, then add:
 
@@ -239,7 +239,7 @@ def test_export_periods_list_every_imported_period_with_current_counts() -> None
     ]
 ```
 
-- [ ] **Step 2: Run the summary test and verify RED**
+- [x] **Step 2: Run the summary test and verify RED**
 
 ```powershell
 E:\Project\Hengzhe-New-Product-Workflow\.venv\Scripts\python.exe -m pytest tests/test_traceability_export.py::test_export_periods_list_every_imported_period_with_current_counts -q
@@ -247,7 +247,7 @@ E:\Project\Hengzhe-New-Product-Workflow\.venv\Scripts\python.exe -m pytest tests
 
 Expected: FAIL with `404 Not Found` because `/stocking/export-periods` does not exist.
 
-- [ ] **Step 3: Add response fields and aggregation**
+- [x] **Step 3: Add response fields and aggregation**
 
 Add `business_period: str | None = None` to `AvailableStockingItem` and populate it from `opportunity.batch`.
 
@@ -270,7 +270,7 @@ Add `list_export_period_summaries(db)` after `list_not_claim_traceability_rows`.
 
 Use existing `defaultdict` and SQLAlchemy `func`; add no dependency and no new query abstraction.
 
-- [ ] **Step 4: Add the manager-only read route**
+- [x] **Step 4: Add the manager-only read route**
 
 Add before `/available-list` in `backend/app/routers/stocking.py`:
 
@@ -280,7 +280,7 @@ def list_export_periods(db: Session = Depends(get_db)) -> list[schemas.ExportPer
     return services.list_export_period_summaries(db)
 ```
 
-- [ ] **Step 5: Run the period and export regression tests**
+- [x] **Step 5: Run the period and export regression tests**
 
 ```powershell
 E:\Project\Hengzhe-New-Product-Workflow\.venv\Scripts\python.exe -m pytest tests/test_stocking_export.py tests/test_traceability_export.py tests/test_product_board.py -q
@@ -288,7 +288,7 @@ E:\Project\Hengzhe-New-Product-Workflow\.venv\Scripts\python.exe -m pytest tests
 
 Expected: all tests pass; the summary is newest-first, includes the zero-count imported period, and the product board still moves first exports to the existing visible state.
 
-- [ ] **Step 6: Commit Task 2**
+- [x] **Step 6: Commit Task 2**
 
 ```powershell
 git add backend/app/schemas.py backend/app/services.py backend/app/routers/stocking.py backend/tests/test_traceability_export.py
@@ -310,7 +310,7 @@ git commit -m "feat: summarize exports by business period"
 - Consumes: `GET /stocking/export-periods`, existing period-filtered download methods, and `AvailableStockingItem.business_period`.
 - Produces: latest-period default, current-period detail filtering, required period download filters, and one busy state per download button.
 
-- [ ] **Step 1: Write the failing pure helper tests**
+- [x] **Step 1: Write the failing pure helper tests**
 
 Create `frontend/tests/exportPeriods.test.ts`:
 
@@ -356,7 +356,7 @@ test("导出中心按期展示且不保留无范围导出按钮", () => {
 });
 ```
 
-- [ ] **Step 2: Run the helper tests and verify RED**
+- [x] **Step 2: Run the helper tests and verify RED**
 
 Run from `frontend`:
 
@@ -366,7 +366,7 @@ npm test
 
 Expected: FAIL because `frontend/src/exportPeriods.ts` does not exist.
 
-- [ ] **Step 3: Add the minimum pure helpers**
+- [x] **Step 3: Add the minimum pure helpers**
 
 Create `frontend/src/exportPeriods.ts`:
 
@@ -390,7 +390,7 @@ export function exportPeriodFilter(businessPeriod: string) {
 }
 ```
 
-- [ ] **Step 4: Add API types and state loading**
+- [x] **Step 4: Add API types and state loading**
 
 In `frontend/src/api.ts`, add `business_period?: string | null` to `AvailableStockingItem`, add:
 
@@ -407,7 +407,7 @@ and add `exportPeriods: () => request<ExportPeriodSummary[]>("/stocking/export-p
 
 In `App.tsx`, add `exportPeriods` state, clear it on logout, load it in `refresh`, and pass it with `setStatusMessage` into `StockView`. Keep the existing global refresh/error aggregation pattern.
 
-- [ ] **Step 5: Replace ambiguous global export buttons with the period table**
+- [x] **Step 5: Replace ambiguous global export buttons with the period table**
 
 In `StockView`:
 
@@ -422,7 +422,7 @@ In `StockView`:
 
 Use existing `btn`, `primary`, `tag`, `table-wrap`, `Download`, and state patterns. Add no modal, card nesting, custom icon, or dependency.
 
-- [ ] **Step 6: Add compact, non-scrolling period-table styles**
+- [x] **Step 6: Add compact, non-scrolling period-table styles**
 
 Add styles scoped to `.export-periods-wrap`, `.export-periods-table`, `.export-period-row.active`, and `.export-period-actions`. Override the global table minimum only for this table:
 
@@ -444,7 +444,7 @@ Add styles scoped to `.export-periods-wrap`, `.export-periods-table`, `.export-p
 
 Keep radius at `8px` or less and ensure button labels wrap instead of forcing page-level horizontal overflow.
 
-- [ ] **Step 7: Run frontend tests and build**
+- [x] **Step 7: Run frontend tests and build**
 
 ```powershell
 npm test
@@ -453,7 +453,7 @@ npm run build
 
 Expected: all Node tests pass and TypeScript/Vite production build exits `0`.
 
-- [ ] **Step 8: Commit Task 3**
+- [x] **Step 8: Commit Task 3**
 
 ```powershell
 git add frontend/package.json frontend/src/api.ts frontend/src/exportPeriods.ts frontend/src/App.tsx frontend/src/styles.css frontend/tests/exportPeriods.test.ts frontend/tests/reviewLayout.test.ts
@@ -473,6 +473,8 @@ git commit -m "feat: add period export workbench"
 - Produces: verified branch commits and a handoff that explicitly says no server was deployed.
 
 - [ ] **Step 1: Run complete local verification**
+
+> 2026-07-16: the required full backend run finished with `199 passed, 1 failed`; the stale one-time-export expectation in `backend/tests/test_export_batch.py` must be updated in a separately approved test-only task. The focused repeatable-export/product-board group passed `22`; frontend tests (`44`) and build passed.
 
 From `backend`:
 
@@ -496,7 +498,7 @@ git status --short
 
 Expected: backend full suite passes, frontend tests/build pass, `git diff --check` is empty, and only intentional documentation changes remain.
 
-- [ ] **Step 2: Reconcile durable docs with `neat-freak`**
+- [x] **Step 2: Reconcile durable docs with `neat-freak`**
 
 Record these exact facts in the authoritative docs:
 
@@ -517,11 +519,11 @@ git add AGENT_HANDOFF.md docs/02-功能实现状态.md docs/2026-07-09-已确认
 git commit -m "docs: record repeatable period exports"
 ```
 
-- [ ] **Step 4: Append the weekly work log**
+- [x] **Step 4: Append the weekly work log**
 
 Append one entry to `C:/Users/86173/.codex/work-logs/2026-29.md` with project, implementation summary, changed files, exact test totals, commit IDs, no-deployment statement, and the unresolved branch-integration follow-up. Do not include credentials or environment secrets.
 
-- [ ] **Step 5: Final branch review**
+- [x] **Step 5: Final branch review**
 
 ```powershell
 git log -5 --oneline --decorate

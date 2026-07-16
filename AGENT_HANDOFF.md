@@ -1,6 +1,6 @@
 # Agent Handoff
 
-> Updated: 2026-07-16 15:57 Asia/Shanghai
+> Updated: 2026-07-16 19:00 Asia/Shanghai
 
 ## Current Mode
 
@@ -11,8 +11,8 @@ Production is `http://101.132.26.138:8080`, SSH alias `hz-new-product-preprod`, 
 ## Implementation Status
 
 - Completed: project setup, PostgreSQL/SQLite guard, Alembic migrations, two feedback workbook importers, personnel config import, one-click assignment, claim/not-claim submission metadata, supervisor review, stocking export, central traceability export, product dashboard, source upload, operator profile config UI, inline operator claim UI, local demo data script, Phase 12 source-routing / batch-claim / review-state clarification, and minimal DingTalk new-product todo card sender.
-- Current verification: backend full `pytest -q` passed `194` tests on 2026-07-16; frontend `npm test` passed `41` tests and `npm run build` passed. The latest Playwright/Edge allocation check covered 2048px and 1366px: all 16 enabled operators wrap into a responsive grid with zero horizontal overflow, and “提交分配 / 运营配置” remain adjacent. Earlier mobile, sticky workload, live draft-count and native drag-order checks also passed. Production release details are recorded in `docs/06-部署与服务器准备.md`.
-- Current release pointer: branch `lxc/pricing-review-edit`, deployed implementation commit `b373d65`; release documentation follows branch HEAD. Deployment and rollback details are in `docs/06-部署与服务器准备.md`.
+- Current verification: on 2026-07-16, backend full `pytest -q` reported `199 passed, 1 failed` in `408.23s`; the failure is the stale one-time-export assertion in `backend/tests/test_export_batch.py::test_available_export_filters_by_source_sheet_and_excludes_already_exported_rows`, which conflicts with repeatable exports. The focused repeatable-export/product-board group passed `22`; frontend `npm test` passed `44` tests and `npm run build` passed. The latest Playwright/Edge allocation check covered 2048px and 1366px: all 16 enabled operators wrap into a responsive grid with zero horizontal overflow, and “提交分配 / 运营配置” remain adjacent. Earlier mobile, sticky workload, live draft-count and native drag-order checks also passed. Production release details are recorded in `docs/06-部署与服务器准备.md`.
+- Current release pointer: branch `lxc/pricing-review-edit`, deployed implementation commit `b373d65`; repeatable period-export commits through `d425219` are local only. No database migration, template change, production deployment, or development deployment occurred. `lxc/listing-observation-workbench` remains a divergent branch and was not merged or overwritten; integration/deployment is a separate task. Deployment and rollback details are in `docs/06-部署与服务器准备.md`.
 
 ## Latest Business Ground Truth
 
@@ -97,6 +97,8 @@ Field facts already recorded:
   - `选品2/财根`: `成本价` from `进价` when available; `单个体积` from mapped per-piece volume when reliable, otherwise leave empty rather than guessing.
   - `备货单销` from platform-approved `认领单销`; `备货数量 = 认领单销 × 30`; `货值 = 成本价 × 备货数量`; `体积 = 单个体积 × 备货数量`.
 - Export batch minimum metadata: exporter, export time, export file name, export scope.
+- The manager-only export center reads `GET /stocking/export-periods` and lists every non-disabled imported business period newest-first, including a zero-count period. It defaults to the newest period and removes unscoped download buttons; every download is explicitly scoped to its period.
+- A repeated period download includes all currently approved rows for that period. Each download creates a new audit batch and audit rows; a repeat does not regress or re-advance a claim or opportunity already in a later workflow state.
 - If multiple operators claim the same child SKU and pass review, export/stocking output creates one row per operator claim, never merges them into one SKU row.
 - Operator-submitted internal fields, especially `不认领原因` / `不认领理由`, must keep first-created time and last-updated time.
 
