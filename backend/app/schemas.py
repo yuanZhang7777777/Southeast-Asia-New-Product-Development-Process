@@ -313,6 +313,7 @@ class StockingRequestRead(BaseModel):
 class AvailableStockingItem(BaseModel):
     opportunity_id: str
     claim_record_id: str
+    business_period: str | None = None
     operation_status: str = "未操作"
     time: datetime
     stocking_type: str = "首次备货"
@@ -332,6 +333,13 @@ class AvailableStockingItem(BaseModel):
     needs_launch_email: str | None = None
     launch_email_status: str | None = None
     review_status: str | None = None
+
+
+class ExportPeriodSummary(BaseModel):
+    business_period: str
+    latest_imported_at: datetime | None = None
+    stocking_count: int = 0
+    traceability_count: int = 0
 
 
 class ArrivalRecordCreate(BaseModel):

@@ -1535,6 +1535,7 @@ def list_available_stocking_items(
             schemas.AvailableStockingItem(
                 opportunity_id=opportunity.id,
                 claim_record_id=claim.id,
+                business_period=opportunity.batch,
                 time=review.created_at if review else datetime.now(timezone.utc),
                 selection_source=selection_source_label(opportunity),
                 salesperson_name=claim.salesperson_name or claim_prefill_salesperson(opportunity),
@@ -2056,6 +2057,43 @@ def list_not_claim_traceability_rows(
         if review and review.review_status == REVIEW_CONFIRMED_NOT_CLAIM:
             output.append((opportunity, claim, review))
     return output
+
+
+def list_export_period_summaries(db: Session) -> list[schemas.ExportPeriodSummary]:
+    imported_periods = db.execute(
+        select(models.ImportBatch.business_period, func.max(models.ImportBatch.imported_at))
+        .where(models.ImportBatch.status != "disabled", models.ImportBatch.business_period.is_not(None))
+        .group_by(models.ImportBatch.business_period)
+        .order_by(func.max(models.ImportBatch.imported_at).desc())
+    ).all()
+    stocking_counts: defaultdict[str, int] = defaultdict(int)
+    for item in list_available_stocking_items(db):
+        if item.business_period:
+            stocking_counts[item.business_period] += 1
+    confirmed_reject_counts: defaultdict[str, int] = defaultdict(int)
+    for opportunity, _, _ in list_not_claim_traceability_rows(db):
+        if opportunity.batch:
+            confirmed_reject_counts[opportunity.batch] += 1
+
+    summaries = [
+        schemas.ExportPeriodSummary(
+            business_period=business_period,
+            latest_imported_at=latest_imported_at,
+            stocking_count=stocking_counts[business_period],
+            traceability_count=stocking_counts[business_period] + confirmed_reject_counts[business_period],
+        )
+        for business_period, latest_imported_at in imported_periods
+    ]
+    imported_period_names = {business_period for business_period, _ in imported_periods}
+    for business_period in sorted((set(stocking_counts) | set(confirmed_reject_counts)) - imported_period_names):
+        summaries.append(
+            schemas.ExportPeriodSummary(
+                business_period=business_period,
+                stocking_count=stocking_counts[business_period],
+                traceability_count=stocking_counts[business_period] + confirmed_reject_counts[business_period],
+            )
+        )
+    return summaries
 
 
 def build_traceability_workbook(

@@ -16,6 +16,11 @@ def list_stocking_requests(db: Session = Depends(get_db)) -> list[models.Stockin
     return list(db.scalars(select(models.StockingRequest).order_by(models.StockingRequest.created_at.desc()).limit(200)))
 
 
+@router.get("/export-periods", response_model=list[schemas.ExportPeriodSummary])
+def list_export_periods(db: Session = Depends(get_db)) -> list[schemas.ExportPeriodSummary]:
+    return services.list_export_period_summaries(db)
+
+
 @router.get("/available-list", response_model=list[schemas.AvailableStockingItem])
 def list_available_stocking_items(
     source_sheet: str | None = Query(None),

@@ -1,5 +1,6 @@
 import os
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 os.environ["DATABASE_URL"] = f"sqlite:///{Path(__file__).with_name('test_workflow.db')}"
@@ -28,6 +29,34 @@ TINY_PNG = base64.b64decode(
 def setup_function() -> None:
     Base.metadata.drop_all(bind=engine)
     Base.metadata.create_all(bind=engine)
+
+
+def test_export_periods_list_every_imported_period_with_current_counts() -> None:
+    with SessionLocal() as db:
+        db.add_all(
+            [
+                models.ImportBatch(source_type="selection1", source_sheet="S29", business_period="2026年第29期", imported_at=datetime(2026, 7, 1, tzinfo=timezone.utc)),
+                models.ImportBatch(source_type="selection1", source_sheet="S30", business_period="2026年第30期", imported_at=datetime(2026, 7, 8, tzinfo=timezone.utc)),
+                models.ImportBatch(source_type="selection1", source_sheet="S31", business_period="2026年第31期", imported_at=datetime(2026, 7, 15, tzinfo=timezone.utc)),
+            ]
+        )
+        db.commit()
+
+    prepare_approved_claim(business_period="2026年第29期", source_row=1, main_sku="MAIN-29", sub_sku="SUB-29")
+    prepare_reject_claim(source_sheet="S29", business_period="2026年第29期", source_row=2, main_sku="REJECT-29", review_status="confirmed_not_claim")
+    prepare_approved_claim(business_period="2026年第30期", source_row=3, main_sku="MAIN-30", sub_sku="SUB-30")
+
+    response = client.get("/stocking/export-periods")
+
+    assert response.status_code == 200
+    assert [
+        (row["business_period"], row["stocking_count"], row["traceability_count"])
+        for row in response.json()
+    ] == [
+        ("2026年第31期", 0, 0),
+        ("2026年第30期", 1, 1),
+        ("2026年第29期", 1, 2),
+    ]
 
 
 def test_traceability_export_contains_central_fields_and_internal_review_fields() -> None:
