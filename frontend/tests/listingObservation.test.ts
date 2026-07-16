@@ -27,6 +27,11 @@ import {
 
 const listingObservationViewSource = readFileSync(new URL("../src/ListingObservationView.tsx", import.meta.url), "utf8");
 
+test("只有普通运营会被登录身份锁定当前运营", () => {
+  const source = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
+  assert.match(source, /authSession\?\.operator_name && !canManage/);
+});
+
 function pendingTask(patch: Partial<PendingListingTask> = {}): PendingListingTask {
   return {
     task_key: "task-1",

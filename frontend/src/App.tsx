@@ -526,13 +526,13 @@ function App() {
 
   useEffect(() => {
     if (activeRole !== "operator") return;
-    if (authSession?.operator_name) {
+    if (authSession?.operator_name && !canManage) {
       if (activeOperator !== authSession.operator_name) setActiveOperator(authSession.operator_name);
       return;
     }
     if (activeOperator && operatorProfiles.some((profile) => profile.enabled && profile.operator_name === activeOperator)) return;
     setActiveOperator(operatorProfiles.find((profile) => profile.enabled)?.operator_name || "");
-  }, [activeOperator, activeRole, authSession, operatorProfiles]);
+  }, [activeOperator, activeRole, authSession, canManage, operatorProfiles]);
 
   useEffect(() => {
     if (!statusMessage || statusMessage.includes("中...") || statusMessage.includes("正在") || statusMessage.includes("失败") || statusMessage.includes("Error")) return;
