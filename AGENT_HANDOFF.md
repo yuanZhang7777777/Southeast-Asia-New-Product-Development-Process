@@ -1,18 +1,18 @@
 # Agent Handoff
 
-> Updated: 2026-07-16 15:02 Asia/Shanghai
+> Updated: 2026-07-16 15:57 Asia/Shanghai
 
 ## Current Mode
 
 The frozen front-stage flow is running in production. Continue from `docs/02-功能实现状态.md` and `docs/20-项目推进总控.md` unless the user explicitly starts a later-stage feature. Use Superpowers-style discipline and Ponytail scope control. Do not use Spec Kit again unless the user explicitly asks; the user said it can make the current work confusing. Do not put any agent/tooling content into product docs or product pages.
 
-Production is `http://101.132.26.138:8080`, SSH alias `hz-new-product-preprod`, current API/frontend release `v3a20af5`, database `workflow_prod_20260715`. Future development target is `hz-new-product-dev` (`139.224.2.166:2323`), not the production host. Do not write SSH passwords or any other credentials into repo files, docs, commits, logs, or `.env.example`; use local secret storage or prompt-time input for deployment.
+Production is `http://101.132.26.138:8080`, SSH alias `hz-new-product-preprod`, current API release `v3a20af5`, frontend release `v37db0b7`, database `workflow_prod_20260715`. Future development target is `hz-new-product-dev` (`139.224.2.166:2323`), not the production host. Do not write SSH passwords or any other credentials into repo files, docs, commits, logs, or `.env.example`; use local secret storage or prompt-time input for deployment.
 
 ## Implementation Status
 
 - Completed: project setup, PostgreSQL/SQLite guard, Alembic migrations, two feedback workbook importers, personnel config import, one-click assignment, claim/not-claim submission metadata, supervisor review, stocking export, central traceability export, product dashboard, source upload, operator profile config UI, inline operator claim UI, local demo data script, Phase 12 source-routing / batch-claim / review-state clarification, and minimal DingTalk new-product todo card sender.
-- Current verification: backend full `pytest -q` passed `193` tests on 2026-07-16; frontend `npm test` passed `39` tests and `npm run build` passed. Production health and Caddy Admin API upstreams were read back after deploying `v3a20af5`.
-- Current release pointer: branch `lxc/pricing-review-edit`, implementation commit `3a20af5`, release documentation commit `33edcea`; deployment and rollback details are in `docs/06-部署与服务器准备.md`.
+- Current verification: backend full `pytest -q` passed `193` tests on 2026-07-16; frontend `npm test` passed `41` tests and `npm run build` passed. Playwright/Edge covered 2048px, 1366px and 390px assignment layouts, sticky workload visibility, live draft counts and native drag ordering. Production health, public assets and Caddy Admin API upstreams were read back after the frontend-only `v37db0b7` release.
+- Current release pointer: branch `lxc/pricing-review-edit`, implementation commit `37db0b7`; release documentation follows branch HEAD. Deployment and rollback details are in `docs/06-部署与服务器准备.md`.
 
 ## Latest Business Ground Truth
 
@@ -53,7 +53,7 @@ Field facts already recorded:
 - `海外仓开发部门开发新品认领-反馈` enters supervisor assignment only. Its source-table salesperson / claim columns are retained as prefill/reference records, but import does **not** auto-create operator claim tasks and does **not** expose pending selection1 rows to the operator self-claim pool before supervisor assignment.
 - `海外仓财根团队开发新品认领-反馈` enters both supervisor assignment and the operator self-claim opportunity pool. The assigned/main salesperson can still be assigned a required claim task; other operators may self-claim the same SKU with no upper limit. Ignoring a self-claimable opportunity creates no not-claim task.
 - `集团八部销售员信息表.xlsx` is the first-version operator assignment config source: 15 rows, fields `销售员 / 入职日期 / 岗位 / 运营分层 / 业务类型 / 重点站点 / 重点品类1 / 重点品类2`. Current site coverage: PH 8, TH 3, VN 4.
-- Latest v1 config UI only exposes `销售员`, `重点站点`, `重点品类1`, `重点品类2` from `集团八部销售员信息表.xlsx` columns A/F/G/H, plus enabled/disabled. `岗位`, `运营分层`, and `业务类型` are not v1 supervisor-editable fields.
+- Latest v1 config UI exposes `销售员`, `重点站点`, `重点品类1`, `重点品类2`, enabled/disabled, `assignment_priority` and site-local `display_order`. Same-site rows can be reordered by drag or arrow buttons and are persisted only after “保存运营配置”. `岗位`, `运营分层`, and `业务类型` are not v1 supervisor-editable fields.
 - Source field snapshots are in `docs/16-新品认领反馈源表实测字段清单.md` and `docs/17-源表字段总字典.md`.
 
 ## Confirmed Front-Stage Rules
@@ -68,10 +68,11 @@ Field facts already recorded:
 - `认领单销` means daily sales; stocking quantity is `认领单销 × 30`.
 - Supervisor role is fixed to `练玉君` for first version. `岗位=组长` in the salesperson config is an operator/personnel attribute, not the platform supervisor role.
 - One-click auto allocation is in scope. Main SKU group is the allocation unit, child SKUs are not split.
-- Auto allocation priority: `重点站点` match first, then `重点品类1`, then `重点品类2`, then current load balancing. Historical performance is not included in first-version allocation.
+- Auto allocation first filters enabled profiles by normalized site. A hit in either `重点品类1` or `重点品类2` enters the same category-match tier; within a tier it sorts by pending main-SKU group load, then `assignment_priority`, site-local `display_order`, and operator name. If no profile matches the site, the item remains unassigned with `无站点匹配`. Historical performance is not included in first-version allocation.
 - Current load is counted by main SKU groups assigned but not completed, plus draft assignments already made in the current one-click allocation run; do not balance by child SKU count in v1.
 - One-click allocation defaults to all enabled operator profiles. Do not reintroduce a business UI textarea for manually typing candidate operators.
 - Supervisor can review and adjust one-click allocation results before confirming and creating operator claim tasks.
+- The assignment command bar keeps “运营配置” before the elastic search/pagination controls so it cannot be clipped. Operator workload cards form a sticky horizontal strip; draft allocation changes update group/child-SKU counts immediately while the supervisor scrolls the assignment list.
 - Source import UI must use browser file upload by drag/drop or file picker. Server-local file path and "default workbook" wording are developer/testing conveniences only and must not appear in the business UI.
 - Supervisor opportunity-pool UI must not expose a claim/recognize action. Claim submission must always be tied to a concrete operator identity.
 - Operator claim UI is grouped by main SKU, with child SKU rows visible together. It is inline on the cards, not a right-side shared processing panel. Claim mode only submits `认领单销`; not-claim mode only submits `不认领原因` and optional research image evidence. The two modes are mutually exclusive.
