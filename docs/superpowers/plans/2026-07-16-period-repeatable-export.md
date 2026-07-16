@@ -474,7 +474,7 @@ git commit -m "feat: add period export workbench"
 
 - [x] **Step 1: Run complete local verification**
 
-> 2026-07-16: after aligning the stale one-time-export regression, the required full backend run passed `200` tests in `367.66s`. `tests/test_export_batch.py` passed `3`; the focused repeatable-export/product-board group passed `22`; frontend tests (`44`) and build passed.
+> Final review follow-up, 2026-07-16: local implementation head `c32e436` passed backend full `202` tests in `396.99s`, frontend `npm test` (`45`), and the production build. New/bulk review rows are claim-scoped; historical null `claim_record_id` reviews apply only to claims already present at review time. The branch remains unmerged and undeployed; no service restart occurred.
 
 From `backend`:
 
