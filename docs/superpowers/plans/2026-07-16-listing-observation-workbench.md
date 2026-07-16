@@ -63,9 +63,10 @@
 3. 写批量创建成功测试：同一主 SKU 多条“店铺 + Item”，每条生成独立四周。
 4. 写列表与权限测试：运营强制本人、主管查看全部并筛选。
 5. 写周期复盘测试：定位和优化必填，第 4 周总结必填，整批原子。
-6. 写停止 / 恢复、首轮完成和手动新增后续周期测试。
-7. 最小实现 Schemas、服务和路由，所有 actor 从认证上下文取得并写 AuditLog。
-8. 运行 `pytest backend/tests/test_listing_observations.py -q`。
+6. 写定位与跟踪解耦回归：第 N 周提交淘汰款后 Item 仍正常跟踪，第 N+1 周继续取数和复盘并可改回其他定位；第 4 周淘汰款仍要求总结。
+7. 写停止 / 恢复、首轮完成和手动新增后续周期测试。
+8. 最小实现 Schemas、服务和路由，所有 actor 从认证上下文取得并写 AuditLog。
+9. 运行 `pytest backend/tests/test_listing_observations.py -q`。
 
 ## 任务 4：实现周 Item 数据落库边界
 
