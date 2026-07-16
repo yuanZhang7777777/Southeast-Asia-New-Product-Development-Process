@@ -77,3 +77,14 @@ test("窄屏分配明细只在表格内部横向滚动", () => {
   assert.match(viewportRule, /min-width:\s*0/);
   assert.match(viewportRule, /max-width:\s*100%/);
 });
+
+test("导出中心按期展示且不保留无范围导出按钮", () => {
+  const stockView = app.slice(app.indexOf("function StockView"), app.indexOf("function ArrivalPreviewView"));
+
+  assert.match(stockView, /export-periods-table/);
+  assert.match(stockView, /period\.stocking_count\s*<=\s*0/);
+  assert.match(stockView, /period\.traceability_count\s*<=\s*0/);
+  assert.match(stockView, /exportPeriodFilter\(period\.business_period\)/);
+  assert.doesNotMatch(stockView, /api\.traceabilityExport\(\)/);
+  assert.doesNotMatch(stockView, /api\.availableStockingExport\(\)/);
+});

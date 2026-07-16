@@ -63,6 +63,7 @@ export type StockingRequest = {
 export type AvailableStockingItem = {
   opportunity_id: string;
   claim_record_id: string;
+  business_period?: string | null;
   operation_status: string;
   time: string;
   stocking_type: string;
@@ -82,6 +83,13 @@ export type AvailableStockingItem = {
   needs_launch_email?: string | null;
   launch_email_status?: string | null;
   review_status?: string | null;
+};
+
+export type ExportPeriodSummary = {
+  business_period: string;
+  latest_imported_at?: string | null;
+  stocking_count: number;
+  traceability_count: number;
 };
 
 export type PlmArrivalItem = {
@@ -480,6 +488,7 @@ export const api = {
   bulkReview: (payload: unknown) => request<{ message: string; id: string }>("/reviews/bulk", { method: "POST", body: JSON.stringify(payload) }),
   stocking: () => request<StockingRequest[]>("/stocking/requests"),
   availableStocking: (filter?: PeriodFilter) => request<AvailableStockingItem[]>(`/stocking/available-list${query(filter)}`),
+  exportPeriods: () => request<ExportPeriodSummary[]>("/stocking/export-periods"),
   availableStockingExport: (filter?: PeriodFilter) => download(`/stocking/available-list/export${query(filter)}`, "海外仓备货申请表.xlsx"),
   traceabilityExport: (filter?: PeriodFilter) => download(`/stocking/traceability/export${query(filter)}`, "新品中央字段导出.xlsx"),
   arrival: (payload: unknown) => request<unknown>("/arrival/records", { method: "POST", body: JSON.stringify(payload) }),
