@@ -101,7 +101,14 @@ class OpportunityUpdateRequest(BaseModel):
     site: str | None = None
     country: str | None = None
     category_level1: str | None = None
+    developer_department: str | None = None
+    developer_name: str | None = None
+    keyword: str | None = None
+    product_type: str | None = None
+    reason: str | None = None
     image_url: str | None = None
+    current_status: str | None = None
+    source_cells: dict[str, Any] | None = None
     edit_reason: str
 
     model_config = {"extra": "forbid"}
@@ -255,6 +262,27 @@ class ReviewCreate(BaseModel):
         if value not in allowed:
             raise ValueError("review_status must be approved, confirmed_not_claim, or returned_for_supplement")
         return value
+
+
+class BulkReviewCreate(BaseModel):
+    opportunity_ids: list[str] = Field(min_length=1, max_length=500)
+    reviewer_name: str
+    action: str
+    review_comment: str | None = None
+
+    model_config = {"extra": "forbid"}
+
+    @field_validator("action")
+    @classmethod
+    def valid_action(cls, value: str) -> str:
+        if value not in {"approve", "reject"}:
+            raise ValueError("action must be approve or reject")
+        return value
+
+    @field_validator("opportunity_ids")
+    @classmethod
+    def unique_opportunity_ids(cls, value: list[str]) -> list[str]:
+        return list(dict.fromkeys(value))
 
 
 class StockingRequestCreate(BaseModel):

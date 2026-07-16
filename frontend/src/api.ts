@@ -477,6 +477,7 @@ export const api = {
       { method: "POST", body: JSON.stringify({ claim_record_ids: claimRecordIds }) }
     ),
   review: (payload: unknown) => request<{ message: string; id: string }>("/reviews", { method: "POST", body: JSON.stringify(payload) }),
+  bulkReview: (payload: unknown) => request<{ message: string; id: string }>("/reviews/bulk", { method: "POST", body: JSON.stringify(payload) }),
   stocking: () => request<StockingRequest[]>("/stocking/requests"),
   availableStocking: (filter?: PeriodFilter) => request<AvailableStockingItem[]>(`/stocking/available-list${query(filter)}`),
   availableStockingExport: (filter?: PeriodFilter) => download(`/stocking/available-list/export${query(filter)}`, "海外仓备货申请表.xlsx"),

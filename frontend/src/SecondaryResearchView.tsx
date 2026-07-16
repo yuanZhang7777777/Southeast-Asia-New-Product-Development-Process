@@ -18,6 +18,7 @@ import {
   SecondaryResearchDraft
 } from "./secondaryResearchDrafts";
 import { selection1ColumnLabel } from "./selection1Columns";
+import { formatBusinessNumber } from "./businessFormat";
 
 type ModuleKey = "secondary" | "market" | "pricing" | "development" | "cost" | "claims";
 
@@ -481,7 +482,7 @@ function PeerMatrix({ group }: { group: SecondaryResearchGroup }) {
         <div className="research-matrix-row research-peer-grid" key={item.claim_record_id}>
           <ResearchSkuCell item={item} />
           <div className="research-source-value">{item.salesperson_name}</div>
-          <div className="research-source-value">{columnValue(item, "AJ") || "-"}</div>
+          <div className="research-source-value">{formatBusinessNumber(columnValue(item, "AJ")) || "-"}</div>
           <div className="research-peer-list">
             {item.peer_records.length ? item.peer_records.map((peer) => (
               <div key={peer.claim_record_id}>

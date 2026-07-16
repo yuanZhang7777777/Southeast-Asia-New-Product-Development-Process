@@ -314,6 +314,26 @@ def test_selection1_import_matches_market_and_pricing_by_headers_when_columns_sh
     assert opportunity.snapshot["pricing_snapshot"]["推广期利润率"] == "8.5%"
 
 
+def test_selection1_import_matches_current_pricing_headers_at_aj_and_am(tmp_path: Path) -> None:
+    workbook_path = tmp_path / "selection1_current_pricing.xlsx"
+    build_selection1_current_pricing_fixture(workbook_path)
+
+    response = client.post("/opportunities/import/selection1", json={"source_file": str(workbook_path), "source_sheet": "开发新品0714期"})
+
+    assert response.status_code == 200
+    with SessionLocal() as db:
+        opportunity = db.query(models.NewProductOpportunity).one()
+        market_item = db.query(models.MarketResearchItem).first()
+
+    pricing = opportunity.snapshot["pricing_snapshot"]
+    assert market_item is not None
+    assert market_item.reference_price == 428
+    assert pricing["稳定期定价"] == 428
+    assert pricing["稳定期利润率"] == 0.0823262796879019
+    assert opportunity.snapshot["cells"]["AQ"] == 392.764352293578
+    assert opportunity.snapshot["cells"]["AR"] == 385.896352293578
+
+
 def build_selection1_fixture(
     path: Path,
     image_path: Path | None = None,
@@ -417,6 +437,46 @@ def build_selection1_shifted_fixture(path: Path) -> None:
         61: 12.5,
         62: 119,
         63: "8.5%",
+    }.items():
+        row[column_index - 1] = value
+    worksheet.append(row)
+    workbook.save(path)
+
+
+def build_selection1_current_pricing_fixture(path: Path) -> None:
+    workbook = Workbook()
+    worksheet = workbook.active
+    worksheet.title = "开发新品0714期"
+    worksheet.append([None] * 44)
+    headers = [None] * 44
+    for column_index, title in {
+        1: "站点",
+        8: "主SKU",
+        10: "子SKU",
+        35: "参考单销",
+        36: "稳定期定价 （PHP）",
+        39: "稳定期利润率",
+        40: "预估单销",
+        41: "推广期定价",
+        42: "推广期利润率",
+        43: "稳定期总成本（PHP）（含头程+平台费+基础设施）",
+        44: "推广期总成本（PHP）（含头程+平台费+基础设施）",
+    }.items():
+        headers[column_index - 1] = title
+    worksheet.append(headers)
+    row = [None] * 44
+    for column_index, value in {
+        1: "PH",
+        8: "MAIN-0714",
+        10: "SUB-0714",
+        35: 3.8666666666666667,
+        36: 428,
+        39: 0.0823262796879019,
+        40: 4,
+        41: 408,
+        42: 0.05417560712358336,
+        43: 392.764352293578,
+        44: 385.896352293578,
     }.items():
         row[column_index - 1] = value
     worksheet.append(row)

@@ -29,6 +29,7 @@ import {
   XCircle
 } from "lucide-react";
 import { ChangeEvent, ClipboardEvent, Dispatch, DragEvent, FormEvent, ReactNode, SetStateAction, useEffect, useMemo, useState } from "react";
+import { formatBusinessNumber, formatBusinessValue } from "./businessFormat";
 import {
   API_BASE,
   api,
@@ -822,18 +823,15 @@ function App() {
     });
   }
 
-  async function approveClaimReviews(items: Opportunity[]) {
+  async function bulkReview(items: Opportunity[], action: "approve" | "reject", reviewComment = "") {
     if (!items.length) return;
-    await runAction("批量通过认领", async () => {
-      for (const item of items) {
-        await api.review({
-          opportunity_id: item.id,
-          claim_record_id: item.latest_claim_record_id || undefined,
-          reviewer_name: "练玉君",
-          review_status: "approved",
-          review_comment: "批量通过认领"
-        });
-      }
+    await runAction(action === "approve" ? "批量通过" : "批量拒绝", async () => {
+      await api.bulkReview({
+        opportunity_ids: items.map((item) => item.id),
+        reviewer_name: authSession?.user.name || "主管",
+        action,
+        review_comment: reviewComment || undefined
+      });
       setReviewTarget(null);
     });
   }
@@ -1162,7 +1160,7 @@ function App() {
                 setList={setReviewList}
                 onOpenDetail={openOpportunityDetail}
                 onSubmit={submitReview}
-                onBulkApprove={approveClaimReviews}
+                onBulkReview={bulkReview}
               />
             )}
             {activeView === "stock" && <StockView rows={availableStocking} list={stockList} setList={setStockList} />}
@@ -1703,10 +1701,10 @@ const competitorSpecs = [
 
 const pricingSpecs = [
   { column: "AO", label: "参考单销", aliases: ["参考单销"] },
-  { column: "AP", label: "参考定价", aliases: ["参考定价", "稳定期定价 / （PHP）", "稳定期参考定价 / （VND）"] },
+  { column: "AP", label: "稳定期定价", aliases: ["稳定期定价", "稳定期定价 （PHP）", "稳定期定价 / （PHP）", "参考定价", "稳定期参考定价 / （VND）"] },
   { column: "AQ", label: "一次毛利额", aliases: ["一次毛利额 / （THB）", "一次毛利额 / （PHP）", "一次毛利额 / （VND）"] },
   { column: "AR", label: "一次毛利额(RMB)", aliases: ["一次毛利额 / （人民币）"] },
-  { column: "AS", label: "一次毛利率", aliases: ["一次毛利率", "稳定期利润率"] },
+  { column: "AS", label: "稳定期利润率", aliases: ["稳定期利润率", "一次毛利率"] },
   { column: "AT", label: "预估单销", aliases: ["预估单销"] },
   { column: "AU", label: "推广期定价", aliases: ["推广期定价"] },
   { column: "AV", label: "推广期利润率", aliases: ["推广期利润率"] }
@@ -1773,7 +1771,14 @@ type SkuEditDraft = {
   site: string;
   country: string;
   category_level1: string;
+  developer_department: string;
+  developer_name: string;
+  keyword: string;
+  product_type: string;
+  reason: string;
   image_url: string;
+  current_status: string;
+  sourceCells: Record<string, string>;
   edit_reason: string;
 };
 
@@ -1786,10 +1791,28 @@ function skuEditDraft(item: Opportunity): SkuEditDraft {
     site: item.site || "",
     country: item.country || "",
     category_level1: item.category_level1 || "",
+    developer_department: item.developer_department || "",
+    developer_name: item.developer_name || "",
+    keyword: item.keyword || "",
+    product_type: item.product_type || "",
+    reason: item.reason || "",
     image_url: item.image_url || "",
+    current_status: item.current_status,
+    sourceCells: Object.fromEntries(editableSourceCellRows(item).map((row) => [row.column, row.value])),
     edit_reason: ""
   };
 }
+
+const editableStatusOptions = [
+  "pending_assignment",
+  "open_claim_pool",
+  "assigned",
+  "claim_submitted",
+  "claim_rejected",
+  "returned_for_supplement",
+  "ready_for_stocking",
+  "已确认不认领"
+];
 
 function ProductDetailView(props: {
   group: ProductGroup;
@@ -1824,6 +1847,10 @@ function ProductDetailView(props: {
     setEditDraft((current) => ({ ...current, [field]: value }));
   }
 
+  function patchSourceCell(column: string, value: string) {
+    setEditDraft((current) => ({ ...current, sourceCells: { ...current.sourceCells, [column]: value } }));
+  }
+
   async function submitEdit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!editingItem) return;
@@ -1831,8 +1858,12 @@ function ProductDetailView(props: {
       window.alert("请填写修改原因");
       return;
     }
+    const originalCells = Object.fromEntries(editableSourceCellRows(editingItem).map((row) => [row.column, row.value]));
+    const source_cells = Object.fromEntries(Object.entries(editDraft.sourceCells).filter(([column, value]) => value !== (originalCells[column] || "")));
+    const { sourceCells: _, ...fields } = editDraft;
     await props.onUpdate(editingItem.id, {
-      ...editDraft,
+      ...fields,
+      source_cells,
       edit_reason: editDraft.edit_reason.trim()
     });
     setEditingItem(null);
@@ -2022,10 +2053,51 @@ function ProductDetailView(props: {
                 <input value={editDraft.category_level1} onChange={(event) => patchEditDraft("category_level1", event.target.value)} />
               </label>
               <label>
+                开发部门
+                <input value={editDraft.developer_department} onChange={(event) => patchEditDraft("developer_department", event.target.value)} />
+              </label>
+              <label>
+                开发员
+                <input value={editDraft.developer_name} onChange={(event) => patchEditDraft("developer_name", event.target.value)} />
+              </label>
+              <label>
+                关键词
+                <input value={editDraft.keyword} onChange={(event) => patchEditDraft("keyword", event.target.value)} />
+              </label>
+              <label>
+                产品类型
+                <input value={editDraft.product_type} onChange={(event) => patchEditDraft("product_type", event.target.value)} />
+              </label>
+              <label>
                 图片地址
                 <input value={editDraft.image_url} onChange={(event) => patchEditDraft("image_url", event.target.value)} />
               </label>
+              <label>
+                商品状态
+                <select value={editDraft.current_status} onChange={(event) => patchEditDraft("current_status", event.target.value)}>
+                  {editableStatusOptions.map((status) => <option key={status} value={status}>{statusMeta[status]?.label || status}</option>)}
+                </select>
+              </label>
             </div>
+            <label>
+              开品理由
+              <textarea rows={2} value={editDraft.reason} onChange={(event) => patchEditDraft("reason", event.target.value)} />
+            </label>
+            <details className="source-parameter-editor">
+              <summary>其他导入参数（{editableSourceCellRows(editingItem).length}）</summary>
+              <div className="form-grid">
+                {editableSourceCellRows(editingItem).map((row) => (
+                  <label key={row.column}>
+                    {row.column} · {row.label}
+                    {row.value.length > 80 ? (
+                      <textarea rows={2} value={editDraft.sourceCells[row.column] || ""} onChange={(event) => patchSourceCell(row.column, event.target.value)} />
+                    ) : (
+                      <input value={editDraft.sourceCells[row.column] || ""} onChange={(event) => patchSourceCell(row.column, event.target.value)} />
+                    )}
+                  </label>
+                ))}
+              </div>
+            </details>
             <label>
               修改原因
               <textarea rows={2} value={editDraft.edit_reason} onChange={(event) => patchEditDraft("edit_reason", event.target.value)} />
@@ -2067,7 +2139,7 @@ function ClaimReviewTable(props: { item: Opportunity }) {
           <tr>
             <td>{child.latest_claim_salesperson || "-"}</td>
             <td>{claimResultLabel(child.latest_claim_result)}</td>
-            <td>{child.latest_claim_result === "claim" ? child.latest_claim_daily_sales ?? "-" : "-"}</td>
+            <td>{child.latest_claim_result === "claim" ? formatBusinessNumber(child.latest_claim_daily_sales) || "-" : "-"}</td>
             <td>{child.latest_reject_reason || "-"}</td>
             <td>{child.latest_feedback_summary || "-"}</td>
             <td>{reviewStatusLabel(child.latest_review_status)}</td>
@@ -2087,7 +2159,7 @@ function DetailFieldGrid(props: { item: Opportunity; specs: DetailFieldSpec[] })
       {rows.map((row) => (
         <div className="detail-field-cell" key={`${row.column}-${row.label}`}>
           <span>{row.column} · {row.label}</span>
-          <b>{renderMaybeLink(row.value)}</b>
+          <b>{renderMaybeLink(formatBusinessValue(row.value, row.label))}</b>
         </div>
       ))}
     </div>
@@ -2118,7 +2190,7 @@ function ColumnRangeTable(props: { item: Opportunity; columns: string[] }) {
             <tr key={row.column}>
               <td>{row.column}</td>
               <td>{row.label}</td>
-              <td>{renderMaybeLink(row.value)}</td>
+              <td>{renderMaybeLink(formatBusinessValue(row.value, row.label))}</td>
             </tr>
           ))}
         </tbody>
@@ -2153,9 +2225,9 @@ function CompetitorTable(props: { item: Opportunity }) {
               <td>{row.linkColumn}</td>
               <td>{renderLinkCell(row.link)}</td>
               <td>{row.priceColumn}</td>
-              <td>{row.price || "-"}</td>
+              <td>{formatBusinessNumber(row.price) || "-"}</td>
               <td>{row.salesColumn}</td>
-              <td>{row.sales || "-"}</td>
+              <td>{formatBusinessNumber(row.sales) || "-"}</td>
             </tr>
             );
           })}
@@ -2173,7 +2245,7 @@ function PricingGrid(props: { item: Opportunity }) {
       {rows.map((row) => (
         <div className="pricing-cell" key={row.column}>
           <span>{row.column} · {row.label}</span>
-          <b>{row.value}</b>
+          <b>{formatBusinessValue(row.value, row.label)}</b>
         </div>
       ))}
     </div>
@@ -2244,8 +2316,16 @@ function pricingRows(item: Opportunity) {
   const snapshot = snapshotOf(item);
   const pricing = isRecord(snapshot.pricing_snapshot) ? snapshot.pricing_snapshot : {};
   return pricingSpecs
-    .map((spec) => ({ column: spec.column, label: spec.label, value: detailFieldValue(item, spec.aliases, spec.column) || valueText(pricing[spec.label]) }))
+    .map((spec) => ({ column: detailFieldColumn(item, spec.aliases, spec.column), label: spec.label, value: detailFieldValue(item, spec.aliases, spec.column) || valueText(pricing[spec.label]) }))
     .filter((row) => row.value);
+}
+
+function detailFieldColumn(item: Opportunity, aliases: readonly string[], fallbackColumn: string) {
+  const aliasKeys = new Set(aliases.map(normalizeFieldKey));
+  for (const [column, headers] of Object.entries(headersByColumn(item))) {
+    if (Array.isArray(headers) && headers.some((header) => typeof header === "string" && aliasKeys.has(normalizeFieldKey(header)))) return column;
+  }
+  return fallbackColumn;
 }
 
 function detailFieldRows(item: Opportunity, specs: DetailFieldSpec[]) {
@@ -2302,6 +2382,19 @@ function snapshotFields(item?: Opportunity | null): Record<string, unknown> {
 function snapshotFieldsByColumn(item?: Opportunity | null): Record<string, unknown> {
   const fields = snapshotOf(item).fields_by_column;
   return isRecord(fields) ? fields : {};
+}
+
+function editableSourceCellRows(item: Opportunity) {
+  const snapshot = snapshotOf(item);
+  const allowed = Array.isArray(snapshot.allowed_columns) ? snapshot.allowed_columns.filter((column): column is string => typeof column === "string") : Object.keys(snapshotFieldsByColumn(item));
+  return allowed
+    .filter((column) => columnNumber(column) >= columnNumber("M") && columnNumber(column) <= columnNumber("BX"))
+    .sort((left, right) => columnNumber(left) - columnNumber(right))
+    .map((column) => ({
+      column,
+      label: headerLabel(item, column) || column,
+      value: snapshotColumnText(item, column)
+    }));
 }
 
 function snapshotColumnText(item: Opportunity, column: string) {
@@ -3601,15 +3694,16 @@ function ReviewView(props: {
   setList: Dispatch<SetStateAction<ListState>>;
   onOpenDetail: (item: Opportunity) => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
-  onBulkApprove: (items: Opportunity[]) => Promise<void>;
+  onBulkReview: (items: Opportunity[], action: "approve" | "reject", reviewComment?: string) => Promise<void>;
 }) {
-  const [selectedClaimReviewIds, setSelectedClaimReviewIds] = useState<string[]>([]);
-  const filteredRows = useMemo(() => filterOpportunitiesBySearch(props.rows, props.list.query), [props.rows, props.list.query]);
+  const [reviewType, setReviewType] = useState<"claim_submitted" | "claim_rejected">("claim_submitted");
+  const [selectedReviewIds, setSelectedReviewIds] = useState<string[]>([]);
+  const searchRows = useMemo(() => filterOpportunitiesBySearch(props.rows, props.list.query), [props.rows, props.list.query]);
+  const filteredRows = useMemo(() => searchRows.filter((item) => item.current_status === reviewType), [reviewType, searchRows]);
   const pageRows = pageItems(filteredRows, props.list);
   const targetIsNotClaim = props.target?.current_status === "claim_rejected";
   const targetIsClaim = props.target?.current_status === "claim_submitted";
-  const claimReviewRows = filteredRows.filter((item) => item.current_status === "claim_submitted");
-  const selectedClaimReviewRows = claimReviewRows.filter((item) => selectedClaimReviewIds.includes(item.id));
+  const selectedReviewRows = filteredRows.filter((item) => selectedReviewIds.includes(item.id));
   const reviewDraft = props.target ? props.drafts[props.target.id] || reviewDraftFor(props.target) : reviewDraftFor(null);
   const reviewDecision = reviewDraft.reviewStatus;
 
@@ -3622,38 +3716,64 @@ function ReviewView(props: {
   }
 
   useEffect(() => {
-    setSelectedClaimReviewIds((current) => {
-      const next = current.filter((id) => claimReviewRows.some((item) => item.id === id));
+    setSelectedReviewIds((current) => {
+      const next = current.filter((id) => filteredRows.some((item) => item.id === id));
       return next.length === current.length ? current : next;
     });
-  }, [props.rows]);
+  }, [filteredRows]);
 
-  function toggleClaimReview(item: Opportunity, checked: boolean) {
-    setSelectedClaimReviewIds((current) => (checked ? Array.from(new Set([...current, item.id])) : current.filter((id) => id !== item.id)));
+  function changeReviewType(value: "claim_submitted" | "claim_rejected") {
+    setReviewType(value);
+    setSelectedReviewIds([]);
+    props.setTarget(null);
+    props.setList((current) => ({ ...current, page: 1 }));
+  }
+
+  function toggleReview(item: Opportunity, checked: boolean) {
+    setSelectedReviewIds((current) => (checked ? Array.from(new Set([...current, item.id])) : current.filter((id) => id !== item.id)));
   }
 
   async function bulkApprove() {
-    await props.onBulkApprove(selectedClaimReviewRows);
-    setSelectedClaimReviewIds([]);
+    await props.onBulkReview(selectedReviewRows, "approve");
+    setSelectedReviewIds([]);
+  }
+
+  async function bulkReject() {
+    const reason = window.prompt("请输入批量拒绝原因，商品将退回运营补充", "");
+    if (!reason?.trim()) return;
+    await props.onBulkReview(selectedReviewRows, "reject", reason.trim());
+    setSelectedReviewIds([]);
   }
 
   return (
     <div className="review-layout">
       <section className="group-list">
+        <div className="mode-tabs review-type-tabs" aria-label="复核类型筛选">
+          <button className={reviewType === "claim_submitted" ? "mode-tab active" : "mode-tab"} type="button" onClick={() => changeReviewType("claim_submitted")}>
+            运营认领待复核（{searchRows.filter((item) => item.current_status === "claim_submitted").length}）
+          </button>
+          <button className={reviewType === "claim_rejected" ? "mode-tab active reject" : "mode-tab"} type="button" onClick={() => changeReviewType("claim_rejected")}>
+            运营不认领待复核（{searchRows.filter((item) => item.current_status === "claim_rejected").length}）
+          </button>
+        </div>
         <ListControls label="主管复核" list={props.list} total={filteredRows.length} setList={(patch) => props.setList((current) => ({ ...current, ...patch }))} />
-        {claimReviewRows.length > 0 && (
+        {filteredRows.length > 0 && (
           <div className="claim-bulkbar review-bulkbar">
             <label className="checkline">
               <input
-                checked={selectedClaimReviewIds.length === claimReviewRows.length}
-                onChange={(event) => setSelectedClaimReviewIds(event.target.checked ? claimReviewRows.map((item) => item.id) : [])}
+                checked={selectedReviewIds.length === filteredRows.length}
+                onChange={(event) => setSelectedReviewIds(event.target.checked ? filteredRows.map((item) => item.id) : [])}
                 type="checkbox"
               />
-              已选 {selectedClaimReviewIds.length} / {claimReviewRows.length} 个认领复核
+              已选 {selectedReviewIds.length} / {filteredRows.length} 个{reviewType === "claim_submitted" ? "认领" : "不认领"}复核
             </label>
-            <button className="btn primary" disabled={!selectedClaimReviewIds.length} onClick={bulkApprove}>
+            <button className="btn primary" disabled={!selectedReviewIds.length} onClick={bulkApprove}>
               <CheckCircle2 size={15} />
-              批量通过认领
+              批量通过
+            </button>
+            <button className="btn danger" disabled={!selectedReviewIds.length} onClick={bulkReject}>
+              <XCircle size={15} />
+              批量拒绝
             </button>
           </div>
         )}
@@ -3662,15 +3782,13 @@ function ReviewView(props: {
         {pageRows.map((item) => (
           <article className={`group-item compact${props.target?.id === item.id ? " active" : ""}`} key={item.id}>
             <div className="sku-group">
-              {item.current_status === "claim_submitted" && (
-                <input
-                  aria-label={`选择 ${item.main_sku} 批量通过`}
-                  checked={selectedClaimReviewIds.includes(item.id)}
-                  className="card-check"
-                  onChange={(event) => toggleClaimReview(item, event.target.checked)}
-                  type="checkbox"
-                />
-              )}
+              <input
+                aria-label={`选择 ${item.main_sku} 批量复核`}
+                checked={selectedReviewIds.includes(item.id)}
+                className="card-check"
+                onChange={(event) => toggleReview(item, event.target.checked)}
+                type="checkbox"
+              />
               <ProductThumb item={item} />
               <div>
                 <div className="title-row">
@@ -3687,7 +3805,7 @@ function ReviewView(props: {
                   {item.latest_claim_salesperson || "运营"}提交了{item.current_status === "claim_submitted" ? "认领" : "不认领"}，主管不代改运营填写内容。
                 </p>
                 {item.current_status === "claim_submitted" && (
-                  <p className="muted">认领单销：{item.latest_claim_daily_sales ?? "未填写"}</p>
+                  <p className="muted">认领单销：{formatBusinessNumber(item.latest_claim_daily_sales) || "未填写"}</p>
                 )}
                 {item.current_status === "claim_rejected" && item.latest_reject_reason && (
                   <p className="muted">不认领原因：{item.latest_reject_reason}</p>
@@ -3774,7 +3892,7 @@ function OperatorSubmissionSummary({ item, title = "运营提交内容" }: { ite
       {!isNotClaim && (
         <div className="submission-row">
           <span>认领单销</span>
-          <b>{item.latest_claim_daily_sales ?? "未填写"}</b>
+          <b>{formatBusinessNumber(item.latest_claim_daily_sales) || "未填写"}</b>
         </div>
       )}
       {isNotClaim && (
@@ -3881,7 +3999,7 @@ function StockView({ rows, list, setList }: { rows: AvailableStockingItem[]; lis
                 <td>{row.sub_sku}</td>
                 <td>{row.cost_price ?? ""}</td>
                 <td>{row.unit_volume ?? ""}</td>
-                <td>{row.claim_daily_sales}</td>
+                <td>{formatBusinessNumber(row.claim_daily_sales)}</td>
                 <td>{row.quantity}</td>
                 <td>{row.stocking_country || ""}</td>
                 <td>{row.warehouse || ""}</td>
@@ -4003,7 +4121,7 @@ function ArrivalPreviewView({
                     <td>{item.first_listing_time || ""}</td>
                     <td>{item.available_quantity ?? ""}</td>
                     <td>{item.real_stock_quantity ?? ""}</td>
-                    <td>{item.daily_sales ?? ""}</td>
+                    <td>{formatBusinessNumber(item.daily_sales)}</td>
                   </tr>
                 ))}
               </tbody>

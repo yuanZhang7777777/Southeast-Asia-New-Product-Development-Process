@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from copy import deepcopy
 from collections import defaultdict
 from io import BytesIO
 from datetime import date, datetime, timedelta, timezone
@@ -260,8 +261,41 @@ OPPORTUNITY_UPDATE_FIELDS = (
     "site",
     "country",
     "category_level1",
+    "developer_department",
+    "developer_name",
+    "keyword",
+    "product_type",
+    "reason",
     "image_url",
+    "current_status",
 )
+
+EDITABLE_OPPORTUNITY_STATUSES = {
+    OPPORTUNITY_PENDING_ASSIGNMENT,
+    OPPORTUNITY_OPEN_CLAIM_POOL,
+    OPPORTUNITY_ASSIGNED,
+    OPPORTUNITY_CLAIM_SUBMITTED,
+    OPPORTUNITY_CLAIM_REJECTED,
+    OPPORTUNITY_RETURNED_FOR_SUPPLEMENT,
+    OPPORTUNITY_READY_FOR_STOCKING,
+    OPPORTUNITY_CONFIRMED_NOT_CLAIM,
+}
+
+OPPORTUNITY_FIELD_COLUMNS = {
+    "site": "A",
+    "developer_department": "B",
+    "developer_name": "C",
+    "category_level1": "D",
+    "keyword": "E",
+    "image_url": "F",
+    "main_sku_name": "G",
+    "main_sku": "H",
+    "sub_sku_name": "I",
+    "sub_sku": "J",
+    "product_type": "K",
+    "reason": "L",
+}
+OPPORTUNITY_COLUMN_FIELDS = {column: field for field, column in OPPORTUNITY_FIELD_COLUMNS.items()}
 
 
 def update_opportunity(
@@ -292,9 +326,21 @@ def update_opportunity(
         old_value = getattr(opportunity, field)
         if old_value == value:
             continue
+        if field == "current_status":
+            _validate_edited_opportunity_status(db, opportunity, value)
         before[field] = old_value
         after[field] = value
         setattr(opportunity, field, value)
+
+    source_updates = values.get("source_cells") or {}
+    changed_source_before, changed_source_after = _update_opportunity_source_cells(opportunity, source_updates)
+    if changed_source_before:
+        before["source_cells"] = changed_source_before
+        after["source_cells"] = changed_source_after
+
+    synced_fields = {OPPORTUNITY_FIELD_COLUMNS[field]: after[field] for field in OPPORTUNITY_FIELD_COLUMNS if field in after}
+    if synced_fields:
+        _update_opportunity_source_cells(opportunity, synced_fields, validate_columns=False)
 
     if before:
         audit(
@@ -307,6 +353,121 @@ def update_opportunity(
             actor_user_id,
         )
     return opportunity
+
+
+def _validate_edited_opportunity_status(db: Session, opportunity: models.NewProductOpportunity, status: str) -> None:
+    if status not in EDITABLE_OPPORTUNITY_STATUSES:
+        raise ValueError("invalid editable status")
+    if status in {OPPORTUNITY_PENDING_ASSIGNMENT, OPPORTUNITY_OPEN_CLAIM_POOL}:
+        return
+    claim = latest_platform_submission(db, opportunity.id)
+    if status == OPPORTUNITY_CLAIM_SUBMITTED and (not claim or claim.claim_result != CLAIM_RESULT_CLAIM):
+        raise ValueError("claim submission status requires a claim submission")
+    if status == OPPORTUNITY_CLAIM_REJECTED and (not claim or claim.claim_result != CLAIM_RESULT_REJECT):
+        raise ValueError("not-claim status requires a not-claim submission")
+    if status == OPPORTUNITY_ASSIGNED:
+        task = db.scalar(
+            select(models.FlowTask.id)
+            .join(models.FlowInstance)
+            .where(
+                models.FlowInstance.opportunity_id == opportunity.id,
+                models.FlowTask.task_type == "sales_claim",
+                models.FlowTask.status == TASK_PENDING,
+            )
+        )
+        if not task:
+            raise ValueError("assigned status requires a pending sales claim task")
+    if status in {OPPORTUNITY_RETURNED_FOR_SUPPLEMENT, OPPORTUNITY_READY_FOR_STOCKING, OPPORTUNITY_CONFIRMED_NOT_CLAIM}:
+        review = latest_review(db, opportunity.id)
+        required_review = {
+            OPPORTUNITY_RETURNED_FOR_SUPPLEMENT: REVIEW_RETURNED_FOR_SUPPLEMENT,
+            OPPORTUNITY_READY_FOR_STOCKING: REVIEW_APPROVED,
+            OPPORTUNITY_CONFIRMED_NOT_CLAIM: REVIEW_CONFIRMED_NOT_CLAIM,
+        }[status]
+        if not review or review.review_status != required_review:
+            raise ValueError(f"{status} status requires a matching review record")
+
+
+def _update_opportunity_source_cells(
+    opportunity: models.NewProductOpportunity,
+    updates: dict[str, object],
+    validate_columns: bool = True,
+) -> tuple[dict[str, object], dict[str, object]]:
+    if not updates:
+        return {}, {}
+    snapshot = deepcopy(opportunity.snapshot or {})
+    cells = dict(snapshot.get("cells") or {})
+    fields_by_column = dict(snapshot.get("fields_by_column") or {})
+    headers_by_column = dict(snapshot.get("headers_by_column") or {})
+    fields_by_header = dict(snapshot.get("fields_by_header") or {})
+    pricing_snapshot = dict(snapshot.get("pricing_snapshot") or {})
+    allowed = set(snapshot.get("allowed_columns") or cells or fields_by_column or headers_by_column)
+    normalized_updates = {str(column).strip().upper(): value for column, value in updates.items()}
+    invalid = sorted(column for column in normalized_updates if validate_columns and column not in allowed)
+    if invalid:
+        raise ValueError(f"source columns are not editable: {', '.join(invalid)}")
+    header_owners: dict[str, str] = {}
+    for source_column, source_headers in headers_by_column.items():
+        if isinstance(source_headers, str):
+            source_headers = [source_headers]
+        for source_header in source_headers:
+            header_owners.setdefault(normalize_header(source_header), source_column)
+
+    before: dict[str, object] = {}
+    after: dict[str, object] = {}
+    for column, submitted_value in normalized_updates.items():
+        if isinstance(submitted_value, (dict, list, tuple, set)):
+            raise ValueError(f"source column {column} must be a scalar value")
+        old_value = fields_by_column.get(column, cells.get(column))
+        value = _coerce_edited_source_value(submitted_value, old_value)
+        if old_value == value:
+            continue
+        before[column] = old_value
+        after[column] = value
+        cells[column] = value
+        fields_by_column[column] = value
+        headers = headers_by_column.get(column) or []
+        if isinstance(headers, str):
+            headers = [headers]
+        for header in headers:
+            normalized_header = normalize_header(header)
+            if header_owners.get(normalized_header) == column:
+                fields_by_header[normalized_header] = value
+            for key in list(pricing_snapshot):
+                normalized_key = normalize_header(key)
+                if normalized_key in normalized_header or normalized_header in normalized_key:
+                    pricing_snapshot[key] = value
+        model_field = OPPORTUNITY_COLUMN_FIELDS.get(column)
+        if model_field:
+            if model_field in {"main_sku", "sub_sku"} and not value:
+                raise ValueError(f"{model_field} is required")
+            setattr(opportunity, model_field, value)
+
+    if after:
+        snapshot["cells"] = cells
+        snapshot["fields_by_column"] = fields_by_column
+        snapshot["fields_by_header"] = fields_by_header
+        if pricing_snapshot:
+            snapshot["pricing_snapshot"] = pricing_snapshot
+        opportunity.snapshot = snapshot
+    return before, after
+
+
+def _coerce_edited_source_value(value: object, old_value: object) -> object:
+    if not isinstance(value, str):
+        return value
+    text = value.strip()
+    if not text:
+        return None
+    if not isinstance(old_value, (int, float)) or isinstance(old_value, bool):
+        return text
+    percent = text.endswith("%")
+    try:
+        number = float(text.removesuffix("%").replace(",", ""))
+    except ValueError:
+        return text
+    number = number / 100 if percent else number
+    return int(number) if isinstance(old_value, int) and number.is_integer() else number
 
 
 def set_opportunities_disabled(
@@ -779,6 +940,44 @@ def submit_review(
         audit(db, "opportunity.ready_for_stocking", "new_product_opportunity", payload.opportunity_id, {}, reviewer_name, actor_user_id)
     audit(db, "review.submitted", "review_record", record.id, payload.model_dump(), reviewer_name, actor_user_id)
     return record
+
+
+def submit_bulk_reviews(
+    db: Session,
+    payload: schemas.BulkReviewCreate,
+    actor_name: str | None = None,
+    actor_user_id: str | None = None,
+) -> list[models.ReviewRecord]:
+    opportunities = list(db.scalars(select(models.NewProductOpportunity).where(models.NewProductOpportunity.id.in_(payload.opportunity_ids))))
+    by_id = {item.id: item for item in opportunities}
+    missing = [opportunity_id for opportunity_id in payload.opportunity_ids if opportunity_id not in by_id]
+    if missing:
+        raise ValueError(f"opportunities not found: {', '.join(missing)}")
+    statuses = {item.current_status for item in opportunities}
+    if len(statuses) != 1:
+        raise ValueError("bulk review requires the same submission type")
+    current_status = statuses.pop()
+    if current_status not in {OPPORTUNITY_CLAIM_SUBMITTED, OPPORTUNITY_CLAIM_REJECTED}:
+        raise ValueError("only pending claim or not-claim submissions can be bulk reviewed")
+    if payload.action == "reject":
+        review_status = REVIEW_RETURNED_FOR_SUPPLEMENT
+    else:
+        review_status = REVIEW_APPROVED if current_status == OPPORTUNITY_CLAIM_SUBMITTED else REVIEW_CONFIRMED_NOT_CLAIM
+
+    return [
+        submit_review(
+            db,
+            schemas.ReviewCreate(
+                opportunity_id=opportunity_id,
+                reviewer_name=payload.reviewer_name,
+                review_status=review_status,
+                review_comment=payload.review_comment,
+            ),
+            actor_name,
+            actor_user_id,
+        )
+        for opportunity_id in payload.opportunity_ids
+    ]
 
 
 def create_returned_claim_task(db: Session, opportunity_id: str, actor_name: str | None = None) -> None:

@@ -1179,6 +1179,22 @@ textarea {
   color: var(--muted);
 }
 
+.btn.danger {
+  border-color: #ffccc7;
+  background: #fff;
+  color: #cf1322;
+}
+
+.source-parameter-editor summary {
+  padding: 8px 0;
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.source-parameter-editor[open] .form-grid {
+  padding-top: 10px;
+}
+
 .detail-subsku-list {
   display: grid;
   gap: 10px;

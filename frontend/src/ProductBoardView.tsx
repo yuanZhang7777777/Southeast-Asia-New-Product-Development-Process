@@ -2,6 +2,7 @@ import { ChevronDown, ChevronRight, ClipboardPen, Search, X } from "lucide-react
 import { Fragment, useEffect, useMemo, useState } from "react";
 
 import { API_BASE, api, getAuthToken, ProductBoardGroup } from "./api";
+import { formatBusinessNumber } from "./businessFormat";
 import {
   buildProductBoardRows,
   filterProductBoardRows,
@@ -193,7 +194,7 @@ function ChildSkuTable({ row, onOpenDetail }: { row: ProductBoardRow; onOpenDeta
           const responsibilities = row.responsibilities.filter((item) => item.opportunity_id === child.opportunity_id);
           const owners = responsibilities.map((item) => item.salesperson_name).filter(Boolean).join("、") || "-";
           const claimDailySales = unique(
-            responsibilities.map((item) => item.claim_daily_sales).filter((value): value is number => value != null).map(String)
+            responsibilities.map((item) => item.claim_daily_sales).filter((value): value is number => value != null).map(formatBusinessNumber)
           ).join("、") || "-";
           const statuses = responsibilities.length ? responsibilities.map((item) => item.visible_status) : [child.visible_status];
           return (

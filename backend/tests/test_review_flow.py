@@ -221,6 +221,81 @@ def test_review_claim_submission_can_be_returned_for_supplement() -> None:
     assert [(task.assignee_name, task.status) for task in returned_tasks] == [("销售A", "pending")]
 
 
+def test_bulk_review_approves_same_type_claim_submissions() -> None:
+    opportunity_ids = [prepare_submission("claim", claim_daily_sales=1), prepare_submission("claim", claim_daily_sales=2)]
+
+    response = client.post(
+        "/reviews/bulk",
+        json={"opportunity_ids": opportunity_ids, "reviewer_name": "练玉君", "action": "approve"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["id"] == "2"
+    with SessionLocal() as db:
+        statuses = [db.get(models.NewProductOpportunity, opportunity_id).current_status for opportunity_id in opportunity_ids]
+    assert statuses == ["ready_for_stocking", "ready_for_stocking"]
+
+
+def test_bulk_review_confirms_same_type_not_claim_submissions() -> None:
+    opportunity_ids = [
+        prepare_submission("reject", reject_reason="市场小"),
+        prepare_submission("reject", reject_reason="价格低"),
+    ]
+
+    response = client.post(
+        "/reviews/bulk",
+        json={"opportunity_ids": opportunity_ids, "reviewer_name": "练玉君", "action": "approve"},
+    )
+
+    assert response.status_code == 200
+    with SessionLocal() as db:
+        statuses = [db.get(models.NewProductOpportunity, opportunity_id).current_status for opportunity_id in opportunity_ids]
+    assert statuses == ["已确认不认领", "已确认不认领"]
+
+
+def test_bulk_review_rejects_mixed_submission_types_without_partial_updates() -> None:
+    claim_id = prepare_submission("claim", claim_daily_sales=1)
+    not_claim_id = prepare_submission("reject", reject_reason="市场小")
+
+    response = client.post(
+        "/reviews/bulk",
+        json={
+            "opportunity_ids": [claim_id, not_claim_id],
+            "reviewer_name": "练玉君",
+            "action": "reject",
+            "review_comment": "统一退回补充",
+        },
+    )
+
+    assert response.status_code == 400
+    assert "same submission type" in response.json()["detail"]
+    with SessionLocal() as db:
+        assert db.get(models.NewProductOpportunity, claim_id).current_status == "claim_submitted"
+        assert db.get(models.NewProductOpportunity, not_claim_id).current_status == "claim_rejected"
+        assert db.query(models.ReviewRecord).count() == 0
+
+
+def test_bulk_review_rejects_same_type_with_shared_reason() -> None:
+    opportunity_ids = [prepare_submission("claim", claim_daily_sales=1), prepare_submission("claim", claim_daily_sales=2)]
+
+    response = client.post(
+        "/reviews/bulk",
+        json={
+            "opportunity_ids": opportunity_ids,
+            "reviewer_name": "练玉君",
+            "action": "reject",
+            "review_comment": "补充单销依据",
+        },
+    )
+
+    assert response.status_code == 200
+    with SessionLocal() as db:
+        statuses = [db.get(models.NewProductOpportunity, opportunity_id).current_status for opportunity_id in opportunity_ids]
+        comments = [record.review_comment for record in db.query(models.ReviewRecord).order_by(models.ReviewRecord.created_at)]
+    assert statuses == ["returned_for_supplement", "returned_for_supplement"]
+    assert comments == ["补充单销依据", "补充单销依据"]
+
+
 def test_review_cannot_confirm_claim_as_not_claim() -> None:
     opportunity_id = prepare_submission("claim", claim_daily_sales=1)
 
