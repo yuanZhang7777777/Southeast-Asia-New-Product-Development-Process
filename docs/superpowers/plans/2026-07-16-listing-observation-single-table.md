@@ -677,7 +677,7 @@ git commit -m "fix: preserve manager operator selection"
 - Consumes: Task 1–3 的已验证前端提交。
 - Produces: 与代码一致的权威文档、开发环境前端部署和可复核证据。
 
-- [ ] **Step 1: 运行最终本地验证**
+- [x] **Step 1: 运行最终本地验证**
 
 Run:
 
@@ -690,7 +690,7 @@ npm run build
 
 Expected: 0 failed，构建成功。
 
-- [ ] **Step 2: 用 neat-freak 对齐权威文档**
+- [x] **Step 2: 用 neat-freak 对齐权威文档**
 
 把功能状态改成已实现，确认当前文档中不再把顶部页签、“只看待我处理”或用户可见“待取数”描述为现状。历史实施计划保留历史语境，不篡改已完成步骤；不删除文档。
 
