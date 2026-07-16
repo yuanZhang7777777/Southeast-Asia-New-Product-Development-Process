@@ -864,6 +864,7 @@ def submit_review(
     review_comment = _clean_text(payload.review_comment)
     if payload.review_status == REVIEW_RETURNED_FOR_SUPPLEMENT and not review_comment:
         raise ValueError("review_comment is required when returning for supplement")
+    db.flush()
     opportunity = db.get(models.NewProductOpportunity, payload.opportunity_id)
     claim = (
         db.get(models.SalesClaimForecast, payload.claim_record_id)
@@ -908,15 +909,18 @@ def submit_review(
     ):
         raise ValueError("only claim or not-claim submissions can be returned for supplement")
     reviewer_name = actor_name or payload.reviewer_name
-    record = models.ReviewRecord(
-        opportunity_id=payload.opportunity_id,
-        claim_record_id=claim.id if payload.claim_record_id and claim else None,
-        reviewer_user_id=actor_user_id,
-        reviewer_name=reviewer_name,
-        review_status=payload.review_status,
-        review_comment=review_comment,
-    )
-    db.add(record)
+    records = [
+        models.ReviewRecord(
+            opportunity_id=payload.opportunity_id,
+            claim_record_id=reviewed_claim.id,
+            reviewer_user_id=actor_user_id,
+            reviewer_name=reviewer_name,
+            review_status=payload.review_status,
+            review_comment=review_comment,
+        )
+        for reviewed_claim in reviewed_claims
+    ]
+    db.add_all(records)
     if opportunity:
         opportunity.current_status = REVIEW_TO_OPPORTUNITY_STATUS[payload.review_status]
     task = db.scalar(
@@ -938,8 +942,17 @@ def submit_review(
         for reviewed_claim in reviewed_claims:
             reviewed_claim.downstream_status = CLAIM_WAITING_EXPORT
         audit(db, "opportunity.ready_for_stocking", "new_product_opportunity", payload.opportunity_id, {}, reviewer_name, actor_user_id)
-    audit(db, "review.submitted", "review_record", record.id, payload.model_dump(), reviewer_name, actor_user_id)
-    return record
+    for record in records:
+        audit(
+            db,
+            "review.submitted",
+            "review_record",
+            record.id,
+            {**payload.model_dump(), "claim_record_id": record.claim_record_id},
+            reviewer_name,
+            actor_user_id,
+        )
+    return records[0]
 
 
 def submit_bulk_reviews(
@@ -1357,7 +1370,7 @@ def list_product_board_groups(
     )
     groups: dict[tuple[str | None, str | None, str], dict] = {}
     for opportunity, claim in rows:
-        review = latest_approved_review_for_claim(db, opportunity.id, claim.id) if claim else None
+        review = latest_review_for_claim(db, opportunity.id, claim) if claim else None
         status = responsibility_visible_status(opportunity, claim, review)
         pending_tasks = pending_tasks_by_opportunity.get(opportunity.id, [])
         if visible_status and status != visible_status:
@@ -1525,8 +1538,8 @@ def list_available_stocking_items(
     )
     items: list[schemas.AvailableStockingItem] = []
     for opportunity, claim in rows:
-        review = latest_approved_review_for_claim(db, opportunity.id, claim.id)
-        if review is None:
+        review = latest_review_for_claim(db, opportunity.id, claim)
+        if review is None or review.review_status != REVIEW_APPROVED:
             continue
         quantity = int(round(claim.claim_daily_sales * 30))
         cost_price = number_value(central_field_value(opportunity, "商品成本-含税（元）"))
@@ -2046,14 +2059,7 @@ def list_not_claim_traceability_rows(
     ).all()
     output = []
     for opportunity, claim in rows:
-        review = db.scalar(
-            select(models.ReviewRecord)
-            .where(
-                models.ReviewRecord.opportunity_id == opportunity.id,
-                models.ReviewRecord.claim_record_id == claim.id,
-            )
-            .order_by(models.ReviewRecord.created_at.desc())
-        )
+        review = latest_review_for_claim(db, opportunity.id, claim)
         if review and review.review_status == REVIEW_CONFIRMED_NOT_CLAIM:
             output.append((opportunity, claim, review))
     return output
@@ -2114,7 +2120,7 @@ def build_traceability_workbook(
         for item in sheet_items:
             opportunity = db.get(models.NewProductOpportunity, item.opportunity_id)
             claim = db.get(models.SalesClaimForecast, item.claim_record_id)
-            review = latest_approved_review(db, item.opportunity_id)
+            review = latest_review_for_claim(db, item.opportunity_id, claim) if claim else None
             central_values = [central_field_value(opportunity, header, item, column) for column, header in CENTRAL_TRACEABILITY_COLUMNS]
             product_images.append((worksheet.max_row + 1, opportunity.image_url if opportunity else None))
             central_values[PRODUCT_IMAGE_COLUMN_INDEX] = None
@@ -2358,26 +2364,21 @@ def latest_claim(db: Session, opportunity_id: str) -> models.SalesClaimForecast 
     )
 
 
-def latest_approved_review(db: Session, opportunity_id: str) -> models.ReviewRecord | None:
+def latest_review_for_claim(
+    db: Session,
+    opportunity_id: str,
+    claim: models.SalesClaimForecast,
+) -> models.ReviewRecord | None:
     return db.scalar(
         select(models.ReviewRecord)
         .where(
             models.ReviewRecord.opportunity_id == opportunity_id,
-            models.ReviewRecord.review_status == REVIEW_APPROVED,
+            or_(
+                models.ReviewRecord.claim_record_id == claim.id,
+                models.ReviewRecord.claim_record_id.is_(None) & (models.ReviewRecord.created_at >= claim.created_at),
+            ),
         )
-        .order_by(models.ReviewRecord.created_at.desc())
-    )
-
-
-def latest_approved_review_for_claim(db: Session, opportunity_id: str, claim_record_id: str) -> models.ReviewRecord | None:
-    return db.scalar(
-        select(models.ReviewRecord)
-        .where(
-            models.ReviewRecord.opportunity_id == opportunity_id,
-            models.ReviewRecord.review_status == REVIEW_APPROVED,
-            or_(models.ReviewRecord.claim_record_id == claim_record_id, models.ReviewRecord.claim_record_id.is_(None)),
-        )
-        .order_by(models.ReviewRecord.claim_record_id.desc(), models.ReviewRecord.created_at.desc())
+        .order_by(models.ReviewRecord.created_at.desc(), models.ReviewRecord.claim_record_id.desc())
     )
 
 

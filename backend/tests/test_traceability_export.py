@@ -382,6 +382,25 @@ def test_traceability_export_requires_confirmation_for_each_not_claim_claim() ->
     assert {row["销售员"] for row in rows} == {"销售已确认"}
 
 
+def test_bulk_confirmed_not_claim_rows_are_claim_scoped_and_exported() -> None:
+    opportunity_ids = [
+        prepare_reject_claim("W-BULK-NOT-CLAIM", 1, "MAIN-BULK-A", None),
+        prepare_reject_claim("W-BULK-NOT-CLAIM", 2, "MAIN-BULK-B", None),
+    ]
+
+    response = client.post(
+        "/reviews/bulk",
+        json={"opportunity_ids": opportunity_ids, "reviewer_name": "练玉君", "action": "approve"},
+    )
+
+    assert response.status_code == 200
+    with SessionLocal() as db:
+        rows = services.list_not_claim_traceability_rows(db, source_sheet="W-BULK-NOT-CLAIM")
+        review_claim_ids = [review.claim_record_id for review in db.query(models.ReviewRecord)]
+    assert {opportunity.main_sku for opportunity, _, _ in rows} == {"MAIN-BULK-A", "MAIN-BULK-B"}
+    assert None not in review_claim_ids
+
+
 def test_traceability_export_records_each_repeat_download() -> None:
     prepare_reject_claim(source_sheet="W27", source_row=1, main_sku="MAIN-NOT-CLAIM-ONCE", review_status="confirmed_not_claim")
 

@@ -88,3 +88,13 @@ test("导出中心按期展示且不保留无范围导出按钮", () => {
   assert.doesNotMatch(stockView, /api\.traceabilityExport\(\)/);
   assert.doesNotMatch(stockView, /api\.availableStockingExport\(\)/);
 });
+
+test("导出中心刷新失败时保留当前期数和明细切片", () => {
+  const refresh = app.slice(app.indexOf("async function refresh"), app.indexOf("async function loadPlmArrivalPreview"));
+
+  assert.match(refresh, /loadPart\("导出中心", api\.availableStocking, availableStocking\)/);
+  assert.match(refresh, /loadPart\("导出期数", api\.exportPeriods, exportPeriods\)/);
+  assert.doesNotMatch(refresh, /loadPart\("导出中心", api\.availableStocking, \[\]\)/);
+  assert.doesNotMatch(refresh, /loadPart\("导出期数", api\.exportPeriods, \[\]\)/);
+  assert.match(refresh, /部分数据未加载/);
+});

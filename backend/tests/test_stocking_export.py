@@ -113,9 +113,73 @@ def test_stocking_export_repeats_current_rows_without_regressing_later_status() 
 
     with SessionLocal() as db:
         claim = db.query(models.SalesClaimForecast).filter_by(opportunity_id=opportunity_id).one()
+        opportunity = db.get(models.NewProductOpportunity, opportunity_id)
         rows = db.query(models.ExportRow).filter_by(claim_record_id=claim.id).all()
+        transition_audits = db.query(models.AuditLog).filter_by(
+            action="opportunity.waiting_arrival",
+            entity_id=opportunity_id,
+        ).all()
         assert claim.downstream_status == "waiting_secondary_research"
+        assert opportunity.current_status == "waiting_arrival"
         assert len(rows) == 2
+        assert len(transition_audits) == 1
+
+
+def test_legacy_null_review_only_applies_to_claims_existing_when_reviewed() -> None:
+    reviewed_at = datetime(2026, 7, 1, 8, tzinfo=timezone.utc)
+    with SessionLocal() as db:
+        opportunity = models.NewProductOpportunity(
+            source_type="selection2_caigen_claim_feedback",
+            source_file="选品2.xlsx",
+            source_sheet="5.26期",
+            source_row=1,
+            batch="BATCH-EXPORT",
+            country="PH",
+            site="PH",
+            main_sku="MAIN-LEGACY-REVIEW",
+            sub_sku="SUB-LEGACY-REVIEW",
+            current_status="ready_for_stocking",
+        )
+        db.add(opportunity)
+        db.flush()
+        existing_claim = models.SalesClaimForecast(
+            opportunity_id=opportunity.id,
+            salesperson_name="销售已复核",
+            claim_result="claim",
+            claim_daily_sales=1,
+            source_column="platform",
+            created_at=reviewed_at - timedelta(minutes=1),
+        )
+        later_claim = models.SalesClaimForecast(
+            opportunity_id=opportunity.id,
+            salesperson_name="销售后认领",
+            claim_result="claim",
+            claim_daily_sales=2,
+            source_column="platform",
+            created_at=reviewed_at + timedelta(minutes=1),
+        )
+        db.add_all(
+            [
+                existing_claim,
+                later_claim,
+                models.ReviewRecord(
+                    opportunity_id=opportunity.id,
+                    reviewer_name="历史主管",
+                    review_status="approved",
+                    created_at=reviewed_at,
+                ),
+            ]
+        )
+        db.flush()
+        existing_claim_id = existing_claim.id
+        db.commit()
+
+    response = client.get("/stocking/available-list?business_period=BATCH-EXPORT")
+
+    assert response.status_code == 200
+    assert [(row["claim_record_id"], row["salesperson_name"]) for row in response.json()] == [
+        (existing_claim_id, "销售已复核")
+    ]
 
 
 def test_repeat_export_includes_newly_approved_rows_in_the_same_period() -> None:

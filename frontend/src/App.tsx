@@ -624,8 +624,8 @@ function App() {
       loadPart("健康检查", api.health, { status: "error", environment: "unknown" }),
       loadPart("机会池", () => api.opportunities(5000, undefined, isSuperAdmin), []),
       loadPart("待办", api.tasks, []),
-      loadPart("导出中心", api.availableStocking, []),
-      loadPart("导出期数", api.exportPeriods, []),
+      loadPart("导出中心", api.availableStocking, availableStocking),
+      loadPart("导出期数", api.exportPeriods, exportPeriods),
       loadPart("人员配置", api.operatorProfiles, []),
       canManage ? loadPart("导入批次", api.importBatches, []) : Promise.resolve([])
     ]);

@@ -223,6 +223,17 @@ def test_review_claim_submission_can_be_returned_for_supplement() -> None:
 
 def test_bulk_review_approves_same_type_claim_submissions() -> None:
     opportunity_ids = [prepare_submission("claim", claim_daily_sales=1), prepare_submission("claim", claim_daily_sales=2)]
+    with SessionLocal() as db:
+        db.add(
+            models.SalesClaimForecast(
+                opportunity_id=opportunity_ids[0],
+                salesperson_name="销售B",
+                claim_result="claim",
+                claim_daily_sales=3,
+                source_column="platform",
+            )
+        )
+        db.commit()
 
     response = client.post(
         "/reviews/bulk",
@@ -233,7 +244,10 @@ def test_bulk_review_approves_same_type_claim_submissions() -> None:
     assert response.json()["id"] == "2"
     with SessionLocal() as db:
         statuses = [db.get(models.NewProductOpportunity, opportunity_id).current_status for opportunity_id in opportunity_ids]
+        claim_ids = {claim.id for claim in db.query(models.SalesClaimForecast).filter(models.SalesClaimForecast.opportunity_id.in_(opportunity_ids))}
+        review_claim_ids = {review.claim_record_id for review in db.query(models.ReviewRecord)}
     assert statuses == ["ready_for_stocking", "ready_for_stocking"]
+    assert review_claim_ids == claim_ids
 
 
 def test_bulk_review_confirms_same_type_not_claim_submissions() -> None:
@@ -250,7 +264,9 @@ def test_bulk_review_confirms_same_type_not_claim_submissions() -> None:
     assert response.status_code == 200
     with SessionLocal() as db:
         statuses = [db.get(models.NewProductOpportunity, opportunity_id).current_status for opportunity_id in opportunity_ids]
+        review_claim_ids = [review.claim_record_id for review in db.query(models.ReviewRecord)]
     assert statuses == ["已确认不认领", "已确认不认领"]
+    assert None not in review_claim_ids
 
 
 def test_bulk_review_rejects_mixed_submission_types_without_partial_updates() -> None:
