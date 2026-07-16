@@ -279,7 +279,7 @@ def test_traceability_export_filters_by_period_and_excludes_unconfirmed_not_clai
     assert reject_values == ["MAIN-REJECT-CONFIRMED"]
 
 
-def test_traceability_export_records_not_claim_rows_once() -> None:
+def test_traceability_export_records_each_repeat_download() -> None:
     prepare_reject_claim(source_sheet="W27", source_row=1, main_sku="MAIN-NOT-CLAIM-ONCE", review_status="confirmed_not_claim")
 
     first = client.get("/stocking/traceability/export?source_sheet=W27")
@@ -290,8 +290,9 @@ def test_traceability_export_records_not_claim_rows_once() -> None:
     with SessionLocal() as db:
         exported = db.query(models.ExportRow).all()
 
-    assert len(exported) == 1
-    assert exported[0].main_sku == "MAIN-NOT-CLAIM-ONCE"
+    assert len(exported) == 2
+    assert {row.main_sku for row in exported} == {"MAIN-NOT-CLAIM-ONCE"}
+    assert len({row.export_batch_id for row in exported}) == 2
 
 
 def prepare_approved_claim(

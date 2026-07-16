@@ -58,7 +58,6 @@ def export_traceability_items(
         source_sheet=source_sheet,
         business_period=business_period,
         import_batch_id=import_batch_id,
-        exclude_exported_scope="traceability",
     )
     not_claim_rows = services.list_not_claim_traceability_rows(db, source_sheet=source_sheet, business_period=business_period, import_batch_id=import_batch_id)
     file_name = period_file_name("新品中央字段导出", business_period or source_sheet, import_batch_id)

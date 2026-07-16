@@ -95,6 +95,58 @@ def test_multiple_approved_claims_for_one_child_sku_export_as_multiple_rows() ->
     ]
 
 
+def test_stocking_export_repeats_current_rows_without_regressing_later_status() -> None:
+    opportunity_id = prepare_approved_claims([("销售A", 2.5)])
+
+    first = client.get("/stocking/available-list/export?business_period=BATCH-EXPORT")
+    assert first.status_code == 200
+
+    with SessionLocal() as db:
+        claim = db.query(models.SalesClaimForecast).filter_by(opportunity_id=opportunity_id).one()
+        claim.downstream_status = "waiting_secondary_research"
+        db.commit()
+
+    second = client.get("/stocking/available-list/export?business_period=BATCH-EXPORT")
+    assert second.status_code == 200
+    workbook = load_workbook(BytesIO(second.content), data_only=True)
+    assert workbook["PH"].max_row == 2
+
+    with SessionLocal() as db:
+        claim = db.query(models.SalesClaimForecast).filter_by(opportunity_id=opportunity_id).one()
+        rows = db.query(models.ExportRow).filter_by(claim_record_id=claim.id).all()
+        assert claim.downstream_status == "waiting_secondary_research"
+        assert len(rows) == 2
+
+
+def test_repeat_export_includes_newly_approved_rows_in_the_same_period() -> None:
+    prepare_approved_claims([("销售A", 1)], main_sku="MAIN-FIRST", sub_sku="SUB-FIRST", source_row=1)
+    first = client.get("/stocking/available-list/export?business_period=BATCH-EXPORT")
+    assert first.status_code == 200
+
+    prepare_approved_claims([("销售B", 2)], main_sku="MAIN-LATER", sub_sku="SUB-LATER", source_row=2)
+    second = client.get("/stocking/available-list/export?business_period=BATCH-EXPORT")
+
+    workbook = load_workbook(BytesIO(second.content), data_only=True)
+    assert {workbook["PH"][f"F{row}"].value for row in range(2, workbook["PH"].max_row + 1)} == {
+        "MAIN-FIRST",
+        "MAIN-LATER",
+    }
+
+
+def test_repeatable_exports_still_exclude_disabled_opportunities() -> None:
+    opportunity_id = prepare_approved_claims([("销售A", 1)])
+    with SessionLocal() as db:
+        opportunity = db.get(models.NewProductOpportunity, opportunity_id)
+        assert opportunity is not None
+        opportunity.current_status = "disabled"
+        db.commit()
+
+    response = client.get("/stocking/available-list?business_period=BATCH-EXPORT")
+
+    assert response.status_code == 200
+    assert response.json() == []
+
+
 def prepare_approved_claims(
     claims: list[tuple[str, float]],
     country: str = "PH",

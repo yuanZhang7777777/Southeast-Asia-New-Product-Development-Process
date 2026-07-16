@@ -1498,20 +1498,13 @@ def list_available_stocking_items(
     source_sheet: str | None = None,
     business_period: str | None = None,
     import_batch_id: str | None = None,
-    exclude_exported_scope: str | None = "stocking_available",
 ) -> list[schemas.AvailableStockingItem]:
-    exported_claim_ids = (
-        select(models.ExportRow.claim_record_id)
-        .join(models.ExportBatch, models.ExportBatch.id == models.ExportRow.export_batch_id)
-        .where(models.ExportBatch.scope == exclude_exported_scope)
-    )
     filters = [
         models.NewProductOpportunity.current_status != OPPORTUNITY_DISABLED,
         models.SalesClaimForecast.claim_result == CLAIM_RESULT_CLAIM,
         models.SalesClaimForecast.claim_daily_sales.is_not(None),
         models.SalesClaimForecast.claim_daily_sales > 0,
         models.SalesClaimForecast.source_column == "platform",
-        or_(models.SalesClaimForecast.downstream_status == CLAIM_WAITING_EXPORT, models.SalesClaimForecast.downstream_status.is_(None)),
     ]
     if business_period:
         filters.append(models.NewProductOpportunity.batch == business_period)
@@ -1519,8 +1512,6 @@ def list_available_stocking_items(
         filters.append(or_(models.NewProductOpportunity.batch == source_sheet, models.NewProductOpportunity.source_sheet == source_sheet))
     if import_batch_id:
         filters.append(models.NewProductOpportunity.import_batch_id == import_batch_id)
-    if exclude_exported_scope:
-        filters.append(models.SalesClaimForecast.id.not_in(exported_claim_ids))
     rows = list(
         db.execute(
             select(models.NewProductOpportunity, models.SalesClaimForecast)
@@ -1535,7 +1526,7 @@ def list_available_stocking_items(
     items: list[schemas.AvailableStockingItem] = []
     for opportunity, claim in rows:
         review = latest_approved_review_for_claim(db, opportunity.id, claim.id)
-        if responsibility_visible_status(opportunity, claim, review) != CLAIM_WAITING_EXPORT:
+        if review is None:
             continue
         quantity = int(round(claim.claim_daily_sales * 30))
         cost_price = number_value(central_field_value(opportunity, "商品成本-含税（元）"))
@@ -1648,7 +1639,7 @@ def record_export_batch(
             )
         )
         claim = db.get(models.SalesClaimForecast, item.claim_record_id)
-        if claim:
+        if claim and claim.downstream_status in (None, CLAIM_WAITING_EXPORT):
             claim.downstream_status = CLAIM_WAITING_ARRIVAL
     for opportunity, claim in extra_rows:
         db.add(
@@ -1668,7 +1659,7 @@ def record_export_batch(
     if scope == "stocking_available":
         for opportunity_id in {item.opportunity_id for item in items}:
             opportunity = db.get(models.NewProductOpportunity, opportunity_id)
-            if opportunity:
+            if opportunity and opportunity.current_status == OPPORTUNITY_READY_FOR_STOCKING:
                 opportunity.current_status = OPPORTUNITY_WAITING_ARRIVAL
                 audit(
                     db,
@@ -2030,13 +2021,7 @@ def list_not_claim_traceability_rows(
     source_sheet: str | None = None,
     business_period: str | None = None,
     import_batch_id: str | None = None,
-    exclude_exported_scope: str | None = "traceability",
 ) -> list[tuple[models.NewProductOpportunity, models.SalesClaimForecast, models.ReviewRecord | None]]:
-    exported_claim_ids = (
-        select(models.ExportRow.claim_record_id)
-        .join(models.ExportBatch, models.ExportBatch.id == models.ExportRow.export_batch_id)
-        .where(models.ExportBatch.scope == exclude_exported_scope)
-    )
     filters = [
         models.SalesClaimForecast.claim_result == CLAIM_RESULT_REJECT,
         models.SalesClaimForecast.source_column == "platform",
@@ -2047,8 +2032,6 @@ def list_not_claim_traceability_rows(
         filters.append(or_(models.NewProductOpportunity.batch == source_sheet, models.NewProductOpportunity.source_sheet == source_sheet))
     if import_batch_id:
         filters.append(models.NewProductOpportunity.import_batch_id == import_batch_id)
-    if exclude_exported_scope:
-        filters.append(models.SalesClaimForecast.id.not_in(exported_claim_ids))
     rows = db.execute(
         select(models.NewProductOpportunity, models.SalesClaimForecast)
         .join(models.SalesClaimForecast, models.SalesClaimForecast.opportunity_id == models.NewProductOpportunity.id)
