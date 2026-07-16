@@ -694,13 +694,13 @@ Expected: 0 failed，构建成功。
 
 把功能状态改成已实现，确认当前文档中不再把顶部页签、“只看待我处理”或用户可见“待取数”描述为现状。历史实施计划保留历史语境，不篡改已完成步骤；不删除文档。
 
-- [ ] **Step 3: 只部署开发环境前端**
+- [x] **Step 3: 只部署开发环境前端**
 
 使用现有 `hz-new-product-dev` SSH 别名和 `hengzhe-new-product-dev` Compose 项目，将当前提交打包到 `/opt/hengzhe-new-product-dev`。归档必须排除 `.env`、`node_modules` 和 `dist`；在服务器临时目录构建后原子切换应用目录，只重建 frontend 容器。
 
 部署前后分别记录 API、PostgreSQL、Redis 容器 ID，并断言三者未变化。不得连接 `101.132.26.138`。
 
-- [ ] **Step 4: 冒烟验证开发地址**
+- [x] **Step 4: 冒烟验证开发地址**
 
 验证：
 
@@ -711,7 +711,7 @@ GET http://139.224.2.166:18081/api/health -> environment=development
 服务器源码保留业务状态默认 pending_listing、观察中和新增店铺 + Item
 ```
 
-- [ ] **Step 5: 提交文档收尾**
+- [x] **Step 5: 提交文档收尾**
 
 ```bash
 git add docs/00-新会话交接.md docs/02-功能实现状态.md docs/2026-07-09-已确认需求记录.md docs/superpowers/plans/2026-07-16-listing-observation-single-table.md

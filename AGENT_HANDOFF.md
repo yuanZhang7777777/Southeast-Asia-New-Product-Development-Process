@@ -6,13 +6,13 @@
 
 Implementation is in final validation. Continue from `specs/001-frontstage-mvp/tasks.md` unless the user switches back to requirements alignment. Use Superpowers-style discipline and Ponytail scope control. Do not use Spec Kit again unless the user explicitly asks; the user said it can make the current work confusing. Do not put any agent/tooling content into product docs or product pages.
 
-Implementation has completed backend US1-US5 plus frontend MVP screens for `specs/001-frontstage-mvp/tasks.md`. Current development target is local first. Later production migration target is SSH `root@101.132.26.138:2323`. Do not write the SSH password or any other credentials into repo files, docs, commits, logs, or `.env.example`; use local secret storage or prompt-time input for deployment.
+Implementation has completed backend US1-US5, the frontend MVP, secondary research, and the listing/observation workbench. The only current deployment target is the isolated development environment `http://139.224.2.166:18081` through SSH alias `hz-new-product-dev`; do not connect to, deploy, or restart production `101.132.26.138` without a separately approved window. Do not write passwords or other credentials into repo files, docs, commits, logs, or `.env.example`; use local secret storage or prompt-time input for deployment.
 
 ## Implementation Status
 
-- Completed: project setup, PostgreSQL/SQLite guard, Alembic migrations, two feedback workbook importers, personnel config import, one-click assignment, claim/not-claim submission metadata, supervisor review, stocking export, central traceability export, product dashboard, source upload, operator profile config UI, inline operator claim UI, local demo data script, Phase 12 source-routing / batch-claim / review-state clarification, and minimal DingTalk new-product todo card sender.
-- Current tests before handoff: backend `.\.venv\Scripts\python.exe -m pytest backend/tests` passed with 40 tests on 2026-07-04 after export/import mapping changes. Frontend `npm run build` previously passed before the latest export-only backend changes.
-- Remaining task pointer: continue from `specs/001-frontstage-mvp/tasks.md`; Phase 12 is checked off. Docker Compose validation remains blocked unless Docker CLI is available locally.
+- Completed: project setup, PostgreSQL/SQLite guard, Alembic migrations, two feedback workbook importers, personnel config import, one-click assignment, claim/not-claim submission metadata, supervisor review, stocking export, central traceability export, product dashboard, source upload, operator profile config UI, inline operator claim UI, local demo data script, secondary-research five-position routing, the single-table listing/observation workbench, and the minimal DingTalk new-product todo card sender.
+- Current verification: backend test baseline is 200 passed; frontend `npm test` passed 41 tests and `npm run build` passed on 2026-07-16.
+- Development deployment: commit `fe91069` is deployed at `http://139.224.2.166:18081`. Only the frontend container was recreated; API, PostgreSQL, Redis, and reverse-proxy container IDs remained unchanged. The health endpoint returned `environment=development`.
 
 ## Latest Business Ground Truth
 
@@ -293,7 +293,7 @@ docs/17-源表字段总字典.md
 中间桥、在线表自动写回、匹配异常清单、采购/供应链待办都先不做。
 第一版“只导出，不做在线表自动写回入口”已经确认，不要再问。
 
-请先告诉我当前已完成、未完成、下一步建议；如果继续写代码，优先从本地演示验证和剩余 UI/导出问题开始。
+请先告诉我当前已完成、未完成、下一步建议；如果继续写代码，优先从 18081 开发环境业务验收和周 Item 真实接口联调开始。生产变更必须另行审批。
 ```
 
 ## Guardrails
@@ -303,4 +303,4 @@ docs/17-源表字段总字典.md
 - Do not include internal Agent / Superpowers / Spec Kit process text in product pages or business-facing docs.
 - Do not reintroduce `改派` unless user explicitly asks; current flow is allocation, claim/not claim, review, export.
 - Do not revive automatic central-table writeback or exception-list workflow as first-version scope.
-- Current dirty docs are intentional planning work. Do not revert user or prior planning changes.
+- Preserve user and prior-agent changes; inspect the worktree before editing and do not revert unrelated files.
