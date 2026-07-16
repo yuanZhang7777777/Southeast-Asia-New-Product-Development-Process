@@ -166,6 +166,14 @@ test("刊登观察页面使用单表和业务状态筛选且不暴露内部待�
   assert.match(listingObservationViewSource, /新增店铺 \+ Item/);
 });
 
+test("刊登观察只读汇总的待数据周期四项指标统一显示短横线", () => {
+  const summarySource = listingObservationViewSource.match(/export function ListingObservationSummary[\s\S]*?function PendingListingTasks/)?.[0] || "";
+  assert.match(summarySource, /\{period\.status === "pending_data" \? "-" : formatObservationMetric\(period\.order_count\)\}/);
+  assert.match(summarySource, /\{period\.status === "pending_data" \? "-" : formatObservationMetric\(period\.total_revenue\)\}/);
+  assert.match(summarySource, /\{period\.status === "pending_data" \? "-" : formatObservationMetric\(period\.gross_profit_amount\)\}/);
+  assert.match(summarySource, /\{period\.status === "pending_data" \? "-" : formatPercent\(period\.gross_profit_rate\)\}/);
+});
+
 test("刊登记录的店铺、Item、刊登策略和第一周周期全部必填", () => {
   const errors = validateListingDrafts([
     { shop: " ", item: "", listing_strategy: "\n", first_period_start: "" }

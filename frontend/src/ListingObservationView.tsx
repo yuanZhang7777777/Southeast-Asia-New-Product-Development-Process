@@ -895,10 +895,10 @@ export function ListingObservationSummary(props: {
                 <td>{period.shop}<br /><b>{period.item}</b></td>
                 <td>第 {period.week_number} 周</td>
                 <td>{period.period_start} 至 {period.period_end}</td>
-                <td>{formatObservationMetric(period.order_count)}</td>
-                <td>{formatObservationMetric(period.total_revenue)}</td>
-                <td>{formatObservationMetric(period.gross_profit_amount)}</td>
-                <td>{period.status === "pending_data" ? "周数据未获取" : formatPercent(period.gross_profit_rate)}</td>
+                <td>{period.status === "pending_data" ? "-" : formatObservationMetric(period.order_count)}</td>
+                <td>{period.status === "pending_data" ? "-" : formatObservationMetric(period.total_revenue)}</td>
+                <td>{period.status === "pending_data" ? "-" : formatObservationMetric(period.gross_profit_amount)}</td>
+                <td>{period.status === "pending_data" ? "-" : formatPercent(period.gross_profit_rate)}</td>
                 <td>{period.product_positioning || "-"}</td>
                 <td>{period.optimization_action || "-"}</td>
                 <td>{period.four_week_summary || "-"}</td>
