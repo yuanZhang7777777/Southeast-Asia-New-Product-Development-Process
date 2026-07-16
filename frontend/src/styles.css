@@ -3227,28 +3227,6 @@ th {
   min-width: 0;
 }
 
-.listing-tabs {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-  border-bottom: 1px solid #e2e8f0;
-  padding-bottom: 10px;
-}
-
-.listing-tabs button {
-  border: 0;
-  border-radius: 8px;
-  background: #f1f5f9;
-  color: #475569;
-  cursor: pointer;
-  padding: 8px 14px;
-}
-
-.listing-tabs button.active {
-  background: #2563eb;
-  color: #fff;
-}
-
 .listing-filters,
 .listing-advanced-filters {
   display: flex;

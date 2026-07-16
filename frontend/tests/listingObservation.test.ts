@@ -26,6 +26,7 @@ import {
 } from "../src/listingObservation.ts";
 
 const listingObservationViewSource = readFileSync(new URL("../src/ListingObservationView.tsx", import.meta.url), "utf8");
+const listingStylesSource = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");
 
 test("只有普通运营会被登录身份锁定当前运营", () => {
   const source = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
@@ -164,6 +165,7 @@ test("主管运营视角未选运营时页面在请求前清空并短路", () =>
 test("刊登观察页面使用单表和业务状态筛选且不暴露内部待取数", () => {
   assert.doesNotMatch(listingObservationViewSource, /const TABS/);
   assert.doesNotMatch(listingObservationViewSource, /listing-tabs/);
+  assert.doesNotMatch(listingStylesSource, /listing-tabs/);
   assert.doesNotMatch(listingObservationViewSource, /只看待我处理/);
   assert.doesNotMatch(listingObservationViewSource, /待取数/);
   assert.match(listingObservationViewSource, /业务状态/);
