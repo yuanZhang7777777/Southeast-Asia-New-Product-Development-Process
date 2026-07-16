@@ -617,7 +617,7 @@ git commit -m "feat: unify listing workbench table"
 - Consumes: 现有 `canManage`、`authSession.operator_name` 和 `activeOperator`。
 - Produces: 普通运营锁定本人；具备主管权限的账号可保留手动选择的运营。
 
-- [ ] **Step 1: 写失败的源代码契约测试**
+- [x] **Step 1: 写失败的源代码契约测试**
 
 ```ts
 test("只有普通运营会被登录身份锁定当前运营", () => {
@@ -626,13 +626,13 @@ test("只有普通运营会被登录身份锁定当前运营", () => {
 });
 ```
 
-- [ ] **Step 2: 运行聚焦测试并确认失败**
+- [x] **Step 2: 运行聚焦测试并确认失败**
 
 Run: `cd frontend && node --test tests/listingObservation.test.ts`
 
 Expected: FAIL，现有 effect 未检查 `!canManage`。
 
-- [ ] **Step 3: 修改现有 effect 的一个条件**
+- [x] **Step 3: 修改现有 effect 的一个条件**
 
 ```ts
 if (authSession?.operator_name && !canManage) {
@@ -643,7 +643,7 @@ if (authSession?.operator_name && !canManage) {
 
 把 `canManage` 加入该 effect 的依赖数组；主管切到运营视角后继续使用下拉框选择值，普通运营仍只能是认证映射姓名。
 
-- [ ] **Step 4: 运行聚焦测试和全量前端测试**
+- [x] **Step 4: 运行聚焦测试和全量前端测试**
 
 Run:
 
@@ -655,7 +655,7 @@ npm test
 
 Expected: 0 failed。
 
-- [ ] **Step 5: 提交 Task 3**
+- [x] **Step 5: 提交 Task 3**
 
 ```bash
 git add frontend/src/App.tsx frontend/tests/listingObservation.test.ts
