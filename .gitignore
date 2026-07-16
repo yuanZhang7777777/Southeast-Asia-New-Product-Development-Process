@@ -28,6 +28,7 @@ logs/
 backups/
 *.db
 .codex_tmp/
+.codex-local/
 backend/.uploaded_sources/
 outputs/dingtalk_user_sync_report.json
 outputs/cloud_server_access_record.md

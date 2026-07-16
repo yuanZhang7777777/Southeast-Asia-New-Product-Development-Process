@@ -1,18 +1,18 @@
 # Agent Handoff
 
-> Updated: 2026-07-06 12:20 Asia/Shanghai
+> Updated: 2026-07-16 15:02 Asia/Shanghai
 
 ## Current Mode
 
-Implementation is in final validation. Continue from `specs/001-frontstage-mvp/tasks.md` unless the user switches back to requirements alignment. Use Superpowers-style discipline and Ponytail scope control. Do not use Spec Kit again unless the user explicitly asks; the user said it can make the current work confusing. Do not put any agent/tooling content into product docs or product pages.
+The frozen front-stage flow is running in production. Continue from `docs/02-功能实现状态.md` and `docs/20-项目推进总控.md` unless the user explicitly starts a later-stage feature. Use Superpowers-style discipline and Ponytail scope control. Do not use Spec Kit again unless the user explicitly asks; the user said it can make the current work confusing. Do not put any agent/tooling content into product docs or product pages.
 
-Implementation has completed backend US1-US5 plus frontend MVP screens for `specs/001-frontstage-mvp/tasks.md`. Current development target is local first. Later production migration target is SSH `root@101.132.26.138:2323`. Do not write the SSH password or any other credentials into repo files, docs, commits, logs, or `.env.example`; use local secret storage or prompt-time input for deployment.
+Production is `http://101.132.26.138:8080`, SSH alias `hz-new-product-preprod`, current API/frontend release `v3a20af5`, database `workflow_prod_20260715`. Future development target is `hz-new-product-dev` (`139.224.2.166:2323`), not the production host. Do not write SSH passwords or any other credentials into repo files, docs, commits, logs, or `.env.example`; use local secret storage or prompt-time input for deployment.
 
 ## Implementation Status
 
 - Completed: project setup, PostgreSQL/SQLite guard, Alembic migrations, two feedback workbook importers, personnel config import, one-click assignment, claim/not-claim submission metadata, supervisor review, stocking export, central traceability export, product dashboard, source upload, operator profile config UI, inline operator claim UI, local demo data script, Phase 12 source-routing / batch-claim / review-state clarification, and minimal DingTalk new-product todo card sender.
-- Current tests before handoff: backend `.\.venv\Scripts\python.exe -m pytest backend/tests` passed with 40 tests on 2026-07-04 after export/import mapping changes. Frontend `npm run build` previously passed before the latest export-only backend changes.
-- Remaining task pointer: continue from `specs/001-frontstage-mvp/tasks.md`; Phase 12 is checked off. Docker Compose validation remains blocked unless Docker CLI is available locally.
+- Current verification: backend full `pytest -q` passed `193` tests on 2026-07-16; frontend `npm test` passed `39` tests and `npm run build` passed. Production health and Caddy Admin API upstreams were read back after deploying `v3a20af5`.
+- Current release pointer: branch `lxc/pricing-review-edit`, implementation commit `3a20af5`, release documentation commit `33edcea`; deployment and rollback details are in `docs/06-部署与服务器准备.md`.
 
 ## Latest Business Ground Truth
 
@@ -247,10 +247,11 @@ Do **not** ask again whether first version is export-only. It is already confirm
 
 If the user asks "接下来做什么", continue from `docs/20-项目推进总控.md` and `docs/02-功能实现状态.md`:
 
-1. Re-run local backend tests and frontend build.
-2. Start the local demo server and verify the user-facing workflow with demo data.
-3. Fix any UI/business mismatches found during demo validation.
-4. Then prepare cloud deployment/env setup.
+1. Read `docs/06-部署与服务器准备.md` and confirm which host is production versus development.
+2. Before changing code, fetch `lxc/pricing-review-edit` or its eventual merged base and inspect the active worktree status.
+3. Re-run backend tests and frontend test/build before any release.
+4. Develop later-stage work on `hz-new-product-dev`; production changes require an explicit release request and candidate-container health check.
+5. Production releases must preserve PostgreSQL, Redis, worker and scheduler, then verify Caddy Admin API upstreams and public static asset hashes.
 
 Only return to `docs/15` for later-stage open questions such as PLM 到货、二次调研、刊登、监控、四周总结, not for the frozen first-version export-only boundary.
 
