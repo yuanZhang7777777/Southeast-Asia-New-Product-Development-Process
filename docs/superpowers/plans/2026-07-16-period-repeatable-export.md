@@ -472,9 +472,9 @@ git commit -m "feat: add period export workbench"
 **Interfaces:**
 - Produces: verified branch commits and a handoff that explicitly says no server was deployed.
 
-- [ ] **Step 1: Run complete local verification**
+- [x] **Step 1: Run complete local verification**
 
-> 2026-07-16: the required full backend run finished with `199 passed, 1 failed`; the stale one-time-export expectation in `backend/tests/test_export_batch.py` must be updated in a separately approved test-only task. The focused repeatable-export/product-board group passed `22`; frontend tests (`44`) and build passed.
+> 2026-07-16: after aligning the stale one-time-export regression, the required full backend run passed `200` tests in `367.66s`. `tests/test_export_batch.py` passed `3`; the focused repeatable-export/product-board group passed `22`; frontend tests (`44`) and build passed.
 
 From `backend`:
 
@@ -510,7 +510,7 @@ Record these exact facts in the authoritative docs:
 
 Do not duplicate implementation detail into unrelated business documents and do not delete or merge conflicting docs without user approval.
 
-- [ ] **Step 3: Mark this plan complete and commit docs**
+- [x] **Step 3: Mark this plan complete and commit docs**
 
 Mark completed checkboxes only after their commands passed, then run:
 
