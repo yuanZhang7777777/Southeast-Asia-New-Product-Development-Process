@@ -44,15 +44,20 @@ test("分配台使用紧凑工具栏、配置抽屉和去重运营卡片", () =>
   assert.doesNotMatch(assignView, /operatorProfileBrief\(profile\)/);
 });
 
-test("运营配置入口不被分页挤压且负载条滚动时保持可见", () => {
+test("运营配置紧邻提交分配且全部运营负载直接换行展示", () => {
   const assignView = app.slice(app.indexOf("function AssignView"), app.indexOf("function assignmentItemKey"));
   const commandbar = assignView.slice(assignView.indexOf("assignment-commandbar"), assignView.indexOf("assignment-workload-grid"));
+  const toolbar = app.slice(app.indexOf("function Toolbar"), app.indexOf("function ListControls"));
   const workloadRule = styles.match(/\.assignment-workload-grid\s*\{([^}]*)\}/)?.[1] || "";
 
-  assert.ok(commandbar.indexOf("assignment-config-trigger") < commandbar.indexOf("<ListControls"));
+  assert.doesNotMatch(commandbar, /assignment-config-trigger/);
+  assert.ok(toolbar.indexOf("提交分配") < toolbar.indexOf("运营配置"));
+  assert.match(toolbar, /assignment-primary-actions[\s\S]*提交分配[\s\S]*运营配置/);
+  assert.match(toolbar, /onOpenProfilePanel/);
   assert.match(workloadRule, /position:\s*sticky/);
-  assert.match(workloadRule, /display:\s*flex/);
-  assert.match(workloadRule, /overflow-x:\s*auto/);
+  assert.match(workloadRule, /display:\s*grid/);
+  assert.match(workloadRule, /grid-template-columns:\s*repeat\(auto-fit/);
+  assert.doesNotMatch(workloadRule, /overflow-x/);
   assert.match(assignView, /reorderOperatorWithinSite/);
   assert.match(assignView, /draggable/);
   assert.match(assignView, /onDrop/);

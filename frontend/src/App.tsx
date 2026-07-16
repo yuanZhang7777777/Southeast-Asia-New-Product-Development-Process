@@ -156,7 +156,7 @@ const viewMeta: Record<ViewKey, { title: string; desc: string }> = {
   dashboard: { title: "商品看板", desc: "按主 SKU 分组查看全部商品当前状态，展开可看子 SKU 状态。" },
   source: { title: "源表导入", desc: "第一版只导入两张内部反馈表，写入平台数据库，不提供在线表自动写回入口。" },
   pool: { title: "新品机会池", desc: "默认按状态优先展示主 SKU 分组；展开后查看子 SKU 明细和来源追溯。" },
-  assign: { title: "分配台", desc: "主管按主 SKU 整组生成推荐，可逐行调整最终分配；系统先按站点过滤候选人，再看重点品类1、重点品类2和负载。" },
+  assign: { title: "分配台", desc: "主管按主 SKU 整组生成推荐，可逐行调整最终分配；系统先按站点过滤，再按当前负载均衡，负载相同时看重点品类和优先级。" },
   claim: { title: "运营认领", desc: "分配任务必须认领或不认领；财根机会池允许其他运营自认领，人数不限。" },
   review: { title: "主管复核", desc: "主管只能通过、确认不认领或退回补充，不允许代改运营填写内容。" },
   stock: { title: "导出中心", desc: "只导出 Excel。按子 SKU 明细出行，同一子 SKU 被不同运营认领时另起一行。" },
@@ -288,6 +288,7 @@ function App() {
   const [source2File, setSource2File] = useState<File | null>(null);
   const [previewItems, setPreviewItems] = useState<AssignmentPreviewItem[]>([]);
   const [assignmentDrafts, setAssignmentDrafts] = useState<Record<string, string>>({});
+  const [profilePanelOpen, setProfilePanelOpen] = useState(false);
   const [claimDrafts, setClaimDrafts] = useState<Record<string, ClaimDraft>>({});
   const [reviewTarget, setReviewTarget] = useState<Opportunity | null>(null);
   const [reviewDrafts, setReviewDrafts] = useState<Record<string, ReviewDraft>>({});
@@ -1036,6 +1037,7 @@ function App() {
                 onPreview={previewAssignments}
                 onCancelPreview={cancelAssignmentPreview}
                 onAssign={submitAssignments}
+                onOpenProfilePanel={() => setProfilePanelOpen(true)}
               />
             </div>
             {statusMessage && <div className={statusMessage.includes("失败") || statusMessage.includes("Error") ? "notice toast red" : "notice toast"}>{statusMessage}</div>}
@@ -1126,6 +1128,8 @@ function App() {
                 hasGeneratedRecommendations={previewItems.length > 0}
                 assignmentDrafts={assignmentDrafts}
                 setAssignmentDrafts={setAssignmentDrafts}
+                profilePanelOpen={profilePanelOpen}
+                setProfilePanelOpen={setProfilePanelOpen}
                 operatorProfiles={operatorProfiles}
                 setOperatorProfiles={setOperatorProfiles}
                 list={assignList}
@@ -2513,6 +2517,8 @@ function AssignView(props: {
   hasGeneratedRecommendations: boolean;
   assignmentDrafts: Record<string, string>;
   setAssignmentDrafts: (value: Record<string, string>) => void;
+  profilePanelOpen: boolean;
+  setProfilePanelOpen: Dispatch<SetStateAction<boolean>>;
   operatorProfiles: OperatorAssignmentProfile[];
   setOperatorProfiles: (value: OperatorAssignmentProfile[]) => void;
   list: ListState;
@@ -2528,17 +2534,16 @@ function AssignView(props: {
   const [siteFilter, setSiteFilter] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("");
   const [operatorFilter, setOperatorFilter] = useState("");
-  const [profilePanelOpen, setProfilePanelOpen] = useState(false);
   const [draggedProfileId, setDraggedProfileId] = useState<string | null>(null);
   const [dragOverProfileId, setDragOverProfileId] = useState<string | null>(null);
   useEffect(() => {
-    if (!profilePanelOpen) return;
+    if (!props.profilePanelOpen) return;
     const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setProfilePanelOpen(false);
+      if (event.key === "Escape") props.setProfilePanelOpen(false);
     };
     window.addEventListener("keydown", closeOnEscape);
     return () => window.removeEventListener("keydown", closeOnEscape);
-  }, [profilePanelOpen]);
+  }, [props.profilePanelOpen, props.setProfilePanelOpen]);
   const patchProfile = (id: string, patch: Partial<OperatorAssignmentProfile>) => {
     props.setOperatorProfiles(props.operatorProfiles.map((profile) => (profile.id === id ? { ...profile, ...patch } : profile)));
   };
@@ -2582,10 +2587,6 @@ function AssignView(props: {
             <span className="tag">已选 {selectedCount} 组 / {childSelectedCount} 子 SKU</span>
             <span className="tag">未分配 {props.previewItems.length ? props.previewItems.length - selectedCount : pendingGroups.length} 组</span>
           </div>
-          <button className="btn small assignment-config-trigger" type="button" onClick={() => setProfilePanelOpen(true)}>
-            <Users size={14} />
-            运营配置
-          </button>
           <select className="assignment-compact-select" aria-label="按站点筛选" value={siteFilter} onChange={(event) => {
             setSiteFilter(event.target.value);
             props.setList((current) => ({ ...current, page: 1 }));
@@ -2687,9 +2688,9 @@ function AssignView(props: {
           </div>
         )}
       </section>
-      {profilePanelOpen && (
+      {props.profilePanelOpen && (
         <div className="assignment-config-overlay" role="dialog" aria-modal="true" aria-label="运营配置">
-          <button className="assignment-config-backdrop" type="button" aria-label="关闭运营配置" onClick={() => setProfilePanelOpen(false)} />
+          <button className="assignment-config-backdrop" type="button" aria-label="关闭运营配置" onClick={() => props.setProfilePanelOpen(false)} />
           <section className="assignment-config-drawer">
             <div className="assignment-config-header">
               <div>
@@ -2697,14 +2698,14 @@ function AssignView(props: {
                   <Users size={17} />
                   运营配置
                 </h3>
-                <p className="muted">维护站点、重点品类、优先级和站点内顺序；保存后下一次生成推荐生效。</p>
+                <p className="muted">维护站点、重点品类、同负载优先级和站点内顺序；保存后下一次生成推荐生效。</p>
               </div>
               <div className="action-row">
                 <button className="btn primary" onClick={props.onSaveProfiles}>
                   <Save size={15} />
                   保存运营配置
                 </button>
-                <button className="btn" type="button" title="关闭" onClick={() => setProfilePanelOpen(false)}>
+                <button className="btn" type="button" title="关闭" onClick={() => props.setProfilePanelOpen(false)}>
                   <X size={16} />
                 </button>
               </div>
@@ -3015,9 +3016,9 @@ function assignmentMatchLines(item: AssignmentPreviewItem, opportunity?: Opportu
     lines.push(`品类未匹配：SKU品类 ${category} 不在 ${profile.operator_name}品类1/品类2`);
   }
   if (item.match_reason?.includes("负载均衡")) {
-    lines.push("负载均衡：同站点候选里品类优先级相同时，按当前负载更少推荐");
+    lines.push("负载均衡：先选择当前主 SKU 组数更少的运营，负载相同时再看品类");
   } else if (item.match_reason?.includes("负载更低")) {
-    lines.push("负载更低：同等匹配优先级下，选择当前负载更低的运营");
+    lines.push("负载更低：同站点候选中优先选择当前主 SKU 组数更少的运营");
   }
   if ((profile.assignment_priority || 0) > 0) {
     lines.push(`优先级：同负载时优先级 ${profile.assignment_priority}`);
@@ -4256,7 +4257,8 @@ function Toolbar({
   onPreview,
   onCancelPreview,
   hasAssignmentPreview,
-  onAssign
+  onAssign,
+  onOpenProfilePanel
 }: {
   activeView: ViewKey;
   assignSummary: {
@@ -4270,6 +4272,7 @@ function Toolbar({
   onCancelPreview: () => void;
   hasAssignmentPreview: boolean;
   onAssign: () => void;
+  onOpenProfilePanel: () => void;
 }) {
   if (activeView === "assign") {
     return (
@@ -4286,10 +4289,16 @@ function Toolbar({
           <X size={15} />
           取消推荐
         </button>
-        <button className="btn primary" onClick={onAssign}>
-          <WandSparkles size={15} />
-          提交分配
-        </button>
+        <span className="assignment-primary-actions">
+          <button className="btn primary" onClick={onAssign}>
+            <WandSparkles size={15} />
+            提交分配
+          </button>
+          <button className="btn assignment-config-trigger" type="button" onClick={onOpenProfilePanel}>
+            <Users size={15} />
+            运营配置
+          </button>
+        </span>
       </div>
     );
   }

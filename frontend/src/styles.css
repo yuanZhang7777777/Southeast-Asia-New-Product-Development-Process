@@ -437,6 +437,13 @@ textarea {
   gap: 8px;
 }
 
+.assignment-primary-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+
 .search {
   display: inline-flex;
   align-items: center;
@@ -1348,10 +1355,10 @@ textarea {
   position: sticky;
   top: 0;
   z-index: 8;
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: 8px;
   max-width: 100%;
-  overflow-x: auto;
   margin-bottom: 12px;
   padding: 8px;
   border: 1px solid var(--line);
@@ -1421,7 +1428,6 @@ textarea {
 }
 
 .assignment-workload-card {
-  flex: 0 0 210px;
   display: grid;
   gap: 5px;
   min-width: 0;
@@ -3041,6 +3047,11 @@ th {
 
   .dense-form {
     grid-template-columns: 1fr;
+  }
+
+  .assignment-workload-grid {
+    position: static;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
   }
 
   .review-layout > .form-card {

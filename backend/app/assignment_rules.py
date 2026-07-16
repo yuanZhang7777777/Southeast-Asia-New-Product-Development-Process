@@ -58,11 +58,10 @@ def _choose_profile(items: list[Any], profiles: list[Any], loads: dict[str, int]
     for profile in site_profiles:
         category_rank = _category_rank(profile, category)
         category_priority = 0 if category_rank < 2 else 2
-        priority = (category_priority,)
         scored.append(
             (
-                priority,
                 loads[getattr(profile, "operator_name")],
+                category_priority,
                 -_int_attr(profile, "assignment_priority"),
                 _int_attr(profile, "display_order"),
                 getattr(profile, "operator_name"),
@@ -71,10 +70,10 @@ def _choose_profile(items: list[Any], profiles: list[Any], loads: dict[str, int]
             )
         )
 
-    best_priority, best_load, _priority, _order, _name, chosen, best_category_rank = min(scored)
-    same_priority_loads = [load for priority, load, *_rest in scored if priority == best_priority]
+    best_load, best_category_priority, _priority, _order, _name, chosen, best_category_rank = min(scored)
+    site_loads = [load for load, *_rest in scored]
     reason = _reason(best_category_rank)
-    if best_priority[0] != 2 and len(set(same_priority_loads)) > 1 and best_load == min(same_priority_loads):
+    if best_category_priority != 2 and len(set(site_loads)) > 1 and best_load == min(site_loads):
         reason = f"{reason}；负载更低"
     return chosen, reason
 

@@ -5,7 +5,7 @@ from types import SimpleNamespace
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 
-def test_assignment_rules_filter_site_then_prioritize_category_and_load() -> None:
+def test_assignment_rules_filter_site_then_report_category_match() -> None:
     from app.assignment_rules import preview_main_sku_assignment_groups
 
     profiles = [
@@ -66,33 +66,6 @@ def test_assignment_rules_site_filter_beats_off_site_category_match() -> None:
     assert suggestions[0].match_reason == "重点站点匹配；品类未匹配；负载均衡"
 
 
-def legacy_assignment_rules_prioritize_category1_over_category2() -> None:
-    from app.assignment_rules import preview_main_sku_assignment_groups
-
-    profiles = [
-        SimpleNamespace(
-            operator_name="品类2命中且站点命中",
-            key_site="PH",
-            key_category1="汽摩配",
-            key_category2="家居厨卫",
-            enabled=True,
-        ),
-        SimpleNamespace(
-            operator_name="品类1命中但站点不命中",
-            key_site="PH",
-            key_category1="家居厨卫",
-            key_category2="商办工业",
-            enabled=True,
-        ),
-    ]
-    opportunities = [opportunity("MAIN-CAT1", "SUB-1", "PH", "家居厨卫")]
-
-    suggestions = preview_main_sku_assignment_groups(opportunities, profiles)
-
-    assert suggestions[0].suggested_assignee == "品类1命中但站点不命中"
-    assert suggestions[0].match_reason == "重点站点匹配；重点品类1匹配"
-
-
 def test_assignment_rules_normalize_common_category_aliases() -> None:
     from app.assignment_rules import preview_main_sku_assignment_groups
 
@@ -144,7 +117,7 @@ def test_assignment_rules_normalize_chinese_and_custom_site_codes() -> None:
     assert by_main_sku["MAIN-SG"].suggested_assignee == "自定义站点运营"
 
 
-def test_assignment_rules_balance_load_after_site_and_category_priority() -> None:
+def test_assignment_rules_balance_load_after_site_filter() -> None:
     from app.assignment_rules import preview_main_sku_assignment_groups
 
     profiles = [
@@ -208,7 +181,7 @@ def test_assignment_rules_split_same_main_sku_by_site() -> None:
     assert by_ids[("SUB-VN",)].suggested_assignee == "越南运营"
 
 
-def test_assignment_rules_treat_category1_and_category2_as_same_priority_then_balance_load() -> None:
+def test_assignment_rules_prefer_lower_load_before_equal_category_matches() -> None:
     from app.assignment_rules import preview_main_sku_assignment_groups
 
     profiles = [
@@ -298,6 +271,52 @@ def test_assignment_rules_use_priority_then_config_order_when_everything_else_ti
     suggestions = preview_main_sku_assignment_groups([opportunity("MAIN-PRIORITY", "SUB-1", "PH", "Home")], profiles)
 
     assert suggestions[0].suggested_assignee == "B-high-priority"
+
+
+def test_assignment_rules_keep_category_and_priority_within_one_group_of_fair_load() -> None:
+    from app.assignment_rules import preview_main_sku_assignment_groups
+
+    profiles = [
+        SimpleNamespace(
+            operator_name="A-specialist-high-priority",
+            key_site="PH",
+            key_category1="Auto",
+            key_category2="",
+            assignment_priority=100,
+            display_order=1,
+            enabled=True,
+        ),
+        SimpleNamespace(
+            operator_name="B-generalist",
+            key_site="PH",
+            key_category1="Home",
+            key_category2="",
+            assignment_priority=0,
+            display_order=2,
+            enabled=True,
+        ),
+        SimpleNamespace(
+            operator_name="C-generalist",
+            key_site="PH",
+            key_category1="Office",
+            key_category2="",
+            assignment_priority=0,
+            display_order=3,
+            enabled=True,
+        ),
+    ]
+    opportunities = [opportunity(f"MAIN-{index}", f"SUB-{index}", "PH", "Auto") for index in range(7)]
+
+    suggestions = preview_main_sku_assignment_groups(opportunities, profiles)
+    loads = {profile.operator_name: 0 for profile in profiles}
+    for item in suggestions:
+        loads[item.suggested_assignee] += 1
+
+    assert loads == {
+        "A-specialist-high-priority": 3,
+        "B-generalist": 2,
+        "C-generalist": 2,
+    }
 
 
 def opportunity(main_sku: str, sub_sku: str, site: str, category: str) -> SimpleNamespace:
