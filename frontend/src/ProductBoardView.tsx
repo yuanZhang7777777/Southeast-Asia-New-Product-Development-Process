@@ -86,7 +86,6 @@ export function ProductBoardView({
           <option value="">全部状态</option>
           {options.statuses.map((item) => <option key={item} value={item}>{productBoardStatusLabel(item)}</option>)}
         </select>
-        <input type="date" value={filters.arrivalDate || ""} onChange={(event) => setFilters({ ...filters, arrivalDate: event.target.value })} />
         <select value={filters.site || ""} onChange={(event) => setFilters({ ...filters, site: event.target.value })}>
           <option value="">全部站点</option>
           {options.sites.map((item) => <option key={item} value={item}>{item}</option>)}

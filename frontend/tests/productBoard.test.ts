@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import { buildProductBoardRows, filterProductBoardRows, hasMultipleOwners } from "../src/productBoard.ts";
+
+const productBoardViewSource = readFileSync(new URL("../src/ProductBoardView.tsx", import.meta.url), "utf8");
 
 const baseGroup = {
   key: "2026-W29|PH|MAIN-1",
@@ -77,4 +80,9 @@ test("multi-owner tag only appears when more than one owner is responsible", () 
     }),
     false
   );
+});
+
+test("product board keeps business-period filtering without a generic date picker", () => {
+  assert.match(productBoardViewSource, /全部期数/);
+  assert.doesNotMatch(productBoardViewSource, /type="date"/);
 });

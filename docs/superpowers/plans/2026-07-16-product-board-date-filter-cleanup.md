@@ -28,25 +28,25 @@
 - Consumes: `ProductBoardFilters` and `filterProductBoardRows(...)`.
 - Produces: The same product-board filtering interface without `arrivalDate`.
 
-- [ ] **Step 1: Add a failing UI contract test**
+- [x] **Step 1: Add a failing UI contract test**
 
 Read `ProductBoardView.tsx` with `node:fs` and assert that it contains `全部期数` but does not contain `type="date"`.
 
-- [ ] **Step 2: Run the focused test and confirm failure**
+- [x] **Step 2: Run the focused test and confirm failure**
 
 Run: `node --test tests/productBoard.test.ts`
 
 Expected: FAIL because `ProductBoardView.tsx` still contains the native date input.
 
-- [ ] **Step 3: Remove the minimum dead code**
+- [x] **Step 3: Remove the minimum dead code**
 
 Delete the date input from `ProductBoardView.tsx`; delete `arrivalDate` and `dateText(...)` plus the two arrival-date branches from `productBoard.ts`. Do not touch `businessPeriod`.
 
-- [ ] **Step 4: Align the requirement record**
+- [x] **Step 4: Align the requirement record**
 
 Remove “到货日期” from the product-board filter list and state that the unlabeled calendar filter was removed while business-period filtering remains.
 
-- [ ] **Step 5: Verify**
+- [x] **Step 5: Verify**
 
 Run: `node --test tests/productBoard.test.ts`
 
@@ -59,4 +59,3 @@ Expected: all tests pass and Vite build succeeds.
 - [ ] **Step 6: Deploy and smoke test development only**
 
 Build and update Compose project `hengzhe-new-product-dev`, then confirm `http://139.224.2.166:18081/api/health` returns `environment=development` and the deployed JS bundle no longer contains the removed date-control code path.
-
