@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base
@@ -350,16 +350,66 @@ class PlmArrivalItem(TimestampMixin, Base):
     raw_payload: Mapped[dict] = mapped_column(JSON, default=dict)
 
 
-class FourWeekSummary(TimestampMixin, Base):
-    __tablename__ = "four_week_summary"
+class ListingRecord(TimestampMixin, Base):
+    __tablename__ = "listing_record"
+    __table_args__ = (
+        UniqueConstraint("item", name="uq_listing_record_item"),
+        Index("ix_listing_record_owner_status", "salesperson_name", "status", "tracking_status"),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    opportunity_id: Mapped[str] = mapped_column(ForeignKey("new_product_opportunity.id"))
-    summary_user: Mapped[str | None] = mapped_column(String(128))
-    achieved: Mapped[bool | None] = mapped_column(Boolean)
-    out_of_stock_impact: Mapped[str | None] = mapped_column(Text)
-    conclusion: Mapped[str | None] = mapped_column(Text)
-    next_action: Mapped[str | None] = mapped_column(Text)
+    source_group_key: Mapped[str] = mapped_column(String(512), index=True)
+    source_claim_ids: Mapped[list[str]] = mapped_column(JSON, default=list)
+    source_type: Mapped[str] = mapped_column(String(64))
+    business_period: Mapped[str | None] = mapped_column(String(128))
+    country: Mapped[str | None] = mapped_column(String(64))
+    site: Mapped[str | None] = mapped_column(String(32))
+    main_sku: Mapped[str] = mapped_column(String(128), index=True)
+    main_sku_name: Mapped[str | None] = mapped_column(String(255))
+    salesperson_name: Mapped[str] = mapped_column(String(128), index=True)
+    shop: Mapped[str] = mapped_column(String(255))
+    item: Mapped[str] = mapped_column(String(255))
+    listing_strategy: Mapped[str] = mapped_column(Text)
+    first_period_start: Mapped[date] = mapped_column(Date)
+    first_period_end: Mapped[date] = mapped_column(Date)
+    status: Mapped[str] = mapped_column(String(32), default="active")
+    tracking_status: Mapped[str] = mapped_column(String(32), default="active")
+    initial_observation_completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    stopped_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    resumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    voided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    void_reason: Mapped[str | None] = mapped_column(Text)
+    created_by_user_id: Mapped[str | None] = mapped_column(String(36))
+    created_by_name: Mapped[str | None] = mapped_column(String(128))
+
+    periods: Mapped[list["ItemObservationPeriod"]] = relationship(back_populates="listing_record")
+
+
+class ItemObservationPeriod(TimestampMixin, Base):
+    __tablename__ = "item_observation_period"
+    __table_args__ = (
+        UniqueConstraint("listing_record_id", "week_number", name="uq_item_observation_period_week"),
+        UniqueConstraint("listing_record_id", "period_start", name="uq_item_observation_period_start"),
+        Index("ix_item_observation_period_status_start", "status", "period_start"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    listing_record_id: Mapped[str] = mapped_column(ForeignKey("listing_record.id"), index=True)
+    week_number: Mapped[int] = mapped_column(Integer)
+    period_start: Mapped[date] = mapped_column(Date)
+    period_end: Mapped[date] = mapped_column(Date)
+    status: Mapped[str] = mapped_column(String(32), default="pending_data")
+    order_count: Mapped[int | None] = mapped_column(Integer)
+    total_revenue: Mapped[float | None] = mapped_column(Float)
+    gross_profit_amount: Mapped[float | None] = mapped_column(Float)
+    product_positioning: Mapped[str | None] = mapped_column(String(32))
+    optimization_action: Mapped[str | None] = mapped_column(Text)
+    four_week_summary: Mapped[str | None] = mapped_column(Text)
+    source_snapshot: Mapped[dict | None] = mapped_column(JSON)
+    metrics_fetched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    listing_record: Mapped[ListingRecord] = relationship(back_populates="periods")
 
 
 class NotificationLog(TimestampMixin, Base):

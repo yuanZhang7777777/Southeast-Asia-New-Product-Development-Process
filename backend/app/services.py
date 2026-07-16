@@ -22,6 +22,7 @@ from app.field_mapping import normalize_header, number_value
 from app.oss_storage import read_oss_object_by_public_url
 from app.site_codes import normalize_site_code
 from app.workflow_status import (
+    CLAIM_LISTING_OBSERVATION,
     CLAIM_RESULT_CLAIM,
     CLAIM_RESULT_REJECT,
     CLAIM_DISABLED,
@@ -56,6 +57,25 @@ REVIEW_TO_OPPORTUNITY_STATUS = {
     REVIEW_CONFIRMED_NOT_CLAIM: OPPORTUNITY_CONFIRMED_NOT_CLAIM,
     REVIEW_RETURNED_FOR_SUPPLEMENT: OPPORTUNITY_RETURNED_FOR_SUPPLEMENT,
 }
+
+
+def current_business_period_start(day: date) -> date:
+    return day - timedelta(days=(day.weekday() - 3) % 7)
+
+
+def validate_selectable_period_start(period_start: date, today: date) -> None:
+    if period_start.weekday() != 3:
+        raise ValueError("period_start must be a Thursday")
+    current = current_business_period_start(today)
+    if period_start not in {current, current + timedelta(days=7)}:
+        raise ValueError("period_start must be the current or next business period")
+
+
+def initial_observation_period_dates(first_period_start: date) -> list[tuple[date, date]]:
+    return [
+        (first_period_start + timedelta(days=7 * index), first_period_start + timedelta(days=7 * index + 6))
+        for index in range(4)
+    ]
 
 # Canonical v1 central schema, frozen from 东南亚海外仓新品表-PH.xlsx / 6.23 through 开发是否接受核价结果.
 CENTRAL_TRACEABILITY_COLUMNS = [
@@ -947,7 +967,7 @@ def submit_secondary_research_group(
         opportunity.sub_sku
         for claim, opportunity in selected
         if not _clean_text(claim.secondary_conclusion)
-        or claim.product_positioning not in {"引流款", "利润款", "淘汰款"}
+        or claim.product_positioning not in {"引流款", "利润款", "淘汰款", "稳定款", "清仓款"}
     ]
     if missing:
         raise ValueError(f"secondary research is incomplete for: {', '.join(missing)}")
@@ -957,7 +977,9 @@ def submit_secondary_research_group(
         if not claim.secondary_research_at:
             claim.secondary_research_at = now
         claim.secondary_research_submitted_at = now
-        claim.downstream_status = CLAIM_DISABLED if claim.product_positioning == "淘汰款" else CLAIM_WAITING_LISTING
+        claim.downstream_status = (
+            CLAIM_DISABLED if claim.product_positioning in {"淘汰款", "清仓款"} else CLAIM_WAITING_LISTING
+        )
         audit(
             db,
             "secondary_research.completed",
@@ -1054,6 +1076,687 @@ def secondary_research_item(
             for peer in peers
         ],
     }
+
+
+class RowValidationError(ValueError):
+    def __init__(self, row_errors: list[dict], status_code: int = 400):
+        super().__init__("row validation failed")
+        self.row_errors = row_errors
+        self.status_code = status_code
+
+
+def listing_task_key(
+    source_type: str,
+    business_period: str | None,
+    site_or_country: str | None,
+    main_sku: str,
+    salesperson_name: str,
+) -> str:
+    return "|".join(
+        [source_type, business_period or "", normalize_site_code(site_or_country) or "", main_sku, salesperson_name]
+    )
+
+
+def list_pending_listing_tasks(
+    db: Session,
+    owner: str | None = None,
+    today: date | None = None,
+) -> list[dict]:
+    statement = (
+        select(models.SalesClaimForecast, models.NewProductOpportunity)
+        .join(models.NewProductOpportunity, models.NewProductOpportunity.id == models.SalesClaimForecast.opportunity_id)
+        .where(models.SalesClaimForecast.downstream_status == CLAIM_WAITING_LISTING)
+    )
+    if owner:
+        statement = statement.where(models.SalesClaimForecast.salesperson_name == owner)
+    groups: dict[str, dict] = {}
+    default_start = current_business_period_start(today or datetime.now(EXCEL_TIMEZONE).date()) + timedelta(days=7)
+    for claim, opportunity in db.execute(statement).all():
+        key = listing_task_key(
+            opportunity.source_type,
+            opportunity.batch,
+            opportunity.site or opportunity.country,
+            opportunity.main_sku,
+            claim.salesperson_name or "",
+        )
+        group = groups.setdefault(
+            key,
+            {
+                "task_key": key,
+                "source_type": opportunity.source_type,
+                "business_period": opportunity.batch,
+                "country": opportunity.country,
+                "site": opportunity.site,
+                "main_sku": opportunity.main_sku,
+                "main_sku_name": opportunity.main_sku_name,
+                "salesperson_name": claim.salesperson_name or "",
+                "claim_record_ids": [],
+                "default_first_period_start": default_start,
+            },
+        )
+        group["claim_record_ids"].append(claim.id)
+    listing_statement = select(models.ListingRecord)
+    if owner:
+        listing_statement = listing_statement.where(models.ListingRecord.salesperson_name == owner)
+    for listing in db.scalars(listing_statement):
+        groups.setdefault(
+            listing.source_group_key,
+            {
+                "task_key": listing.source_group_key,
+                "source_type": listing.source_type,
+                "business_period": listing.business_period,
+                "country": listing.country,
+                "site": listing.site,
+                "main_sku": listing.main_sku,
+                "main_sku_name": listing.main_sku_name,
+                "salesperson_name": listing.salesperson_name,
+                "claim_record_ids": list(listing.source_claim_ids or []),
+                "default_first_period_start": default_start,
+            },
+        )
+    for group in groups.values():
+        group["claim_record_ids"].sort()
+    return sorted(groups.values(), key=lambda item: (item["business_period"] or "", item["main_sku"], item["salesperson_name"]))
+
+
+def create_listing_batch(
+    db: Session,
+    task_key: str,
+    rows: list[schemas.ListingBatchRow],
+    actor_name: str,
+    actor_user_id: str | None,
+    actor_is_manager: bool,
+    operator_name: str | None = None,
+    today: date | None = None,
+) -> list[models.ListingRecord]:
+    task = next((item for item in list_pending_listing_tasks(db, today=today) if item["task_key"] == task_key), None)
+    if task is None:
+        existing_task = db.scalar(
+            select(models.ListingRecord)
+            .where(models.ListingRecord.source_group_key == task_key)
+            .order_by(models.ListingRecord.created_at)
+        )
+        if existing_task is None:
+            raise LookupError("listing task not found")
+        task = {
+            "task_key": task_key,
+            "source_type": existing_task.source_type,
+            "business_period": existing_task.business_period,
+            "country": existing_task.country,
+            "site": existing_task.site,
+            "main_sku": existing_task.main_sku,
+            "main_sku_name": existing_task.main_sku_name,
+            "salesperson_name": existing_task.salesperson_name,
+            "claim_record_ids": existing_task.source_claim_ids,
+        }
+    if not actor_is_manager and task["salesperson_name"] != (operator_name or actor_name):
+        raise PermissionError("listing task does not belong to current operator")
+
+    check_day = today or datetime.now(EXCEL_TIMEZONE).date()
+    row_errors: list[dict] = []
+    cleaned: list[dict] = []
+    for row_index, row in enumerate(rows):
+        values = {
+            "shop": (row.shop or "").strip(),
+            "item": (row.item or "").strip(),
+            "listing_strategy": (row.listing_strategy or "").strip(),
+        }
+        for field in ("shop", "item", "listing_strategy"):
+            if not values[field]:
+                row_errors.append({"row_index": row_index, "field": field, "message": f"{field} is required"})
+        try:
+            period_start = date.fromisoformat(row.first_period_start)
+            validate_selectable_period_start(period_start, check_day)
+        except (TypeError, ValueError) as exc:
+            row_errors.append(
+                {"row_index": row_index, "field": "first_period_start", "message": str(exc) or "invalid date"}
+            )
+            period_start = None
+        cleaned.append({**values, "first_period_start": period_start})
+
+    item_rows: dict[str, list[int]] = defaultdict(list)
+    for row_index, values in enumerate(cleaned):
+        if values["item"]:
+            item_rows[values["item"]].append(row_index)
+    for indexes in item_rows.values():
+        if len(indexes) > 1:
+            row_errors.extend(
+                {"row_index": row_index, "field": "item", "message": "item is duplicated in this batch"}
+                for row_index in indexes
+            )
+    existing_items = set(
+        db.scalars(select(models.ListingRecord.item).where(models.ListingRecord.item.in_(item_rows))).all()
+    )
+    row_errors.extend(
+        {"row_index": row_index, "field": "item", "message": "item already exists"}
+        for item in existing_items
+        for row_index in item_rows[item]
+    )
+    if row_errors:
+        row_errors.sort(key=lambda error: (error["row_index"], ("shop", "item", "listing_strategy", "first_period_start").index(error["field"])))
+        conflict = any("duplicated" in error["message"] or "already exists" in error["message"] for error in row_errors)
+        raise RowValidationError(row_errors, 409 if conflict else 400)
+
+    created: list[models.ListingRecord] = []
+    for values in cleaned:
+        first_start = values["first_period_start"]
+        record = models.ListingRecord(
+            id=models.new_id(),
+            source_group_key=task_key,
+            source_claim_ids=task["claim_record_ids"],
+            source_type=task["source_type"],
+            business_period=task["business_period"],
+            country=task["country"],
+            site=task["site"],
+            main_sku=task["main_sku"],
+            main_sku_name=task["main_sku_name"],
+            salesperson_name=task["salesperson_name"],
+            shop=values["shop"],
+            item=values["item"],
+            listing_strategy=values["listing_strategy"],
+            first_period_start=first_start,
+            first_period_end=first_start + timedelta(days=6),
+            created_by_user_id=actor_user_id,
+            created_by_name=actor_name,
+        )
+        db.add(record)
+        for week_number, (period_start, period_end) in enumerate(initial_observation_period_dates(first_start), start=1):
+            db.add(
+                models.ItemObservationPeriod(
+                    id=models.new_id(),
+                    listing_record_id=record.id,
+                    week_number=week_number,
+                    period_start=period_start,
+                    period_end=period_end,
+                )
+            )
+        audit(
+            db,
+            "listing.created",
+            "listing_record",
+            record.id,
+            {"item": record.item, "task_key": task_key},
+            actor_name,
+            actor_user_id,
+        )
+        created.append(record)
+    claims = list(
+        db.scalars(select(models.SalesClaimForecast).where(models.SalesClaimForecast.id.in_(task["claim_record_ids"])))
+    )
+    for claim in claims:
+        claim.downstream_status = CLAIM_LISTING_OBSERVATION
+    try:
+        db.flush()
+    except IntegrityError as exc:
+        db.rollback()
+        raise RowValidationError(
+            [
+                {"row_index": index, "field": "item", "message": "item already exists"}
+                for index in range(len(rows))
+            ],
+            409,
+        ) from exc
+    return created
+
+
+def listing_record_read(item: models.ListingRecord) -> dict:
+    return {
+        "id": item.id,
+        "task_key": item.source_group_key,
+        "main_sku": item.main_sku,
+        "main_sku_name": item.main_sku_name,
+        "country": item.country,
+        "site": item.site,
+        "salesperson_name": item.salesperson_name,
+        "shop": item.shop,
+        "item": item.item,
+        "listing_strategy": item.listing_strategy,
+        "first_period_start": item.first_period_start,
+        "status": item.status,
+        "tracking_status": item.tracking_status,
+        "first_round_completed_at": item.initial_observation_completed_at,
+    }
+
+
+def observation_period_read(period: models.ItemObservationPeriod, listing: models.ListingRecord) -> dict:
+    rate = None
+    if period.total_revenue not in {None, 0} and period.gross_profit_amount is not None:
+        rate = period.gross_profit_amount / period.total_revenue
+    return {
+        "id": period.id,
+        "listing_record_id": listing.id,
+        "main_sku": listing.main_sku,
+        "main_sku_name": listing.main_sku_name,
+        "country": listing.country,
+        "salesperson_name": listing.salesperson_name,
+        "shop": listing.shop,
+        "item": listing.item,
+        "week_number": period.week_number,
+        "period_start": period.period_start,
+        "period_end": period.period_end,
+        "status": period.status,
+        "tracking_status": listing.tracking_status,
+        "order_count": period.order_count,
+        "total_revenue": period.total_revenue,
+        "gross_profit_amount": period.gross_profit_amount,
+        "gross_profit_rate": rate,
+        "product_positioning": period.product_positioning,
+        "optimization_action": period.optimization_action,
+        "four_week_summary": period.four_week_summary,
+        "first_round_completed_at": listing.initial_observation_completed_at,
+    }
+
+
+def list_listing_workbench(
+    db: Session,
+    owner: str | None = None,
+    view: str = "all",
+    query: str | None = None,
+    period_start: date | None = None,
+    country: str | None = None,
+    shop: str | None = None,
+    status: str | None = None,
+    week_number: int | None = None,
+    product_positioning: str | None = None,
+    tracking_status: str | None = None,
+) -> dict:
+    pending = list_pending_listing_tasks(db, owner)
+    statement = select(models.ListingRecord)
+    if owner:
+        statement = statement.where(models.ListingRecord.salesperson_name == owner)
+    if country:
+        statement = statement.where(models.ListingRecord.country == country)
+        pending = [task for task in pending if task["country"] == country]
+    if shop:
+        statement = statement.where(models.ListingRecord.shop.contains(shop.strip()))
+    if tracking_status:
+        statement = statement.where(models.ListingRecord.tracking_status == tracking_status)
+    text = (query or "").strip()
+    if text:
+        like = f"%{text}%"
+        statement = statement.where(
+            or_(
+                models.ListingRecord.main_sku.ilike(like),
+                models.ListingRecord.main_sku_name.ilike(like),
+                models.ListingRecord.item.ilike(like),
+            )
+        )
+        pending = [
+            task
+            for task in pending
+            if text.lower() in task["main_sku"].lower()
+            or text.lower() in (task["main_sku_name"] or "").lower()
+        ]
+    listings = list(db.scalars(statement.order_by(models.ListingRecord.created_at.desc())))
+    listing_ids = [item.id for item in listings]
+    period_statement = select(models.ItemObservationPeriod).where(
+        models.ItemObservationPeriod.listing_record_id.in_(listing_ids)
+    )
+    if period_start:
+        period_statement = period_statement.where(models.ItemObservationPeriod.period_start == period_start)
+    if status:
+        period_statement = period_statement.where(models.ItemObservationPeriod.status == status)
+    if week_number:
+        period_statement = period_statement.where(models.ItemObservationPeriod.week_number == week_number)
+    if product_positioning:
+        period_statement = period_statement.where(models.ItemObservationPeriod.product_positioning == product_positioning)
+    if view in {"pending_data", "pending_review"}:
+        period_statement = period_statement.where(models.ItemObservationPeriod.status == view)
+    if view == "first_round_completed":
+        completed_ids = {item.id for item in listings if item.initial_observation_completed_at is not None}
+        listings = [item for item in listings if item.id in completed_ids]
+        period_statement = period_statement.where(models.ItemObservationPeriod.listing_record_id.in_(completed_ids))
+    periods = list(
+        db.scalars(period_statement.order_by(models.ItemObservationPeriod.period_start, models.ItemObservationPeriod.week_number))
+    )
+    listing_by_id = {item.id: item for item in listings}
+    if view == "pending_listing":
+        listings = []
+        periods = []
+    elif view != "all" and view not in {"pending_data", "pending_review", "first_round_completed"}:
+        raise ValueError("invalid workbench view")
+    return {
+        "pending_listing_tasks": pending if view in {"all", "pending_listing"} else [],
+        "listing_records": [listing_record_read(item) for item in listings],
+        "period_rows": [observation_period_read(period, listing_by_id[period.listing_record_id]) for period in periods],
+    }
+
+
+def listing_summary(db: Session, main_sku: str, owner: str | None = None, country: str | None = None) -> dict:
+    result = list_listing_workbench(db, owner=owner, country=country)
+    listing_ids = {
+        item["id"] for item in result["listing_records"] if item["main_sku"] == main_sku
+    }
+    return {
+        "pending_listing_tasks": [],
+        "listing_records": [item for item in result["listing_records"] if item["id"] in listing_ids],
+        "period_rows": [item for item in result["period_rows"] if item["listing_record_id"] in listing_ids],
+    }
+
+
+def review_observation_periods(
+    db: Session,
+    rows: list[schemas.ObservationPeriodReviewRow],
+    actor_name: str,
+    actor_user_id: str | None,
+    actor_is_manager: bool,
+    operator_name: str | None = None,
+) -> list[tuple[models.ItemObservationPeriod, models.ListingRecord]]:
+    period_ids = [row.period_id for row in rows]
+    if len(period_ids) != len(set(period_ids)):
+        raise RowValidationError(
+            [
+                {"row_index": index, "field": "period_id", "message": "period is duplicated in this batch"}
+                for index, period_id in enumerate(period_ids)
+                if period_ids.count(period_id) > 1
+            ]
+        )
+    periods = {
+        period.id: period
+        for period in db.scalars(
+            select(models.ItemObservationPeriod).where(models.ItemObservationPeriod.id.in_(period_ids))
+        )
+    }
+    missing = [period_id for period_id in period_ids if period_id not in periods]
+    if missing:
+        raise LookupError(f"observation period not found: {', '.join(missing)}")
+    listings = {
+        listing.id: listing
+        for listing in db.scalars(
+            select(models.ListingRecord).where(
+                models.ListingRecord.id.in_({period.listing_record_id for period in periods.values()})
+            )
+        )
+    }
+    if not actor_is_manager and any(
+        listings[period.listing_record_id].salesperson_name != (operator_name or actor_name)
+        for period in periods.values()
+    ):
+        raise PermissionError("observation period does not belong to current operator")
+
+    allowed_positioning = {"引流款", "利润款", "淘汰款", "稳定款", "清仓款"}
+    row_errors: list[dict] = []
+    for row_index, row in enumerate(rows):
+        period = periods[row.period_id]
+        listing = listings[period.listing_record_id]
+        if listing.status != "active" or listing.tracking_status != "active":
+            row_errors.append(
+                {"row_index": row_index, "field": "period_id", "message": "listing is not active and tracked"}
+            )
+        elif period.status != "pending_review":
+            row_errors.append(
+                {"row_index": row_index, "field": "period_id", "message": "period must be pending_review"}
+            )
+        if row.product_positioning not in allowed_positioning:
+            row_errors.append(
+                {"row_index": row_index, "field": "product_positioning", "message": "invalid product_positioning"}
+            )
+        if not (row.optimization_action or "").strip():
+            row_errors.append(
+                {"row_index": row_index, "field": "optimization_action", "message": "optimization_action is required"}
+            )
+        if period.week_number == 4 and not (row.four_week_summary or "").strip():
+            row_errors.append(
+                {
+                    "row_index": row_index,
+                    "field": "four_week_summary",
+                    "message": "four_week_summary is required for week 4",
+                }
+            )
+    if row_errors:
+        raise RowValidationError(row_errors)
+
+    now = models.now_utc()
+    result: list[tuple[models.ItemObservationPeriod, models.ListingRecord]] = []
+    touched_listing_ids: set[str] = set()
+    for row in rows:
+        period = periods[row.period_id]
+        listing = listings[period.listing_record_id]
+        period.product_positioning = row.product_positioning
+        period.optimization_action = row.optimization_action.strip()
+        if period.week_number == 4:
+            period.four_week_summary = row.four_week_summary.strip()
+        period.status = "completed"
+        period.reviewed_at = now
+        audit(
+            db,
+            "observation.reviewed",
+            "item_observation_period",
+            period.id,
+            {"week_number": period.week_number, "product_positioning": period.product_positioning},
+            actor_name,
+            actor_user_id,
+        )
+        touched_listing_ids.add(listing.id)
+        result.append((period, listing))
+    db.flush()
+    for listing_id in touched_listing_ids:
+        initial_periods = list(
+            db.scalars(
+                select(models.ItemObservationPeriod).where(
+                    models.ItemObservationPeriod.listing_record_id == listing_id,
+                    models.ItemObservationPeriod.week_number <= 4,
+                )
+            )
+        )
+        if len(initial_periods) == 4 and all(period.status == "completed" for period in initial_periods):
+            listings[listing_id].initial_observation_completed_at = listings[listing_id].initial_observation_completed_at or now
+    return result
+
+
+def update_listing_record(
+    db: Session,
+    listing_id: str,
+    payload: schemas.ListingRecordUpdate,
+    actor_name: str,
+    actor_user_id: str | None,
+    actor_is_manager: bool,
+    operator_name: str | None = None,
+    today: date | None = None,
+) -> models.ListingRecord:
+    listing = db.get(models.ListingRecord, listing_id)
+    if listing is None:
+        raise LookupError("listing record not found")
+    if not actor_is_manager and listing.salesperson_name != (operator_name or actor_name):
+        raise PermissionError("listing record does not belong to current operator")
+    if listing.status == "voided":
+        raise ValueError("voided listing cannot be edited")
+    if "status" in payload.model_fields_set and not actor_is_manager:
+        raise PermissionError("only managers can void a listing")
+    check_day = today or datetime.now(EXCEL_TIMEZONE).date()
+    periods = list(
+        db.scalars(
+            select(models.ItemObservationPeriod)
+            .where(models.ItemObservationPeriod.listing_record_id == listing.id)
+            .order_by(models.ItemObservationPeriod.week_number)
+        )
+    )
+    has_metrics = any(period.metrics_fetched_at is not None for period in periods)
+    changed: list[str] = []
+    for field in ("shop", "item", "listing_strategy"):
+        if field not in payload.model_fields_set:
+            continue
+        value = (getattr(payload, field) or "").strip()
+        if not value:
+            raise ValueError(f"{field} is required")
+        if has_metrics and field in {"shop", "item"} and value != getattr(listing, field):
+            raise ValueError(f"{field} cannot be changed after weekly metrics exist")
+        if field == "item" and value != listing.item:
+            if db.scalar(select(models.ListingRecord.id).where(models.ListingRecord.item == value)):
+                raise ValueError("item already exists")
+        setattr(listing, field, value)
+        changed.append(field)
+    if "first_period_start" in payload.model_fields_set:
+        if has_metrics:
+            raise ValueError("first_period_start cannot be changed after weekly metrics exist")
+        try:
+            first_start = date.fromisoformat(payload.first_period_start or "")
+            validate_selectable_period_start(first_start, check_day)
+        except ValueError as exc:
+            raise ValueError(str(exc)) from exc
+        _replan_periods(db, periods, first_start)
+        listing.first_period_start = first_start
+        listing.first_period_end = first_start + timedelta(days=6)
+        changed.append("first_period_start")
+    if "tracking_status" in payload.model_fields_set and payload.tracking_status != listing.tracking_status:
+        if payload.tracking_status == "stopped":
+            listing.tracking_status = "stopped"
+            listing.stopped_at = models.now_utc()
+            action = "listing.stopped"
+        elif payload.tracking_status == "active" and listing.tracking_status == "stopped":
+            last_fetched_week = max(
+                (period.week_number for period in periods if period.status != "pending_data"),
+                default=0,
+            )
+            pending = [
+                period
+                for period in periods
+                if period.status == "pending_data" and period.week_number > last_fetched_week
+            ]
+            fixed = [period for period in periods if period not in pending]
+            next_start = current_business_period_start(check_day) + timedelta(days=7)
+            if fixed:
+                next_start = max(next_start, max(period.period_start for period in fixed) + timedelta(days=7))
+            _replan_periods(db, pending, next_start)
+            listing.tracking_status = "active"
+            listing.resumed_at = models.now_utc()
+            action = "listing.resumed"
+        else:
+            raise ValueError("tracking_status must be active or stopped")
+        audit(db, action, "listing_record", listing.id, {}, actor_name, actor_user_id)
+    if "status" in payload.model_fields_set:
+        if payload.status != "voided":
+            raise ValueError("status must be voided")
+        reason = (payload.void_reason or "").strip()
+        if not reason:
+            raise ValueError("void_reason is required")
+        listing.status = "voided"
+        listing.tracking_status = "stopped"
+        listing.void_reason = reason
+        listing.voided_at = models.now_utc()
+        audit(db, "listing.voided", "listing_record", listing.id, {"reason": reason}, actor_name, actor_user_id)
+    if changed:
+        audit(db, "listing.updated", "listing_record", listing.id, {"fields": changed}, actor_name, actor_user_id)
+    return listing
+
+
+def _replan_periods(db: Session, periods: list[models.ItemObservationPeriod], first_start: date) -> None:
+    if not periods:
+        return
+    temporary_start = date(2099, 1, 1)
+    for index, period in enumerate(periods):
+        period.period_start = temporary_start + timedelta(days=7 * index)
+        period.period_end = period.period_start + timedelta(days=6)
+    db.flush()
+    for index, period in enumerate(sorted(periods, key=lambda item: item.week_number)):
+        period.period_start = first_start + timedelta(days=7 * index)
+        period.period_end = period.period_start + timedelta(days=6)
+
+
+def add_observation_period(
+    db: Session,
+    listing_id: str,
+    period_start: date,
+    actor_name: str,
+    actor_user_id: str | None,
+    actor_is_manager: bool,
+    operator_name: str | None = None,
+    today: date | None = None,
+) -> models.ItemObservationPeriod:
+    listing = db.get(models.ListingRecord, listing_id)
+    if listing is None:
+        raise LookupError("listing record not found")
+    if not actor_is_manager and listing.salesperson_name != (operator_name or actor_name):
+        raise PermissionError("listing record does not belong to current operator")
+    if listing.status != "active" or listing.tracking_status != "active":
+        raise ValueError("only active tracked listings can add periods")
+    if listing.initial_observation_completed_at is None:
+        raise ValueError("first round must be completed before adding a period")
+    validate_selectable_period_start(period_start, today or datetime.now(EXCEL_TIMEZONE).date())
+    periods = list(
+        db.scalars(
+            select(models.ItemObservationPeriod).where(models.ItemObservationPeriod.listing_record_id == listing.id)
+        )
+    )
+    if any(period.period_start == period_start for period in periods):
+        raise ValueError("period_start already exists")
+    period = models.ItemObservationPeriod(
+        id=models.new_id(),
+        listing_record_id=listing.id,
+        week_number=max(period.week_number for period in periods) + 1,
+        period_start=period_start,
+        period_end=period_start + timedelta(days=6),
+    )
+    db.add(period)
+    audit(
+        db,
+        "observation.period_added",
+        "item_observation_period",
+        period.id,
+        {"week_number": period.week_number, "period_start": period_start.isoformat()},
+        actor_name,
+        actor_user_id,
+    )
+    db.flush()
+    return period
+
+
+def apply_week_metrics(
+    db: Session,
+    item: str,
+    period_start: date,
+    metrics: dict | None,
+    actor_name: str = "weekly_item_import",
+) -> models.ItemObservationPeriod | None:
+    row = db.execute(
+        select(models.ItemObservationPeriod, models.ListingRecord)
+        .join(models.ListingRecord, models.ListingRecord.id == models.ItemObservationPeriod.listing_record_id)
+        .where(models.ListingRecord.item == item.strip(), models.ItemObservationPeriod.period_start == period_start)
+    ).one_or_none()
+    if row is None:
+        return None
+    period, listing = row
+    if metrics is None or listing.status != "active" or listing.tracking_status != "active":
+        return period
+    required = ("order_count", "total_revenue", "gross_profit_amount")
+    missing = [field for field in required if field not in metrics or metrics[field] is None]
+    if missing:
+        raise ValueError(f"weekly metrics missing: {', '.join(missing)}")
+    period.order_count = int(metrics["order_count"])
+    period.total_revenue = float(metrics["total_revenue"])
+    period.gross_profit_amount = float(metrics["gross_profit_amount"])
+    period.source_snapshot = metrics.get("source_snapshot") or {key: metrics[key] for key in required}
+    period.metrics_fetched_at = models.now_utc()
+    if period.status == "pending_data":
+        period.status = "pending_review"
+
+    dedupe_key = f"dingtalk_card:observation-period:{period.id}"
+    pending_notification = any(
+        isinstance(value, models.NotificationLog) and value.dedupe_key == dedupe_key for value in db.new
+    )
+    if not pending_notification and db.scalar(
+        select(models.NotificationLog.id).where(models.NotificationLog.dedupe_key == dedupe_key)
+    ) is None:
+        db.add(
+            models.NotificationLog(
+                id=models.new_id(),
+                dedupe_key=dedupe_key,
+                task_id=period.id,
+                receiver_name=listing.salesperson_name,
+                channel="work_notice",
+                message_title=f"{listing.item} 第{period.week_number}周数据待复盘",
+                send_status="pending",
+            )
+        )
+    audit(
+        db,
+        "observation.metrics_applied",
+        "item_observation_period",
+        period.id,
+        {"item": listing.item, "period_start": period_start.isoformat()},
+        actor_name,
+    )
+    return period
 
 
 def list_product_board_groups(

@@ -3215,6 +3215,378 @@ th {
   font-size: 18px;
 }
 
+.listing-workbench {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+
+.listing-workbench-panel {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+
+.listing-tabs {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  border-bottom: 1px solid #e2e8f0;
+  padding-bottom: 10px;
+}
+
+.listing-tabs button {
+  border: 0;
+  border-radius: 8px;
+  background: #f1f5f9;
+  color: #475569;
+  cursor: pointer;
+  padding: 8px 14px;
+}
+
+.listing-tabs button.active {
+  background: #2563eb;
+  color: #fff;
+}
+
+.listing-filters,
+.listing-advanced-filters {
+  display: flex;
+  align-items: end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.listing-filters label,
+.listing-advanced-filters label,
+.listing-dialog label {
+  display: grid;
+  gap: 5px;
+  color: #475569;
+  font-size: 12px;
+}
+
+.listing-filters input,
+.listing-filters select,
+.listing-advanced-filters select,
+.listing-dialog input {
+  min-height: 36px;
+}
+
+.listing-search input {
+  min-width: 220px;
+}
+
+.listing-mine-filter {
+  align-items: center !important;
+  display: flex !important;
+  min-height: 36px;
+}
+
+.listing-mine-filter input {
+  min-height: auto;
+}
+
+.listing-advanced-filters {
+  border-radius: 10px;
+  background: #f8fafc;
+  padding: 12px;
+}
+
+.pending-listing-tasks {
+  display: grid;
+  gap: 14px;
+}
+
+.pending-listing-card {
+  border: 1px solid #dbe3ef;
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.pending-listing-head,
+.pending-listing-submit,
+.listing-batchbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.pending-listing-head {
+  background: #f8fafc;
+  padding: 12px 14px;
+}
+
+.pending-listing-head > div:first-child {
+  display: grid;
+  gap: 2px;
+}
+
+.pending-listing-head > div:first-child b {
+  font-size: 16px;
+}
+
+.pending-listing-head > div:first-child span,
+.pending-listing-meta,
+.pending-listing-submit span,
+.listing-batchbar span {
+  color: #64748b;
+  font-size: 12px;
+}
+
+.pending-listing-meta {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.pending-listing-table-scroll,
+.listing-table-scroll {
+  overflow: auto;
+  max-width: 100%;
+}
+
+.pending-listing-table {
+  border-collapse: collapse;
+  min-width: 900px;
+  width: 100%;
+}
+
+.pending-listing-table th,
+.pending-listing-table td {
+  border-bottom: 1px solid #e2e8f0;
+  padding: 8px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.pending-listing-table th {
+  background: #fff;
+  color: #475569;
+  font-size: 12px;
+}
+
+.pending-listing-table input,
+.pending-listing-table textarea {
+  min-width: 160px;
+  width: 100%;
+}
+
+.pending-listing-table textarea {
+  min-height: 54px;
+}
+
+.pending-listing-empty {
+  color: #64748b;
+  padding: 18px 14px;
+}
+
+.listing-existing-records {
+  display: grid;
+  gap: 8px;
+  padding: 12px 14px 0;
+}
+
+.listing-existing-table {
+  min-width: 1050px;
+}
+
+.pending-listing-submit,
+.listing-batchbar {
+  padding: 10px 14px;
+}
+
+.listing-period-table {
+  border-collapse: separate;
+  border-spacing: 0;
+  min-width: 1900px;
+  width: 100%;
+}
+
+.listing-period-table th,
+.listing-period-table td {
+  background: #fff;
+  border-bottom: 1px solid #e2e8f0;
+  padding: 8px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.listing-period-table th {
+  background: #f8fafc;
+  color: #475569;
+  font-size: 12px;
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+
+.listing-period-table td small {
+  color: #64748b;
+  display: block;
+  margin-top: 3px;
+}
+
+.listing-period-table tr.listing-group-start td {
+  border-top: 2px solid #93c5fd;
+}
+
+.listing-period-table select,
+.listing-period-table textarea {
+  min-width: 140px;
+  width: 100%;
+}
+
+.listing-period-table textarea {
+  min-height: 58px;
+}
+
+.listing-sticky {
+  box-shadow: 1px 0 0 #e2e8f0;
+  left: 0;
+  position: sticky;
+  z-index: 1;
+}
+
+th.listing-sticky {
+  z-index: 4;
+}
+
+.sticky-0 { left: 0; min-width: 42px; width: 42px; }
+.sticky-1 { left: 42px; min-width: 150px; width: 150px; }
+.sticky-2 { left: 192px; min-width: 130px; width: 130px; }
+.sticky-3 { left: 322px; min-width: 150px; width: 150px; }
+.sticky-4 { left: 472px; min-width: 110px; width: 110px; }
+.sticky-5 { left: 582px; min-width: 70px; width: 70px; }
+.sticky-6 { left: 652px; min-width: 180px; width: 180px; }
+
+.listing-row-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  min-width: 150px;
+}
+
+.listing-error-input {
+  border-color: #dc2626 !important;
+  box-shadow: 0 0 0 1px #dc2626;
+}
+
+.listing-field-error {
+  color: #dc2626;
+  display: block;
+  margin-top: 4px;
+}
+
+.listing-overlay {
+  align-items: center;
+  background: rgba(15, 23, 42, 0.5);
+  display: flex;
+  inset: 0;
+  justify-content: center;
+  padding: 20px;
+  position: fixed;
+  z-index: 80;
+}
+
+.listing-dialog {
+  background: #fff;
+  border-radius: 14px;
+  box-shadow: 0 24px 60px rgba(15, 23, 42, 0.24);
+  max-width: 680px;
+  padding: 22px;
+  position: relative;
+  width: 100%;
+}
+
+.listing-dialog.small-dialog {
+  max-width: 420px;
+}
+
+.listing-dialog h2 {
+  margin: 0 32px 6px 0;
+}
+
+.listing-dialog p {
+  color: #64748b;
+  margin: 0 0 14px;
+}
+
+.listing-dialog textarea {
+  min-height: 180px;
+  width: 100%;
+}
+
+.listing-edit-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.listing-edit-grid textarea {
+  min-height: 90px;
+}
+
+.listing-summary-readonly {
+  display: grid;
+  gap: 14px;
+}
+
+.listing-summary-cards {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.listing-summary-card {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  display: grid;
+  gap: 5px;
+  padding: 12px;
+}
+
+.listing-summary-card span {
+  color: #64748b;
+  font-size: 12px;
+}
+
+.listing-summary-table {
+  min-width: 1300px;
+}
+
+.listing-dialog-close {
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  padding: 4px;
+  position: absolute;
+  right: 14px;
+  top: 14px;
+}
+
+.listing-dialog-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 14px;
+}
+
+@media (max-width: 900px) {
+  .pending-listing-head,
+  .pending-listing-submit,
+  .listing-batchbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .listing-edit-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 .research-source-value,
 .research-peer-list {
   min-width: 0;

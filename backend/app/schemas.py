@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
@@ -409,13 +409,112 @@ class SecondaryResearchDraftUpdate(BaseModel):
     @field_validator("product_positioning")
     @classmethod
     def valid_product_positioning(cls, value: str | None) -> str | None:
-        if value is not None and value not in {"引流款", "利润款", "淘汰款"}:
-            raise ValueError("product_positioning must be 引流款, 利润款, or 淘汰款")
+        if value is not None and value not in {"引流款", "利润款", "淘汰款", "稳定款", "清仓款"}:
+            raise ValueError("product_positioning must be 引流款, 利润款, 淘汰款, 稳定款, or 清仓款")
         return value
 
 
 class SecondaryResearchSubmitGroupRequest(BaseModel):
     claim_record_ids: list[str] = Field(min_length=1)
+
+
+class PendingListingTaskRead(BaseModel):
+    task_key: str
+    source_type: str
+    business_period: str | None = None
+    country: str | None = None
+    site: str | None = None
+    main_sku: str
+    main_sku_name: str | None = None
+    salesperson_name: str
+    claim_record_ids: list[str]
+    default_first_period_start: date
+
+
+class ListingRecordRead(BaseModel):
+    id: str
+    task_key: str
+    main_sku: str
+    main_sku_name: str | None = None
+    country: str | None = None
+    site: str | None = None
+    salesperson_name: str
+    shop: str
+    item: str
+    listing_strategy: str
+    first_period_start: date
+    status: str
+    tracking_status: str
+    first_round_completed_at: datetime | None = None
+
+
+class ObservationPeriodRead(BaseModel):
+    id: str
+    listing_record_id: str
+    main_sku: str
+    main_sku_name: str | None = None
+    country: str | None = None
+    salesperson_name: str
+    shop: str
+    item: str
+    week_number: int
+    period_start: date
+    period_end: date
+    status: str
+    tracking_status: str
+    order_count: int | None = None
+    total_revenue: float | None = None
+    gross_profit_amount: float | None = None
+    gross_profit_rate: float | None = None
+    product_positioning: str | None = None
+    optimization_action: str | None = None
+    four_week_summary: str | None = None
+    first_round_completed_at: datetime | None = None
+
+
+class ListingWorkbenchRead(BaseModel):
+    pending_listing_tasks: list[PendingListingTaskRead]
+    listing_records: list[ListingRecordRead]
+    period_rows: list[ObservationPeriodRead]
+
+
+class ListingBatchRow(BaseModel):
+    shop: str
+    item: str
+    listing_strategy: str
+    first_period_start: str
+
+
+class ListingBatchRequest(BaseModel):
+    task_key: str
+    rows: list[ListingBatchRow] = Field(min_length=1)
+
+
+class ListingRecordUpdate(BaseModel):
+    shop: str | None = None
+    item: str | None = None
+    listing_strategy: str | None = None
+    first_period_start: str | None = None
+    tracking_status: str | None = None
+    status: str | None = None
+    void_reason: str | None = None
+
+    model_config = {"extra": "forbid"}
+
+
+class ObservationPeriodCreate(BaseModel):
+    period_start: str
+
+
+class ObservationPeriodReviewRow(BaseModel):
+    period_id: str
+    product_positioning: str
+    optimization_action: str
+    four_week_summary: str | None = None
+
+
+class ObservationPeriodReviewBatchRequest(BaseModel):
+    rows: list[ObservationPeriodReviewRow] = Field(min_length=1)
 
 
 class PlmArrivalItem(BaseModel):
@@ -482,22 +581,6 @@ class PlmArrivalProcessRead(BaseModel):
     unmatched_count: int
     arrival_record_count: int
     planned_responsibilities: list[PlmArrivalMatchedResponsibilityRead] = Field(default_factory=list)
-
-
-class FourWeekSummaryCreate(BaseModel):
-    opportunity_id: str
-    summary_user: str | None = None
-    achieved: bool | None = None
-    out_of_stock_impact: str | None = None
-    conclusion: str | None = None
-    next_action: str | None = None
-
-
-class FourWeekSummaryRead(FourWeekSummaryCreate):
-    id: str
-    created_at: datetime
-
-    model_config = {"from_attributes": True}
 
 
 class NotificationTestRequest(BaseModel):

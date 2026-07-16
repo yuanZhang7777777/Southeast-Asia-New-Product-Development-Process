@@ -524,9 +524,9 @@ sku_markdown, action_text, action_url
 
 从 `PlmArrivalItem` 按 `arrival_date + salesperson_name` 汇总，使用 `NotificationLog.dedupe_key` 保证成功记录不重发。销售员为空或没有 userId 时记录 `skipped_no_receiver`，不猜姓名。
 
-- [ ] **Step 3: 每日 09:00 淘汰款汇总**
+- [ ] **Step 3: 每日 10:00 淘汰款汇总**
 
-扫描 `product_positioning=淘汰款`、已提交且尚无成功通知日志的责任记录。按运营、业务期数、主 SKU 组织 `sku_markdown`；所有启用的 `manager` 和 `super_admin` 每人最多一张，不使用硬编码姓名白名单。
+扫描 `product_positioning=淘汰款`、已提交且尚无成功通知日志的责任记录；清仓款不进入通知。按运营、业务期数和主 SKU 组织 `sku_markdown`；所有启用的 `manager` 和 `super_admin` 每人最多一张，不使用硬编码姓名白名单。
 
 - [ ] **Step 4: 每周四 09:00 复核汇总**
 
@@ -611,60 +611,14 @@ Expected: 映射、多人、多期均通过。
 
 ### Task 8: 刊登和 1-4 周观察期决策闸门
 
-这一阶段不能靠开发侧盲猜。执行 Task 8 前必须由用户确认以下三点，并把答案追加到 `docs/2026-07-09-已确认需求记录.md`：
+> **2026-07-16 已失效：不得按本 Task 的旧字段、滚动 7 天算法或“周记录选填”规则实施。**
 
-1. 同一“子 SKU + 国家 + 销售员”能否有多条刊登记录（多店铺/多个 Item ID），还是只保留一条。
-2. 确认已刊登时的必填字段。旧讨论里出现过 Item ID、刊登链接、店铺、刊登价格、刊登时间，但尚未形成最新最终口径。
-3. 每周观察记录具体填写哪些字段；当前只确认“可填、不强制、不催办、观察期是最后一环”。
+最新确认记录已经改为：主 SKU 多条“店铺 + Item”记录、周四至周三固定周期、每个 Item 独立选择第一周、周产品定位和优化操作必填、自动接入集团八部周 Item 数据、Item 级四周总结。完整口径和剩余问题见：
 
-在未确认前，下一模型可以完成 Task 0-7，但不得创造刊登/观察字段。
+- `docs/2026-07-09-已确认需求记录.md`
+- `docs/21-后半段需求领导对齐问题清单.md`
 
-确认后按以下不变规则实施：
-
-**Files:**
-- Modify: `backend/app/models.py`
-- Modify: `backend/app/workflow_status.py`
-- Modify: `backend/app/schemas.py`
-- Create: `backend/app/routers/listing.py`
-- Create: `backend/alembic/versions/b8d2e4f5a678_add_listing_observation.py`
-- Create: `backend/tests/test_listing_observation.py`
-- Create: `frontend/src/ListingView.tsx`
-- Modify: `frontend/src/api.ts`
-- Modify: `frontend/src/App.tsx`
-- Modify: `frontend/src/styles.css`
-
-- [ ] **Step 1: 按确认字段写失败测试**
-
-测试必须覆盖责任独立、期数隔离、淘汰款不可刊登、非待刊登状态不可重复确认。
-
-迁移固定使用 `revision = "b8d2e4f5a678"`、`down_revision = "a7c1d3e4f567"`；Task 8 延期时不创建该迁移，不留下空 revision。
-
-- [ ] **Step 2: 确认已刊登即自动进入观察期**
-
-同一事务保存刊登记录、`listed_at`，并把责任状态改为 `observation_1_4_weeks`；不增加“手动开启观察期”按钮。
-
-- [ ] **Step 3: 按 7 天计算周次**
-
-```python
-week_number = min(4, max(1, (today - listed_at.date()).days // 7 + 1))
-```
-
-周记录选填，缺失不阻塞，不生成通知。第 4 周结束后仍保持观察期最后状态，不进入四周总结或流程完成。
-
-- [ ] **Step 4: 移除旧四周总结入口**
-
-停止注册 `backend/app/routers/summary.py` 的业务路由，前端移除 `api.summary`。历史表先保留只读数据，不在本次迁移中物理删除。
-
-- [ ] **Step 5: 运行聚焦测试与构建**
-
-Run:
-
-```powershell
-.\.venv312\Scripts\python.exe -m pytest backend\tests\test_listing_observation.py -q
-Set-Location frontend
-npm test
-npm run build
-```
+在剩余业务问题确认并形成新的实施计划前，不执行本文件原 Task 8，也不复用原迁移号、字段清单或周次代码。
 
 ---
 
@@ -738,7 +692,7 @@ PLM 销售员不匹配不关联
 - 选品2及系统接入前历史库存的 PLM 全量匹配；其切入时点、去重和首次提醒策略未确认。
 - PLM open 接口直接做个人通知；当前响应无销售员。
 - 人工匹配列表、姓名纠错、模糊匹配。
-- 四周总结待复核、流程完成、周记录催办。
+- 刊登与观察 Task 8 的全部旧实现步骤；最新需求确认完成后另写实施计划。后半段无历史数据，旧 `four_week_summary` 表、接口和相关旧代码在新方案实施时直接删除，不做兼容或迁移，且不触碰当前生产库。
 - 在线表格自动回写；当前继续以可追溯导出为准。
 
 ## 5. 阶段验收顺序

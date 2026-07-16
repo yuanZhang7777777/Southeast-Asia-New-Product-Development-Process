@@ -14,6 +14,8 @@ import {
   createSecondaryResearchDraft,
   incompleteSecondaryResearchItems,
   patchSecondaryResearchDraft,
+  SECONDARY_RESEARCH_POSITIONINGS,
+  SECONDARY_RESEARCH_SKIP_LISTING,
   syncSecondaryResearchDraftPatch,
   SecondaryResearchDraft
 } from "./secondaryResearchDrafts";
@@ -318,11 +320,11 @@ export function SecondaryResearchView(props: {
                       }}
                     >
                       <option value="">请选择</option>
-                      <option value="引流款">引流款</option>
-                      <option value="利润款">利润款</option>
-                      <option value="淘汰款">淘汰款</option>
+                      {SECONDARY_RESEARCH_POSITIONINGS.map((positioning) => (
+                        <option value={positioning} key={positioning}>{positioning}</option>
+                      ))}
                     </select>
-                    <small>{draft.positioning === "淘汰款" ? "提交后直接停用" : "提交后进入待刊登"}</small>
+                    <small>{SECONDARY_RESEARCH_SKIP_LISTING.has(draft.positioning) ? "提交后不进入刊登" : "提交后进入待刊登"}</small>
                   </label>
                   <div className="research-entry-cell research-image-cell">
                     <span>调研图片</span>
@@ -364,7 +366,7 @@ export function SecondaryResearchView(props: {
       <div className="research-submitbar">
         <div>
           <b>{props.editable ? "草稿自动保存" : "主管只读查看"}</b>
-          <span>同一主 SKU 的子 SKU 必须全部填完整后整组提交；淘汰款与保留款可在同组独立分流。</span>
+          <span>同一主 SKU 的子 SKU 必须全部填完整后整组提交；淘汰款与清仓款提交后不进入刊登。</span>
         </div>
         {props.editable && (
           <button className="btn primary" type="button" disabled={loading} onClick={() => void submitGroup()}>

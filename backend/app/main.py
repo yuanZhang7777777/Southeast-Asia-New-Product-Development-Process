@@ -15,6 +15,7 @@ from app.routers import (
     claims,
     events,
     health,
+    listing_workbench,
     market_monitor,
     notifications,
     opportunities,
@@ -22,7 +23,6 @@ from app.routers import (
     reviews,
     secondary_research,
     stocking,
-    summary,
     tasks,
 )
 
@@ -61,9 +61,9 @@ app.include_router(claims.router)
 app.include_router(events.router)
 app.include_router(reviews.router)
 app.include_router(secondary_research.router)
+app.include_router(listing_workbench.router)
 app.include_router(stocking.router)
 app.include_router(market_monitor.router)
 app.include_router(arrival.router)
-app.include_router(summary.router)
 app.include_router(notifications.router)
 app.include_router(admin.router)

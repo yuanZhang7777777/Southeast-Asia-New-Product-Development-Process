@@ -1,6 +1,6 @@
 # Agent Handoff
 
-> Updated: 2026-07-06 12:20 Asia/Shanghai
+> Updated: 2026-07-16 Asia/Shanghai
 
 ## Current Mode
 
@@ -189,22 +189,37 @@ The generic `SKU 商品池` remains out of first-version scope unless explicitly
 - Keep `商品看板` separate from `机会池`: dashboard shows all product statuses; opportunity pool shows only pending / claimable new-product opportunities.
 - Health labels are `正常 / 需关注 / 异常`, display/filter only. First version uses clear workflow-state triggers, not a scoring model. Later arrival / monitoring triggers should be added when those stages are implemented.
 
-## Back-Stage Planning Already Discussed
+## Back-Stage Implementation and Confirmed Rules
 
-Keep these as later-stage planning, not first-version implementation unless user asks:
+As of 2026-07-16, secondary-research five-position routing and the listing/observation workbench are implemented on the development branch. The real Group 8 weekly Item API/credentials are not yet available; use the internal `apply_week_metrics(...)` boundary and do not invent an external connector.
 
 - 到货承接: source is PLM `真仓库存明细数据-普通商品-汇总数据` downloaded through the PLM interface / download center, not browser automation by default. Daily pull target is around 08:00, pulling the previous Asia/Shanghai calendar day. Tested 2026-07-02: login, download-center listing, and direct xlsx download succeeded. First pass monitors arrival time only; source fields include `子SKU`, `主SKU`, `海外仓`, `国家`, `预计到港时间`, `最后一次入库时间`, `首次上架时间`, `海外仓可发`, `真仓库存`.
 - PLM credentials are saved locally at `C:\Users\86173\.codex\secrets\Hengzhe-New-Product-Workflow\plm.credentials.json`; this file is outside the repo and should be read at runtime to log in for fresh tokens. Do not copy credentials into docs, code, commits, or work logs.
 - DingTalk internal H5 app credentials are saved locally at `C:\Users\86173\.codex\secrets\Hengzhe-New-Product-Workflow\dingtalk.credentials.json`; this file is outside the repo and stores App ID, AgentId, Client ID, and Client Secret. Do not copy credentials into docs, code, commits, or work logs.
-- After actual warehouse entry: each main SKU does secondary market research before listing.
-- Secondary market research: operator fills; supervisor can see global results. Normal path goes into pricing/listing. If market is no longer viable, submit supervisor confirmation with actions such as not listing, observe, or return for supplement.
-- Pricing review: original suggested price, secondary research reference price, final listing price, adjustment reason.
-- Listing confirmation: ItemID, listing link, shop, selling price, listing date.
-- Weekly monitoring starts from listing date, every 7 days, records by ItemID, main SKU summarizes.
-- Monitoring fields: sales, sales amount, inventory, ad spend, ROI/ACOS, abnormal labels; operator fills action/remark.
+- After actual warehouse entry: each main SKU does secondary market research before listing. Product positioning is limited to `引流款 / 利润款 / 淘汰款 / 稳定款 / 清仓款`; 淘汰款 and 清仓款 do not enter listing, while the other three enter `待刊登`.
+- Only 淘汰款 triggers the supervisor external-positioning reminder; 清仓款 does not. Aggregate unsent 淘汰款 once daily around 10:00 Asia/Shanghai rather than notifying on every submission.
+- Listing and observation use one dedicated workbench for editing; product details only show the summary. Listing records attach to the main SKU, not child SKUs. One main SKU may have multiple shop-plus-Item records, and each Item has an independent four-week cycle.
+- The confirmed observation layout is an Excel-style period detail table with one row per Item-period. Weekly metrics are read-only; positioning and optimization are editable inline; valid selected rows may be submitted together. Freeze main SKU, shop, Item, owner, week number, and business-period columns during horizontal scrolling, and visually group consecutive rows belonging to the same main SKU. Confirmed filters: workflow tabs, “only my todos,” primary keyword/period/country/shop/owner/status filters, and advanced week/positioning/tracking filters. Keep the week-4 summary out of the permanent wide columns and open it through a side editor; it remains required for week-4 submission.
+- Item is globally unique across all listing records; duplicate entry is blocked regardless of operator, platform, country, or main SKU. A typo may be corrected, while an actual relisting voids the old record and uses a new Item.
+- Item is also the unique key in weekly data: one Item has exactly one summary row per business cycle, so no multi-row merge behavior is required.
+- Each listing record requires operator-entered shop, Item, free-text listing strategy, and a selected week-1 start cycle. All four are required. Do not build a fixed shop list or shop-configuration module; search saved shop text in filters. Fixed optimization / brushing / ads / affiliate / campaign checkboxes are removed.
+- Do not provide a context-free global “Add Item” action. Add listing rows only from the relevant main-SKU row in the `待刊登` list; lock main SKU, country, and owner from that row, and let the operator enter shop, Item, listing strategy, and the week-1 start cycle. Allow multiple shop-plus-Item rows under the same main SKU before one submission.
+- Listing batch submission is atomic: if any selected row has a duplicate Item, missing required value, or server-side validation failure, persist none of the batch. Keep entered values, locate and highlight each invalid row, and require the operator to correct and resubmit the whole batch; never return partial success.
+- Every Item selects its own week-1 cycle: default next cycle, current cycle allowed, past completed cycles forbidden. Business weeks are Thursday through Wednesday, not rolling seven-day windows from listing time.
+- After week 1 is selected, auto-generate/fetch the first four active business periods without waiting for the prior review to be submitted; multiple overdue periods may coexist. Pause generation while tracking is stopped, resume with the next business period without backfill, and stop automatic generation after the first four periods.
+- Weekly metrics come from the Group 8 Item-week aggregation: order count, total revenue, primary gross-profit amount, and primary gross-profit rate (`gross profit / revenue`). The platform must query tracked Items without the existing final-report filter `订单量汇总 < 7`.
+- If a tracked Item has no weekly source record, show `周数据未获取` and retry automatically; never convert missing data into zero orders, revenue, or gross profit. Retry cadence remains a technical-design choice.
+- Every week requires product positioning and optimization action. Product positioning may change without stopping data collection; only the separate `停止跟踪` status disables later fetches and reminders.
+- A stopped Item may be resumed. Keep completed weeks, do not backfill stopped periods, and continue the next unfinished week from the business cycle after resumption.
+- After weekly data is stored, remind the responsible operator once; the review is due by the following Wednesday end of work, with no repeated reminder in the same cycle.
+- Week 4 includes an Item-level free-text four-week summary. Later Items under the same main SKU still run their own four weeks.
+- Submit the four-week summary together with week-4 positioning and optimization action by the Wednesday end-of-work deadline after weekly data is stored and announced.
+- After week-4 positioning, optimization action, and summary are submitted, the Item enters `首轮观察完成`. Do not auto-create week 5, but let the operator or supervisor use “新增周期” to add unlimited later periods. Each added period uses the same automatic metrics, one reminder, required positioning, and required optimization action; keep all history viewable.
+- Keep `首轮观察完成` as the Item milestone when later periods are added. Each period owns `待取数 / 待复盘 / 已完成`; derive workbench todos from unfinished periods instead of adding a toggling Item-level `后续观察中` state.
+- A manually added period defaults to the next Thursday-Wednesday cycle, may be changed to the current cycle, and may not target a completed historical cycle. Do not backfill calendar gaps; display week numbers increment by actual records created for that Item.
 - `【市场监控】海外仓精品市场调研.xlsx` is a post-export market-monitoring / secondary-research work table, not the PLM raw table and not the stocking application table. Current local workbook sheets: `说明`, `PH精品`, `TH精品`, `VN精品`, `MY精品` (empty). Current local workbook has `AO=产品定位（引流款/利润款/淘汰款）` and `AQ=6.22号公司:单销`; use header matching, not fixed column letters. If secondary research marks a product as `淘汰款`, notify supervisor to update product positioning in the external system, so clearance sales do not trigger false high-sales auto replenishment.
 - Detailed per-column source confirmation for the market-monitoring workbook is in `docs/18-市场监控表字段来源确认问题清单.md`. Keep that as the single editable checklist for exact source table / field / logic / timing.
-- Four-week summary: generated after day 28; operator fills, supervisor views summary.
+- The later-stage workflow has no historical data. Migration `a8d4e6f7b901` removes the legacy empty `four_week_summary` table while creating `listing_record` and `item_observation_period`; the legacy router/model are removed with no compatibility layer. Apply this only to the isolated development environment and never to the current production server/database without a separately approved production window.
 
 ## Prototype Deliverable
 
@@ -221,13 +236,13 @@ The user already said the prototype was verified as OK. Do not reopen prototype 
 Read these before asking or changing anything:
 
 1. `AGENT_HANDOFF.md`
-2. `docs/20-项目推进总控.md`
-3. `docs/19-钉钉新品待办卡片接入说明.md`
+2. `docs/2026-07-09-已确认需求记录.md`
+3. `docs/21-后半段需求领导对齐问题清单.md`
 4. `docs/02-功能实现状态.md`
-5. `docs/00-新会话交接.md`
-6. `docs/01-需求文档-东南亚新品流程.md`
-7. `docs/14-新品流程产品原型需求确认.md`
-8. `docs/15-新品流程业务会议待确认问题清单.md`
+5. `docs/20-项目推进总控.md`
+6. `docs/19-钉钉新品待办卡片接入说明.md`
+7. `docs/00-新会话交接.md`
+8. `docs/01-需求文档-东南亚新品流程.md`
 9. `docs/16-新品认领反馈源表实测字段清单.md`
 10. `docs/17-源表字段总字典.md`
 
@@ -236,6 +251,7 @@ Optional context if implementation resumes later:
 - `docs/05-分配任务规则设计草案.md`
 - `docs/09-MVP第一版-选品1单表跑通规格.md`
 - `docs/10-前端UX与功能测试验收清单.md`
+- `docs/14-新品流程产品原型需求确认.md` and `docs/15-新品流程业务会议待确认问题清单.md` are historical discussion inputs; do not use their older listing / rolling-week rules when they conflict with the confirmed record.
 
 ## Next Session Start
 
@@ -247,10 +263,10 @@ Do **not** ask again whether first version is export-only. It is already confirm
 
 If the user asks "接下来做什么", continue from `docs/20-项目推进总控.md` and `docs/02-功能实现状态.md`:
 
-1. Re-run local backend tests and frontend build.
-2. Start the local demo server and verify the user-facing workflow with demo data.
-3. Fix any UI/business mismatches found during demo validation.
-4. Then prepare cloud deployment/env setup.
+1. Verify the isolated development deployment and the user-facing listing/observation workflow.
+2. Collect the real weekly Item API endpoint, authentication method, and an unfiltered aggregate response sample.
+3. Add the scheduler/adapter behind the existing `apply_week_metrics(...)` boundary and verify missing-data retry behavior.
+4. Keep production changes separate and schedule them outside user working time.
 
 Only return to `docs/15` for later-stage open questions such as PLM 到货、二次调研、刊登、监控、四周总结, not for the frozen first-version export-only boundary.
 
@@ -260,13 +276,13 @@ Only return to `docs/15` for later-stage open questions such as PLM 到货、二
 请先读取 AGENT_HANDOFF.md、docs/20-项目推进总控.md 和 docs/02-功能实现状态.md，以它们为最新口径继续，不要重新猜需求。
 
 请读取并以 AGENT_HANDOFF.md 为准，同时查看：
+docs/2026-07-09-已确认需求记录.md
+docs/21-后半段需求领导对齐问题清单.md
 docs/20-项目推进总控.md
 docs/19-钉钉新品待办卡片接入说明.md
 docs/02-功能实现状态.md
 docs/00-新会话交接.md
 docs/01-需求文档-东南亚新品流程.md
-docs/14-新品流程产品原型需求确认.md
-docs/15-新品流程业务会议待确认问题清单.md
 docs/16-新品认领反馈源表实测字段清单.md
 docs/17-源表字段总字典.md
 

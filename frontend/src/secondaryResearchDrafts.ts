@@ -1,4 +1,6 @@
-export type SecondaryResearchPositioning = "" | "引流款" | "利润款" | "淘汰款";
+export const SECONDARY_RESEARCH_POSITIONINGS = ["引流款", "利润款", "淘汰款", "稳定款", "清仓款"] as const;
+export type SecondaryResearchPositioning = "" | typeof SECONDARY_RESEARCH_POSITIONINGS[number];
+export const SECONDARY_RESEARCH_SKIP_LISTING = new Set<SecondaryResearchPositioning>(["淘汰款", "清仓款"]);
 
 export type SecondaryResearchDraft<TImage = Record<string, unknown>> = {
   researchedAt: string;

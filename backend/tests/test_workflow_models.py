@@ -7,6 +7,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app import models, schemas  # noqa: E402
 from app.db import Base, SessionLocal, engine  # noqa: E402
+from alembic.config import Config  # noqa: E402
+from alembic.script import ScriptDirectory  # noqa: E402
 
 
 def setup_function() -> None:
@@ -108,3 +110,22 @@ def test_batch_summary_schemas_read_model_metadata() -> None:
 
     assert import_summary.created_count == 2
     assert export_summary.row_count == 3
+
+
+def test_listing_observation_tables_replace_legacy_four_week_summary() -> None:
+    assert "listing_record" in Base.metadata.tables
+    assert "item_observation_period" in Base.metadata.tables
+    assert "four_week_summary" not in Base.metadata.tables
+
+    listing_constraints = {constraint.name for constraint in Base.metadata.tables["listing_record"].constraints}
+    period_constraints = {constraint.name for constraint in Base.metadata.tables["item_observation_period"].constraints}
+    assert "uq_listing_record_item" in listing_constraints
+    assert "uq_item_observation_period_week" in period_constraints
+    assert "uq_item_observation_period_start" in period_constraints
+
+
+def test_listing_observation_migration_is_the_single_head() -> None:
+    config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
+    config.set_main_option("script_location", str(Path(__file__).resolve().parents[1] / "alembic"))
+
+    assert ScriptDirectory.from_config(config).get_current_head() == "a8d4e6f7b901"

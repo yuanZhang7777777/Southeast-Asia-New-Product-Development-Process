@@ -13,6 +13,7 @@ CLAIM_WAITING_ARRIVAL = "waiting_arrival"
 CLAIM_WAITING_EXPORT = "waiting_export"
 CLAIM_WAITING_SECONDARY_RESEARCH = "waiting_secondary_research"
 CLAIM_WAITING_LISTING = "waiting_listing"
+CLAIM_LISTING_OBSERVATION = "listing_observation"
 CLAIM_DISABLED = "disabled"
 
 CLAIM_RESULT_CLAIM = "claim"

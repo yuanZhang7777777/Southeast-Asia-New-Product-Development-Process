@@ -299,6 +299,99 @@ export type ProductBoardFilter = {
   query?: string;
 };
 
+export type ListingWorkbenchView = "pending_listing" | "pending_data" | "pending_review" | "first_round_completed" | "all";
+export type ObservationPeriodStatus = "pending_data" | "pending_review" | "completed";
+export type ListingTrackingStatus = "active" | "stopped";
+export type ProductPositioning = "引流款" | "利润款" | "淘汰款" | "稳定款" | "清仓款";
+
+export type PendingListingTask = {
+  task_key: string;
+  source_type: string;
+  business_period?: string | null;
+  country?: string | null;
+  site?: string | null;
+  main_sku: string;
+  main_sku_name?: string | null;
+  salesperson_name: string;
+  claim_record_ids: string[];
+  default_first_period_start: string;
+};
+
+export type ListingRecord = {
+  id: string;
+  task_key: string;
+  main_sku: string;
+  main_sku_name?: string | null;
+  country?: string | null;
+  site?: string | null;
+  salesperson_name: string;
+  shop: string;
+  item: string;
+  listing_strategy: string;
+  first_period_start: string;
+  status: "active" | "voided";
+  tracking_status: ListingTrackingStatus;
+  first_round_completed_at?: string | null;
+};
+
+export type ObservationPeriodRow = {
+  id: string;
+  listing_record_id: string;
+  main_sku: string;
+  main_sku_name?: string | null;
+  country?: string | null;
+  salesperson_name: string;
+  shop: string;
+  item: string;
+  week_number: number;
+  period_start: string;
+  period_end: string;
+  status: ObservationPeriodStatus;
+  tracking_status: ListingTrackingStatus;
+  order_count?: number | null;
+  total_revenue?: number | null;
+  gross_profit_amount?: number | null;
+  gross_profit_rate?: number | null;
+  product_positioning?: ProductPositioning | null;
+  optimization_action?: string | null;
+  four_week_summary?: string | null;
+  first_round_completed_at?: string | null;
+};
+
+export type ListingWorkbenchResponse = {
+  pending_listing_tasks: PendingListingTask[];
+  listing_records: ListingRecord[];
+  period_rows: ObservationPeriodRow[];
+};
+
+export type ListingWorkbenchFilter = {
+  view?: ListingWorkbenchView;
+  query?: string;
+  period_start?: string;
+  country?: string;
+  shop?: string;
+  salesperson_name?: string;
+  status?: ObservationPeriodStatus | "";
+  week_number?: number | "";
+  product_positioning?: ProductPositioning | "";
+  tracking_status?: ListingTrackingStatus | "";
+  only_my_tasks?: boolean;
+};
+
+export type ListingBatchPayload = {
+  task_key: string;
+  rows: Array<{ shop: string; item: string; listing_strategy: string; first_period_start: string }>;
+};
+
+export type PeriodReviewBatchPayload = {
+  rows: Array<{
+    period_id: string;
+    product_positioning: ProductPositioning;
+    optimization_action: string;
+    four_week_summary?: string | null;
+  }>;
+};
+
 export function getAuthToken() {
   return localStorage.getItem(AUTH_TOKEN_KEY) || "";
 }
@@ -387,6 +480,15 @@ function productBoardQuery(params: ProductBoardFilter = {}) {
   const search = new URLSearchParams();
   for (const [key, value] of Object.entries(params)) {
     if (value) search.set(key, value);
+  }
+  const value = search.toString();
+  return value ? `?${value}` : "";
+}
+
+function listingWorkbenchQuery(params: ListingWorkbenchFilter = {}) {
+  const search = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== null && value !== "") search.set(key, String(value));
   }
   const value = search.toString();
   return value ? `?${value}` : "";
@@ -481,7 +583,22 @@ export const api = {
   traceabilityExport: (filter?: PeriodFilter) => download(`/stocking/traceability/export${query(filter)}`, "新品中央字段导出.xlsx"),
   arrival: (payload: unknown) => request<unknown>("/arrival/records", { method: "POST", body: JSON.stringify(payload) }),
   plmArrivalPreview: (date: string) => request<PlmArrivalPreview>(`/arrival/plm-preview?date=${encodeURIComponent(date)}`),
-  summary: (payload: unknown) => request<unknown>("/summary/four-week", { method: "POST", body: JSON.stringify(payload) }),
+  listingWorkbench: (filters: ListingWorkbenchFilter = {}) =>
+    request<ListingWorkbenchResponse>(`/listing-workbench${listingWorkbenchQuery(filters)}`),
+  listingSummary: (mainSku: string, country?: string | null, salespersonName?: string) => {
+    const search = new URLSearchParams({ main_sku: mainSku });
+    if (country) search.set("country", country);
+    if (salespersonName) search.set("salesperson_name", salespersonName);
+    return request<ListingWorkbenchResponse>(`/listing-workbench/summary?${search.toString()}`);
+  },
+  createListingsBatch: (payload: ListingBatchPayload) =>
+    request<ListingRecord[]>("/listing-workbench/listings/batch", { method: "POST", body: JSON.stringify(payload) }),
+  updateListing: (id: string, payload: unknown) =>
+    request<ListingRecord>(`/listing-workbench/listings/${id}`, { method: "PATCH", body: JSON.stringify(payload) }),
+  addListingPeriod: (id: string, payload: { period_start: string }) =>
+    request<ObservationPeriodRow>(`/listing-workbench/listings/${id}/periods`, { method: "POST", body: JSON.stringify(payload) }),
+  reviewListingPeriods: (payload: PeriodReviewBatchPayload) =>
+    request<ObservationPeriodRow[]>("/listing-workbench/periods/review-batch", { method: "POST", body: JSON.stringify(payload) }),
   notify: (payload: unknown) => request<NotificationLog>("/notifications/test", { method: "POST", body: JSON.stringify(payload) }),
   notifications: () => request<NotificationLog[]>("/notifications/logs"),
   roleMappings: () => request<RoleMapping[]>("/admin/role-mappings"),

@@ -28,6 +28,18 @@ class _ArrivalGroup:
     old_items: list[ArrivalCardItem]
 
 
+@dataclass(frozen=True)
+class _EliminationRow:
+    id: str
+    business_period: str
+    site: str
+    main_sku: str
+    item: str
+    owner: str
+    product_name: str
+    conclusion: str
+
+
 def send_arrival_daily_cards(
     db: Session,
     settings: Settings,
@@ -58,9 +70,9 @@ def send_daily_elimination_summary(
     rows = _pending_elimination_rows(db)
     if not rows:
         return []
-    claim_ids = [claim.id for claim, _ in rows]
-    claim_digest = hashlib.sha1(",".join(sorted(claim_ids)).encode("utf-8")).hexdigest()[:12]
-    logs = _send_manager_arrival_template_cards(db, settings, sender, summary_date, claim_digest, rows)
+    row_ids = [row.id for row in rows]
+    row_digest = hashlib.sha1(",".join(sorted(row_ids)).encode("utf-8")).hexdigest()[:12]
+    logs = _send_manager_arrival_template_cards(db, settings, sender, summary_date, row_digest, rows)
     if logs and all(log.send_status in {"sent", "skipped_no_receiver"} for log in logs):
         _mark_elimination_rows_notified(db, rows)
     return logs
@@ -198,9 +210,9 @@ def _send_arrival_card(
     return item
 
 
-def _pending_elimination_rows(db: Session) -> list[tuple[models.SalesClaimForecast, models.NewProductOpportunity]]:
-    notified_claim_ids = _notified_elimination_claim_ids(db)
-    rows = db.execute(
+def _pending_elimination_rows(db: Session) -> list[_EliminationRow]:
+    notified_ids = _notified_elimination_row_ids(db)
+    claim_rows = db.execute(
         select(models.SalesClaimForecast, models.NewProductOpportunity)
         .join(models.NewProductOpportunity, models.SalesClaimForecast.opportunity_id == models.NewProductOpportunity.id)
         .where(
@@ -213,10 +225,46 @@ def _pending_elimination_rows(db: Session) -> list[tuple[models.SalesClaimForeca
             models.NewProductOpportunity.sub_sku,
         )
     ).all()
-    return [(claim, opportunity) for claim, opportunity in rows if claim.id not in notified_claim_ids]
+    period_rows = db.execute(
+        select(models.ItemObservationPeriod, models.ListingRecord)
+        .join(models.ListingRecord, models.ListingRecord.id == models.ItemObservationPeriod.listing_record_id)
+        .where(
+            models.ItemObservationPeriod.product_positioning == ELIMINATION_POSITIONING,
+            models.ItemObservationPeriod.status == "completed",
+            models.ItemObservationPeriod.reviewed_at.is_not(None),
+        )
+        .order_by(models.ItemObservationPeriod.reviewed_at, models.ListingRecord.main_sku, models.ListingRecord.item)
+    ).all()
+    rows = [
+        _EliminationRow(
+            id=claim.id,
+            business_period=opportunity.batch or "-",
+            site=opportunity.site or opportunity.country or "-",
+            main_sku=opportunity.main_sku or "-",
+            item=opportunity.sub_sku or "-",
+            owner=claim.salesperson_name or "-",
+            product_name=opportunity.main_sku_name or opportunity.sub_sku_name or "",
+            conclusion=claim.secondary_conclusion or "",
+        )
+        for claim, opportunity in claim_rows
+    ]
+    rows.extend(
+        _EliminationRow(
+            id=period.id,
+            business_period=listing.business_period or "-",
+            site=listing.site or listing.country or "-",
+            main_sku=listing.main_sku,
+            item=listing.item,
+            owner=listing.salesperson_name,
+            product_name=listing.main_sku_name or "",
+            conclusion=f"第{period.week_number}周",
+        )
+        for period, listing in period_rows
+    )
+    return [row for row in rows if row.id not in notified_ids]
 
 
-def _notified_elimination_claim_ids(db: Session) -> set[str]:
+def _notified_elimination_row_ids(db: Session) -> set[str]:
     values = db.scalars(
         select(models.NotificationLog.provider_message_id).where(
             models.NotificationLog.message_title == ELIMINATION_MARKED_TITLE,
@@ -228,14 +276,14 @@ def _notified_elimination_claim_ids(db: Session) -> set[str]:
 
 def _mark_elimination_rows_notified(
     db: Session,
-    rows: list[tuple[models.SalesClaimForecast, models.NewProductOpportunity]],
+    rows: list[_EliminationRow],
 ) -> None:
-    for claim, _ in rows:
-        dedupe_key = f"dingtalk_card:elimination-item:{claim.id}"
+    for row in rows:
+        dedupe_key = f"dingtalk_card:elimination-item:{row.id}"
         existing = db.scalar(select(models.NotificationLog).where(models.NotificationLog.dedupe_key == dedupe_key))
         if existing:
             existing.send_status = "sent"
-            existing.provider_message_id = claim.id
+            existing.provider_message_id = row.id
             existing.message_title = ELIMINATION_MARKED_TITLE
             continue
         db.add(
@@ -245,7 +293,7 @@ def _mark_elimination_rows_notified(
                 channel="dingtalk_card",
                 message_title=ELIMINATION_MARKED_TITLE,
                 send_status="sent",
-                provider_message_id=claim.id,
+                provider_message_id=row.id,
             )
         )
     db.flush()
@@ -257,7 +305,7 @@ def _send_manager_arrival_template_cards(
     sender: DingTalkCardSender,
     summary_date: str,
     claim_digest: str,
-    rows: list[tuple[models.SalesClaimForecast, models.NewProductOpportunity]],
+    rows: list[_EliminationRow],
 ) -> list[models.NotificationLog]:
     logs: list[models.NotificationLog] = []
     count = len(rows)
@@ -291,18 +339,14 @@ def _send_manager_arrival_template_cards(
     return logs
 
 
-def _elimination_markdown(rows: list[tuple[models.SalesClaimForecast, models.NewProductOpportunity]]) -> str:
+def _elimination_markdown(rows: list[_EliminationRow]) -> str:
     lines = [f"**{ELIMINATION_POSITIONING}**"]
-    for index, (claim, opportunity) in enumerate(rows, start=1):
-        period = opportunity.batch or "-"
-        site = opportunity.site or opportunity.country or "-"
-        main_sku = opportunity.main_sku or "-"
-        sub_sku = opportunity.sub_sku or "-"
-        owner = claim.salesperson_name or "-"
-        product_name = opportunity.main_sku_name or opportunity.sub_sku_name or ""
-        suffix = f" | {product_name}" if product_name else ""
-        conclusion = f" | {claim.secondary_conclusion}" if claim.secondary_conclusion else ""
-        lines.append(f"{index}. {period} | {site} | {main_sku} | {sub_sku} | {owner}{suffix}{conclusion}")
+    for index, row in enumerate(rows, start=1):
+        suffix = f" | {row.product_name}" if row.product_name else ""
+        conclusion = f" | {row.conclusion}" if row.conclusion else ""
+        lines.append(
+            f"{index}. {row.business_period} | {row.site} | {row.main_sku} | {row.item} | {row.owner}{suffix}{conclusion}"
+        )
     return "\n".join(lines)
 
 

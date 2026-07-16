@@ -1,7 +1,7 @@
 import os
 import sys
 import hashlib
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -174,6 +174,65 @@ def test_elimination_daily_summary_sends_unnotified_rows_to_managers_and_marks_d
         assert all(card.left_label == "淘汰款" and card.left_count == 1 for card in sender.arrival_cards)
         assert all("2026-W29 | PH | MAIN-E | SUB-E | 销售A | 淘汰商品 | 销量趋势变差" in card.sku_markdown for card in sender.arrival_cards)
         assert db.query(models.NotificationLog).filter_by(message_title="淘汰款已汇总").count() == 1
+
+
+def test_elimination_daily_summary_includes_reviewed_item_period_but_not_clearance() -> None:
+    settings = Settings(dingtalk_card_autosend_enabled=True, platform_base_url="https://np.example")
+    sender = FakeSender()
+    with SessionLocal() as db:
+        db.add(models.RoleMapping(name="经理A", role="manager", dingtalk_user_id="dt-manager-a", enabled=True))
+        listing = models.ListingRecord(
+            id="listing-weekly",
+            source_group_key="task-weekly",
+            source_claim_ids=[],
+            source_type="test",
+            business_period="开发0710期",
+            country="PH",
+            main_sku="MAIN-W",
+            main_sku_name="周期淘汰商品",
+            salesperson_name="销售A",
+            shop="Shop A",
+            item="ITEM-W",
+            listing_strategy="策略",
+            first_period_start=date(2026, 7, 16),
+            first_period_end=date(2026, 7, 22),
+        )
+        listing.periods.extend(
+            [
+                models.ItemObservationPeriod(
+                    id="period-elimination",
+                    week_number=1,
+                    period_start=date(2026, 7, 16),
+                    period_end=date(2026, 7, 22),
+                    status="completed",
+                    product_positioning="淘汰款",
+                    optimization_action="停止投放",
+                    reviewed_at=models.now_utc(),
+                ),
+                models.ItemObservationPeriod(
+                    id="period-clearance",
+                    week_number=2,
+                    period_start=date(2026, 7, 23),
+                    period_end=date(2026, 7, 29),
+                    status="completed",
+                    product_positioning="清仓款",
+                    optimization_action="清理库存",
+                    reviewed_at=models.now_utc(),
+                ),
+            ]
+        )
+        db.add(listing)
+        db.flush()
+
+        first = send_daily_elimination_summary(db, settings, sender, "2026-07-30")
+        second = send_daily_elimination_summary(db, settings, sender, "2026-07-30")
+
+        assert len(first) == 1
+        assert second == []
+        assert sender.arrival_cards[0].left_count == 1
+        assert "开发0710期 | PH | MAIN-W | ITEM-W | 销售A | 周期淘汰商品 | 第1周" in sender.arrival_cards[0].sku_markdown
+        marked = db.query(models.NotificationLog).filter_by(message_title="淘汰款已汇总").one()
+        assert marked.provider_message_id == "period-elimination"
 
 
 def test_elimination_daily_summary_retries_failed_manager_card() -> None:
