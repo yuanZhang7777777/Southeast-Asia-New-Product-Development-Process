@@ -11,6 +11,7 @@ import {
   ExternalLink,
   FileCheck2,
   FileSpreadsheet,
+  GripVertical,
   LayoutDashboard,
   PackageOpen,
   Plus,
@@ -46,7 +47,7 @@ import {
   Task
 } from "./api";
 import { ClaimDraftState, claimSubmissionState, createClaimDraft, createClaimDraftFromLatest, parseClaimEvidenceImages, patchClaimDraftGroup } from "./claimDrafts";
-import { filterAssignmentItems, groupOperatorProfilesBySite, moveOperatorWithinSite, sortOperatorProfiles } from "./assignmentFilters";
+import { filterAssignmentItems, groupOperatorProfilesBySite, moveOperatorWithinSite, reorderOperatorWithinSite, sortOperatorProfiles } from "./assignmentFilters";
 import { competitorGroupForColumn, competitorGroupForLabel } from "./competitorGroups";
 import { ImportResults, recordImportResult } from "./importResults";
 import { businessPeriodsByNewest, filterOperatorClaimRows, latestBusinessPeriod, operatorClaimStatusOptions } from "./operatorClaimFilters";
@@ -2528,6 +2529,8 @@ function AssignView(props: {
   const [categoryFilter, setCategoryFilter] = useState("");
   const [operatorFilter, setOperatorFilter] = useState("");
   const [profilePanelOpen, setProfilePanelOpen] = useState(false);
+  const [draggedProfileId, setDraggedProfileId] = useState<string | null>(null);
+  const [dragOverProfileId, setDragOverProfileId] = useState<string | null>(null);
   useEffect(() => {
     if (!profilePanelOpen) return;
     const closeOnEscape = (event: KeyboardEvent) => {
@@ -2564,6 +2567,11 @@ function AssignView(props: {
   const moveProfile = (profileId: string, delta: -1 | 1) => {
     props.setOperatorProfiles(moveOperatorWithinSite(props.operatorProfiles, profileId, delta));
   };
+  const dropProfile = (targetId: string) => {
+    if (draggedProfileId) props.setOperatorProfiles(reorderOperatorWithinSite(props.operatorProfiles, draggedProfileId, targetId));
+    setDraggedProfileId(null);
+    setDragOverProfileId(null);
+  };
 
   return (
     <div className="assign-layout">
@@ -2574,6 +2582,10 @@ function AssignView(props: {
             <span className="tag">已选 {selectedCount} 组 / {childSelectedCount} 子 SKU</span>
             <span className="tag">未分配 {props.previewItems.length ? props.previewItems.length - selectedCount : pendingGroups.length} 组</span>
           </div>
+          <button className="btn small assignment-config-trigger" type="button" onClick={() => setProfilePanelOpen(true)}>
+            <Users size={14} />
+            运营配置
+          </button>
           <select className="assignment-compact-select" aria-label="按站点筛选" value={siteFilter} onChange={(event) => {
             setSiteFilter(event.target.value);
             props.setList((current) => ({ ...current, page: 1 }));
@@ -2610,10 +2622,6 @@ function AssignView(props: {
             searchPlaceholder="搜索主 SKU / 子 SKU / 商品名，多个关键词用空格分隔"
             setList={(patch) => props.setList((current) => ({ ...current, ...patch }))}
           />
-          <button className="btn small assignment-config-trigger" type="button" onClick={() => setProfilePanelOpen(true)}>
-            <Users size={14} />
-            运营配置
-          </button>
         </div>
         <div className="assignment-workload-grid">
           {enabledProfiles.map((profile) => {
@@ -2714,7 +2722,22 @@ function AssignView(props: {
                   <span>删除</span>
                 </div>
                 {profileGroups.flatMap((profileGroup) => profileGroup.items.map((profile, profileIndex) => (
-                  <div className="profile-row" data-site={profileGroup.site} key={profile.id}>
+                  <div
+                    className={`profile-row${draggedProfileId === profile.id ? " dragging" : ""}${dragOverProfileId === profile.id ? " drag-over" : ""}`}
+                    data-site={profileGroup.site}
+                    key={profile.id}
+                    onDragOver={(event) => {
+                      const source = props.operatorProfiles.find((item) => item.id === draggedProfileId);
+                      if (!source || normalizeSiteText(source.key_site) !== normalizeSiteText(profile.key_site)) return;
+                      event.preventDefault();
+                      event.dataTransfer.dropEffect = "move";
+                      setDragOverProfileId(profile.id);
+                    }}
+                    onDrop={(event) => {
+                      event.preventDefault();
+                      dropProfile(profile.id);
+                    }}
+                  >
                     <input
                       type="checkbox"
                       checked={profile.enabled}
@@ -2730,7 +2753,25 @@ function AssignView(props: {
                       value={profile.assignment_priority || 0}
                       onChange={(event) => patchProfile(profile.id, { assignment_priority: Number(event.target.value || 0) })}
                     />
-                    <div className="action-row compact-actions">
+                    <div className="action-row compact-actions profile-sort-actions">
+                      <button
+                        aria-label={`拖拽调整 ${profile.operator_name} 的同站点顺序`}
+                        className="btn profile-drag-handle"
+                        draggable
+                        onDragEnd={() => {
+                          setDraggedProfileId(null);
+                          setDragOverProfileId(null);
+                        }}
+                        onDragStart={(event) => {
+                          event.dataTransfer.effectAllowed = "move";
+                          event.dataTransfer.setData("text/plain", profile.id);
+                          setDraggedProfileId(profile.id);
+                        }}
+                        title="拖拽调整同站点顺序"
+                        type="button"
+                      >
+                        <GripVertical size={14} />
+                      </button>
                       <button className="btn" disabled={profileIndex === 0} onClick={() => moveProfile(profile.id, -1)} title="在同站点上移" type="button">
                         <ArrowUp size={14} />
                       </button>

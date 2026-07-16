@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { filterAssignmentItems, moveOperatorWithinSite, sortOperatorProfiles } from "../src/assignmentFilters.ts";
+import { filterAssignmentItems, moveOperatorWithinSite, reorderOperatorWithinSite, sortOperatorProfiles } from "../src/assignmentFilters.ts";
 
 const groups = [
   {
@@ -57,4 +57,18 @@ test("上下移动只调整同站点运营", () => {
 
   assert.deepEqual(sortOperatorProfiles(moved).map((profile) => profile.id), ["ph-2", "ph-1", "th-1"]);
   assert.equal(moved.find((profile) => profile.id === "th-1")?.display_order, 1);
+});
+
+test("拖拽排序只调整同站点运营", () => {
+  const profiles = [
+    { id: "ph-1", operator_name: "运营甲", key_site: "PH", display_order: 1 },
+    { id: "th-1", operator_name: "运营丁", key_site: "TH", display_order: 1 },
+    { id: "ph-2", operator_name: "运营乙", key_site: "菲律宾", display_order: 2 }
+  ];
+
+  const moved = reorderOperatorWithinSite(profiles, "ph-2", "ph-1");
+  assert.deepEqual(sortOperatorProfiles(moved).map((profile) => profile.id), ["ph-2", "ph-1", "th-1"]);
+
+  const crossSite = reorderOperatorWithinSite(profiles, "ph-1", "th-1");
+  assert.deepEqual(crossSite, profiles);
 });

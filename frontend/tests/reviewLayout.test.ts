@@ -44,6 +44,20 @@ test("分配台使用紧凑工具栏、配置抽屉和去重运营卡片", () =>
   assert.doesNotMatch(assignView, /operatorProfileBrief\(profile\)/);
 });
 
+test("运营配置入口不被分页挤压且负载条滚动时保持可见", () => {
+  const assignView = app.slice(app.indexOf("function AssignView"), app.indexOf("function assignmentItemKey"));
+  const commandbar = assignView.slice(assignView.indexOf("assignment-commandbar"), assignView.indexOf("assignment-workload-grid"));
+  const workloadRule = styles.match(/\.assignment-workload-grid\s*\{([^}]*)\}/)?.[1] || "";
+
+  assert.ok(commandbar.indexOf("assignment-config-trigger") < commandbar.indexOf("<ListControls"));
+  assert.match(workloadRule, /position:\s*sticky/);
+  assert.match(workloadRule, /display:\s*flex/);
+  assert.match(workloadRule, /overflow-x:\s*auto/);
+  assert.match(assignView, /reorderOperatorWithinSite/);
+  assert.match(assignView, /draggable/);
+  assert.match(assignView, /onDrop/);
+});
+
 test("主管统计栏缩窄并使用单列指标", () => {
   const layoutRule = styles.match(/\.layout\s*\{([^}]*)\}/)?.[1] || "";
   const sideMetricsRule = styles.match(/\.side\s+\.metrics\s*\{([^}]*)\}/)?.[1] || "";

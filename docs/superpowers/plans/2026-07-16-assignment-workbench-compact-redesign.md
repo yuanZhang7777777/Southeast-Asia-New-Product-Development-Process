@@ -4,7 +4,7 @@
 
 **Goal:** 将分配台改为紧凑单屏工作台，同时保留现有推荐、筛选、配置和提交能力。
 
-**Architecture:** 复用 `AssignView`、`ListControls`、现有人员配置表和 API，只调整 React 组合结构与 CSS。新增的状态仅为运营配置抽屉开关，不改后端接口、数据库或分配算法。
+**Architecture:** 复用 `AssignView`、`ListControls`、现有人员配置表和 API，只调整 React 组合结构、同站点排序辅助函数与 CSS。新增状态仅用于配置抽屉和拖拽中的临时标识，不改后端接口、数据库或分配算法。
 
 **Tech Stack:** React 19、TypeScript、CSS、Node test runner、Vite。
 
@@ -14,6 +14,7 @@
 - 不新增依赖，不改分配算法和权限。
 - 桌面宽屏保持紧凑单行；窄屏允许自然换行且不能溢出。
 - 运营配置必须由按钮打开，关闭不自动保存。
+- 配置入口不能被搜索或分页挤出；下滚分配列表时必须持续看到实时运营负载。
 
 ---
 
@@ -127,3 +128,28 @@ Expected: 全部通过；若后端全量超时，拆分测试文件执行并汇�
 - [x] **Step 5: 生产验证**
 
 确认外部 `/api/health`、登录页、静态资源哈希、容器状态和 Caddy 持久配置均指向新版本。
+
+### Task 5: 配置入口、拖拽排序与吸顶负载跟进
+
+**Files:**
+- Modify: `frontend/src/App.tsx`
+- Modify: `frontend/src/assignmentFilters.ts`
+- Modify: `frontend/src/styles.css`
+- Modify: `frontend/tests/assignmentFilters.test.ts`
+- Modify: `frontend/tests/reviewLayout.test.ts`
+
+- [x] **Step 1: 先补失败测试**
+
+约束配置入口必须位于 `ListControls` 之前；负载容器必须吸顶、单行并内部横向滚动；同站点拖拽必须改变 `display_order`，跨站点拖拽必须保持原样。
+
+- [x] **Step 2: 调整命令栏与运营负载**
+
+把配置入口移到伸缩搜索和分页之前；命令栏按实际空间换行；负载卡改为吸顶横条并继续使用现有实时预览计数。
+
+- [x] **Step 3: 增加同站点拖拽排序**
+
+使用浏览器原生拖拽事件和现有 `display_order` 字段，不新增依赖；保留上下按钮作为键盘和兼容回退。
+
+- [x] **Step 4: 完整验证**
+
+`npm test` 通过 41 项，`npm run build` 通过；Playwright/Edge 验证 2048px、1366px、390px，无页面横向溢出，吸顶位置正确，分配计数即时变化，真实鼠标拖拽可调整同站点顺序。

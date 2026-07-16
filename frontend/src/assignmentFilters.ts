@@ -99,6 +99,24 @@ export function moveOperatorWithinSite<T extends SortableOperatorProfile>(profil
   return profiles.map((profile) => ({ ...profile, display_order: orderById.get(profile.id) ?? profile.display_order }));
 }
 
+export function reorderOperatorWithinSite<T extends SortableOperatorProfile>(profiles: readonly T[], sourceId: string, targetId: string): T[] {
+  const source = profiles.find((profile) => profile.id === sourceId);
+  const target = profiles.find((profile) => profile.id === targetId);
+  if (!source || !target || sourceId === targetId || normalizeSiteText(source.key_site) !== normalizeSiteText(target.key_site)) return [...profiles];
+
+  const site = normalizeSiteText(source.key_site);
+  const group = sortOperatorProfiles(profiles.filter((profile) => normalizeSiteText(profile.key_site) === site));
+  const sourceIndex = group.findIndex((profile) => profile.id === sourceId);
+  if (sourceIndex < 0) return [...profiles];
+  const [moved] = group.splice(sourceIndex, 1);
+  const targetIndex = group.findIndex((profile) => profile.id === targetId);
+  if (targetIndex < 0) return [...profiles];
+  group.splice(targetIndex, 0, moved);
+
+  const orderById = new Map(group.map((profile, groupIndex) => [profile.id, groupIndex + 1]));
+  return profiles.map((profile) => ({ ...profile, display_order: orderById.get(profile.id) ?? profile.display_order }));
+}
+
 function normalize(value: string) {
   return value.toLowerCase().replace(/\s+/g, "");
 }

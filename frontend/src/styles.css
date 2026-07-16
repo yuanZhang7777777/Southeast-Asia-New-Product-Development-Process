@@ -1345,10 +1345,19 @@ textarea {
 }
 
 .assignment-workload-grid {
-  display: grid;
-  grid-template-columns: repeat(5, minmax(180px, 1fr));
-  gap: 10px;
+  position: sticky;
+  top: 0;
+  z-index: 8;
+  display: flex;
+  gap: 8px;
+  max-width: 100%;
+  overflow-x: auto;
   margin-bottom: 12px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.06);
 }
 
 .assignment-commandbar {
@@ -1358,6 +1367,7 @@ textarea {
   min-width: 0;
   margin-bottom: 10px;
   white-space: nowrap;
+  flex-wrap: wrap;
 }
 
 .assignment-command-title,
@@ -1411,10 +1421,11 @@ textarea {
 }
 
 .assignment-workload-card {
+  flex: 0 0 210px;
   display: grid;
-  gap: 7px;
+  gap: 5px;
   min-width: 0;
-  padding: 10px;
+  padding: 8px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #fafafa;
@@ -1971,9 +1982,19 @@ summary {
 
 .profile-row {
   display: grid;
-  grid-template-columns: 54px minmax(110px, 1fr) 90px minmax(120px, 1fr) minmax(120px, 1fr) 82px 82px 54px;
+  grid-template-columns: 54px minmax(110px, 1fr) 90px minmax(120px, 1fr) minmax(120px, 1fr) 82px 118px 54px;
   gap: 8px;
   align-items: center;
+}
+
+.profile-row.dragging {
+  opacity: 0.55;
+}
+
+.profile-row.drag-over {
+  outline: 2px solid #91caff;
+  outline-offset: 2px;
+  background: var(--blue-soft);
 }
 
 .profile-row.head {
@@ -2000,6 +2021,23 @@ summary {
 .compact-actions .btn {
   width: 38px;
   padding: 6px;
+}
+
+.profile-sort-actions {
+  gap: 4px;
+}
+
+.profile-sort-actions .btn {
+  width: 34px;
+  padding: 6px 4px;
+}
+
+.profile-drag-handle {
+  cursor: grab;
+}
+
+.profile-drag-handle:active {
+  cursor: grabbing;
 }
 
 .batch-table {
@@ -2983,17 +3021,9 @@ th {
 }
 
 @media (max-width: 1600px) {
-  .assignment-commandbar {
-    flex-wrap: wrap;
-  }
-
   .assignment-commandbar .list-controls {
     order: 2;
     min-width: 0;
-  }
-
-  .assignment-config-trigger {
-    order: 2;
   }
 }
 
@@ -3028,10 +3058,6 @@ th {
     border-left: 0;
     border-top: 1px solid var(--line);
     padding-top: 10px;
-  }
-
-  .assignment-workload-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .claim-detail-drawer {
@@ -3095,7 +3121,7 @@ th {
   }
 
   .assignment-config-body .profile-row {
-    grid-template-columns: 54px minmax(110px, 1fr) 90px minmax(120px, 1fr) minmax(120px, 1fr) 82px 82px 54px;
+    grid-template-columns: 54px minmax(110px, 1fr) 90px minmax(120px, 1fr) minmax(120px, 1fr) 82px 118px 54px;
   }
 
   .assignment-config-body .profile-row.head {
@@ -3262,10 +3288,6 @@ th {
 
   .profile-row input[type="checkbox"] {
     justify-self: start;
-  }
-
-  .assignment-workload-grid {
-    grid-template-columns: 1fr;
   }
 
   .assignment-filter-bar {
