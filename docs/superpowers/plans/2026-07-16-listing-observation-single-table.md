@@ -298,7 +298,7 @@ git commit -m "refactor: model grouped listing workbench"
 
 导入调整必须保持精确：React 导入增加 `Fragment`；API 导入删除页面不再使用的 `ListingWorkbenchView`；工具导入删除 `buildListingTaskContexts`，增加 `WorkbenchBusinessStatus`、`buildListingWorkbenchGroups` 和 `filterListingWorkbenchGroups`。`ListingRecord` 继续保留，用于按刊登生命周期判断周期行是否可编辑。
 
-- [ ] **Step 1: 写失败的页面契约测试**
+- [x] **Step 1: 写失败的页面契约测试**
 
 在 `frontend/tests/listingObservation.test.ts` 读取 `ListingObservationView.tsx` 源码并断言：
 
@@ -315,13 +315,13 @@ test("刊登观察页面使用单表和业务状态筛选且不暴露内部待�
 });
 ```
 
-- [ ] **Step 2: 运行聚焦测试并确认按预期失败**
+- [x] **Step 2: 运行聚焦测试并确认按预期失败**
 
 Run: `cd frontend && node --test tests/listingObservation.test.ts`
 
 Expected: FAIL，因为现有页面仍有 `TABS`、顶部页签和待取数文案。
 
-- [ ] **Step 3: 替换页面状态和筛选模型**
+- [x] **Step 3: 替换页面状态和筛选模型**
 
 在 `ListingObservationView.tsx`：
 
@@ -372,7 +372,7 @@ const effectiveFilters = props.role === "manager"
   : { ...filters, salesperson_name: "" };
 ```
 
-- [ ] **Step 4: 组装和筛选分组表**
+- [x] **Step 4: 组装和筛选分组表**
 
 ```ts
 const groups = useMemo(
@@ -432,7 +432,7 @@ const visibleSelectedIds = visibleSelectedPeriodIds(selectedPeriods, reviewableR
 const summaryListing = summaryRow ? listingById.get(summaryRow.listing_record_id) : undefined;
 ```
 
-- [ ] **Step 5: 用单个 `<table>` 渲染分组行、编辑行和周期行**
+- [x] **Step 5: 用单个 `<table>` 渲染分组行、编辑行和周期行**
 
 保留现有周期列和周期行单元格，只把外层改为：
 
@@ -521,7 +521,7 @@ function toggleGroup(taskKey: string) {
 }
 ```
 
-- [ ] **Step 6: 替换筛选和状态文案**
+- [x] **Step 6: 替换筛选和状态文案**
 
 业务状态下拉固定为：
 
@@ -573,7 +573,7 @@ function listingStatusLabel(record: ListingRecord) {
 
 四周总结弹窗里的 `disabled` 和按钮文案同样使用 `canReview(summaryRow, summaryListing)`，不能继续调用缺少刊登记录参数的旧签名。
 
-- [ ] **Step 7: 添加最小分组样式**
+- [x] **Step 7: 添加最小分组样式**
 
 在 `frontend/src/styles.css` 复用现有表格、按钮和刊登编辑器样式，只新增：
 
@@ -585,7 +585,7 @@ function listingStatusLabel(record: ListingRecord) {
 
 如果现有 CSS 已覆盖其中任一声明，复用现有规则，不重复添加。
 
-- [ ] **Step 8: 运行聚焦测试、全量前端测试和构建**
+- [x] **Step 8: 运行聚焦测试、全量前端测试和构建**
 
 Run:
 
@@ -598,7 +598,7 @@ npm run build
 
 Expected: 聚焦测试通过；全量测试 0 failed；TypeScript 与 Vite 构建成功。
 
-- [ ] **Step 9: 提交 Task 2**
+- [x] **Step 9: 提交 Task 2**
 
 ```bash
 git add frontend/src/ListingObservationView.tsx frontend/src/styles.css frontend/tests/listingObservation.test.ts
