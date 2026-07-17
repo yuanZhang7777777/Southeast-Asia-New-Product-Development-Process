@@ -1265,7 +1265,11 @@ def create_listing_batch(
     reusable = {
         listing.id: listing
         for listing in db.scalars(
-            select(models.ListingRecord).where(models.ListingRecord.id.in_(reuse_listing_ids))
+            select(models.ListingRecord)
+            .where(models.ListingRecord.id.in_(reuse_listing_ids))
+            .order_by(models.ListingRecord.id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
         )
     } if reuse_listing_ids else {}
     allowed_reuse_ids = set(task.get("reusable_listing_ids", []))
@@ -1339,10 +1343,22 @@ def create_listing_batch(
         created.append(record)
     reused = [reusable[listing_id] for listing_id in reuse_listing_ids]
     for listing in reused:
+        existing_claim_ids = list(listing.source_claim_ids or [])
+        added_claim_ids = [claim_id for claim_id in task["claim_record_ids"] if claim_id not in existing_claim_ids]
         listing.source_claim_ids = list(dict.fromkeys([
-            *(listing.source_claim_ids or []),
+            *existing_claim_ids,
             *task["claim_record_ids"],
         ]))
+        if added_claim_ids:
+            audit(
+                db,
+                "listing.reused",
+                "listing_record",
+                listing.id,
+                {"task_key": task_key, "added_claim_record_ids": added_claim_ids},
+                actor_name,
+                actor_user_id,
+            )
     for claim in claims:
         claim.downstream_status = CLAIM_LISTING_OBSERVATION
     try:
@@ -1591,23 +1607,34 @@ def review_observation_periods(
                 if period_ids.count(period_id) > 1
             ]
         )
-    periods = {
-        period.id: period
-        for period in db.scalars(
-            select(models.ItemObservationPeriod).where(models.ItemObservationPeriod.id.in_(period_ids))
-        )
-    }
-    missing = [period_id for period_id in period_ids if period_id not in periods]
+    period_links = dict(
+        db.execute(
+            select(models.ItemObservationPeriod.id, models.ItemObservationPeriod.listing_record_id).where(
+                models.ItemObservationPeriod.id.in_(period_ids)
+            )
+        ).all()
+    )
+    missing = [period_id for period_id in period_ids if period_id not in period_links]
     if missing:
         raise LookupError(f"observation period not found: {', '.join(missing)}")
+    listing_ids = set(period_links.values())
     listings = {
         listing.id: listing
         for listing in db.scalars(
             select(models.ListingRecord).where(
-                models.ListingRecord.id.in_({period.listing_record_id for period in periods.values()})
-            )
+                models.ListingRecord.id.in_(listing_ids)
+            ).order_by(models.ListingRecord.id).with_for_update()
         )
     }
+    locked_listing_periods = list(
+        db.scalars(
+            select(models.ItemObservationPeriod)
+            .where(models.ItemObservationPeriod.listing_record_id.in_(listing_ids))
+            .order_by(models.ItemObservationPeriod.listing_record_id, models.ItemObservationPeriod.week_number)
+            .with_for_update()
+        )
+    )
+    periods = {period.id: period for period in locked_listing_periods if period.id in period_links}
     if not actor_is_manager and any(
         listings[period.listing_record_id].salesperson_name != (operator_name or actor_name)
         for period in periods.values()
@@ -1652,11 +1679,7 @@ def review_observation_periods(
     old_values = {period.id: (period.status, period.product_positioning) for period in periods.values()}
     submitted_positioning = {row.period_id: row.product_positioning for row in rows}
     listing_periods: dict[str, list[models.ItemObservationPeriod]] = defaultdict(list)
-    for item in db.scalars(
-        select(models.ItemObservationPeriod)
-        .where(models.ItemObservationPeriod.listing_record_id.in_(listings))
-        .order_by(models.ItemObservationPeriod.listing_record_id, models.ItemObservationPeriod.week_number)
-    ):
+    for item in locked_listing_periods:
         listing_periods[item.listing_record_id].append(item)
     for row in rows:
         period = periods[row.period_id]
@@ -1885,14 +1908,23 @@ def apply_week_metrics(
     metrics: dict | None,
     actor_name: str = "weekly_item_import",
 ) -> models.ItemObservationPeriod | None:
-    row = db.execute(
-        select(models.ItemObservationPeriod, models.ListingRecord)
-        .join(models.ListingRecord, models.ListingRecord.id == models.ItemObservationPeriod.listing_record_id)
-        .where(models.ListingRecord.item == item.strip(), models.ItemObservationPeriod.period_start == period_start)
-    ).one_or_none()
-    if row is None:
+    listing = db.scalar(
+        select(models.ListingRecord)
+        .where(models.ListingRecord.item == item.strip())
+        .with_for_update()
+    )
+    if listing is None:
         return None
-    period, listing = row
+    period = db.scalar(
+        select(models.ItemObservationPeriod)
+        .where(
+            models.ItemObservationPeriod.listing_record_id == listing.id,
+            models.ItemObservationPeriod.period_start == period_start,
+        )
+        .with_for_update()
+    )
+    if period is None:
+        return None
     if period.metrics_fetched_at is not None:
         return period
     if metrics is None or listing.status != "active" or listing.tracking_status != "active":

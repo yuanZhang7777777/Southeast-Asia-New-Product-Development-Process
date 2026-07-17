@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import event
 
 os.environ["DATABASE_URL"] = f"sqlite:///{Path(__file__).with_name('test_listing_observations.db')}"
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -209,24 +210,30 @@ def test_later_business_period_reuses_active_items_and_links_new_claims_without_
     assert later_task["reusable_listing_ids"] == [existing["id"]]
 
     current = services.current_business_period_start(date.today()).isoformat()
-    response = client.post(
-        "/listing-workbench/listings/batch",
-        headers=headers,
-        json={
-            "task_key": later_task["task_key"],
-            "reuse_listing_ids": [existing["id"]],
-            "rows": [
-                {
-                    "shop": "Shop New",
-                    "item": "ITEM-NEW",
-                    "listing_strategy": "新增店铺策略",
-                    "first_period_start": current,
-                }
-            ],
-        },
-    )
+    statements: list[str] = []
+    capture_for_update_statements(statements)
+    try:
+        response = client.post(
+            "/listing-workbench/listings/batch",
+            headers=headers,
+            json={
+                "task_key": later_task["task_key"],
+                "reuse_listing_ids": [existing["id"]],
+                "rows": [
+                    {
+                        "shop": "Shop New",
+                        "item": "ITEM-NEW",
+                        "listing_strategy": "新增店铺策略",
+                        "first_period_start": current,
+                    }
+                ],
+            },
+        )
+    finally:
+        stop_capturing_for_update_statements(statements)
 
     assert response.status_code == 200
+    assert any("listing_record" in statement for statement in statements)
     with SessionLocal() as db:
         listings = db.query(models.ListingRecord).order_by(models.ListingRecord.item).all()
         old_listing = db.get(models.ListingRecord, existing["id"])
@@ -236,6 +243,14 @@ def test_later_business_period_reuses_active_items_and_links_new_claims_without_
         assert old_listing.source_claim_ids[: len(original_source_claim_ids)] == original_source_claim_ids
         assert set(old_listing.source_claim_ids[len(original_source_claim_ids) :]) == set(later_claim_ids)
         assert {claim.downstream_status for claim in later_claims} == {"listing_observation"}
+        reuse_audit = db.query(models.AuditLog).filter_by(
+            action="listing.reused",
+            entity_id=existing["id"],
+        ).one()
+        assert reuse_audit.detail == {
+            "task_key": later_task["task_key"],
+            "added_claim_record_ids": later_task["claim_record_ids"],
+        }
 
 
 @pytest.mark.parametrize(
@@ -694,6 +709,43 @@ def test_observation_elimination_events_only_on_transitions() -> None:
         }
 
 
+def test_observation_review_locks_listing_and_period_history_before_transition_decision() -> None:
+    with SessionLocal() as db:
+        listing = seeded_listing("销售A", date(2026, 7, 16))
+        listing.item = "ITEM-LOCK-REVIEW"
+        period = listing.periods[0]
+        period.status = "pending_review"
+        period.metrics_fetched_at = models.now_utc()
+        db.add(listing)
+        db.commit()
+        period_id = period.id
+
+    statements: list[str] = []
+    with SessionLocal() as db:
+        capture_for_update_statements(statements)
+        try:
+            services.review_observation_periods(
+                db,
+                [
+                    schemas.ObservationPeriodReviewRow(
+                        period_id=period_id,
+                        product_positioning="淘汰款",
+                        optimization_action="并发门禁",
+                    )
+                ],
+                "销售A",
+                None,
+                False,
+                "销售A",
+            )
+            db.commit()
+        finally:
+            stop_capturing_for_update_statements(statements)
+
+    assert any("listing_record" in statement for statement in statements)
+    assert any("item_observation_period" in statement for statement in statements)
+
+
 def test_authenticated_account_name_is_audit_actor_not_operator_owner() -> None:
     headers = login_with_distinct_account_name("账号显示名", "销售A", "dt-a")
     create_waiting_listing_group("销售A", "MAIN-A")
@@ -1127,6 +1179,31 @@ def test_apply_week_metrics_freezes_first_success() -> None:
     assert metrics_audit_count == 1
 
 
+def test_apply_week_metrics_locks_listing_and_period_before_first_success_check() -> None:
+    with SessionLocal() as db:
+        listing = seeded_listing("销售A", date(2026, 7, 16))
+        listing.item = "ITEM-LOCK-METRICS"
+        db.add(listing)
+        db.commit()
+
+    statements: list[str] = []
+    with SessionLocal() as db:
+        capture_for_update_statements(statements)
+        try:
+            services.apply_week_metrics(
+                db,
+                "ITEM-LOCK-METRICS",
+                date(2026, 7, 16),
+                {"order_count": 1, "total_revenue": 10, "gross_profit_amount": 2},
+            )
+            db.commit()
+        finally:
+            stop_capturing_for_update_statements(statements)
+
+    assert any("listing_record" in statement for statement in statements)
+    assert any("item_observation_period" in statement for statement in statements)
+
+
 def test_apply_week_metrics_skips_stopped_listing() -> None:
     with SessionLocal() as db:
         listing = seeded_listing("销售A", date(2026, 7, 16))
@@ -1148,6 +1225,23 @@ def test_apply_week_metrics_skips_stopped_listing() -> None:
 
     assert saved_status == "pending_data"
     assert notification_count == 0
+
+
+_for_update_capture_handlers: dict[int, object] = {}
+
+
+def capture_for_update_statements(statements: list[str]) -> None:
+    def capture(_conn, _clauseelement, _multiparams, _params, _execution_options) -> None:
+        if getattr(_clauseelement, "_for_update_arg", None) is not None:
+            statements.append(str(_clauseelement))
+
+    _for_update_capture_handlers[id(statements)] = capture
+    event.listen(engine, "before_execute", capture)
+
+
+def stop_capturing_for_update_statements(statements: list[str]) -> None:
+    capture = _for_update_capture_handlers.pop(id(statements))
+    event.remove(engine, "before_execute", capture)
 
 
 def login(name: str, role: str, dingtalk_user_id: str) -> dict[str, str]:
