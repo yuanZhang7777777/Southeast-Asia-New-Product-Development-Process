@@ -1,4 +1,4 @@
-import { ChangeEvent, CSSProperties, useEffect, useMemo, useState } from "react";
+import { ClipboardEvent, CSSProperties, DragEvent, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { ChevronLeft, ChevronRight, ExternalLink, ImagePlus, Send, X } from "lucide-react";
 
@@ -21,6 +21,7 @@ import {
 } from "./secondaryResearchDrafts";
 import { isSourceClaimInputLabel, selection1ColumnLabel } from "./selection1Columns";
 import { formatBusinessNumber } from "./businessFormat";
+import { imageFiles } from "./imageUploads";
 
 type ModuleKey = "secondary" | "market" | "pricing" | "development" | "cost" | "claims";
 
@@ -52,6 +53,7 @@ export function SecondaryResearchView(props: {
   const [activeIndex, setActiveIndex] = useState(0);
   const [activeModule, setActiveModule] = useState<ModuleKey>("secondary");
   const [drafts, setDrafts] = useState<DraftMap>({});
+  const draftsRef = useRef<DraftMap>({});
   const [saveState, setSaveState] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
   const periods = useMemo(
@@ -70,18 +72,19 @@ export function SecondaryResearchView(props: {
   );
   const group = groups[activeIndex];
 
+  function replaceDrafts(next: DraftMap) {
+    draftsRef.current = next;
+    setDrafts(next);
+  }
+
   async function loadGroups() {
     if (props.editable && !props.salespersonName) return;
     setLoading(true);
     try {
       const result = await api.secondaryResearch(props.editable ? props.salespersonName : "", "__all__");
       setAllGroups(result);
-      setDrafts(
-        Object.fromEntries(
-          result.flatMap((entry) =>
-            entry.items.map((item) => [item.claim_record_id, createSecondaryResearchDraft(item)])
-          )
-        )
+      replaceDrafts(
+        Object.fromEntries(result.flatMap((entry) => entry.items.map((item) => [item.claim_record_id, createSecondaryResearchDraft(item)])))
       );
     } catch (error) {
       props.onStatus(error instanceof Error ? error.message : "二次调研加载失败");
@@ -105,8 +108,10 @@ export function SecondaryResearchView(props: {
   }, [drafts, group]);
 
   function updateDraft(claimRecordId: string, patch: Partial<SecondaryResearchDraft<UploadedEvidenceImage>>) {
-    setDrafts((current) =>
-      group ? syncSecondaryResearchDraftPatch(current, group.items, claimRecordId, patch) : patchSecondaryResearchDraft(current, claimRecordId, patch)
+    replaceDrafts(
+      group
+        ? syncSecondaryResearchDraftPatch(draftsRef.current, group.items, claimRecordId, patch)
+        : patchSecondaryResearchDraft(draftsRef.current, claimRecordId, patch)
     );
   }
 
@@ -123,16 +128,15 @@ export function SecondaryResearchView(props: {
     }
   }
 
-  async function uploadImages(item: SecondaryResearchItem, event: ChangeEvent<HTMLInputElement>) {
-    const files = Array.from(event.target.files || []);
-    event.target.value = "";
+  async function uploadImages(item: SecondaryResearchItem, source: FileList | File[]) {
+    const files = imageFiles(source);
     if (!files.length) return;
     setSaveState((current) => ({ ...current, [item.claim_record_id]: "上传中" }));
     try {
       const uploaded = await Promise.all(files.map((file) => api.uploadClaimEvidence(item.opportunity_id, file)));
-      const currentDraft = drafts[item.claim_record_id] || createSecondaryResearchDraft<UploadedEvidenceImage>();
+      const currentDraft = draftsRef.current[item.claim_record_id] || createSecondaryResearchDraft<UploadedEvidenceImage>();
       const nextDraft = { ...currentDraft, evidenceImages: [...currentDraft.evidenceImages, ...uploaded] };
-      setDrafts((current) => ({ ...current, [item.claim_record_id]: nextDraft }));
+      replaceDrafts({ ...draftsRef.current, [item.claim_record_id]: nextDraft });
       await saveDraft(item, nextDraft).catch(() => undefined);
     } catch (error) {
       setSaveState((current) => ({ ...current, [item.claim_record_id]: "上传失败" }));
@@ -141,12 +145,12 @@ export function SecondaryResearchView(props: {
   }
 
   async function removeImage(item: SecondaryResearchItem, image: UploadedEvidenceImage) {
-    const currentDraft = drafts[item.claim_record_id] || createSecondaryResearchDraft<UploadedEvidenceImage>();
+    const currentDraft = draftsRef.current[item.claim_record_id] || createSecondaryResearchDraft<UploadedEvidenceImage>();
     const nextDraft = {
       ...currentDraft,
       evidenceImages: currentDraft.evidenceImages.filter((entry) => entry.url !== image.url || entry.name !== image.name)
     };
-    setDrafts((current) => ({ ...current, [item.claim_record_id]: nextDraft }));
+    replaceDrafts({ ...draftsRef.current, [item.claim_record_id]: nextDraft });
     await saveDraft(item, nextDraft).catch(() => undefined);
   }
 
@@ -306,6 +310,7 @@ export function SecondaryResearchView(props: {
                       disabled={!props.editable}
                       placeholder="填写到货后的复查结论"
                       onChange={(event) => updateDraft(item.claim_record_id, { conclusion: event.target.value })}
+                      onPaste={(event: ClipboardEvent<HTMLTextAreaElement>) => void uploadImages(item, event.clipboardData.files)}
                       onBlur={() => void saveDraft(item).catch(() => undefined)}
                     />
                   </label>
@@ -335,10 +340,26 @@ export function SecondaryResearchView(props: {
                       onRemove={(image) => void removeImage(item, image)}
                     >
                       {props.editable && (
-                        <label className="research-upload" title="添加调研图片">
+                        <label
+                          className="research-upload"
+                          title="添加调研图片"
+                          tabIndex={0}
+                          onDragOver={(event: DragEvent<HTMLLabelElement>) => event.preventDefault()}
+                          onDrop={(event) => { event.preventDefault(); void uploadImages(item, event.dataTransfer.files); }}
+                          onPaste={(event) => void uploadImages(item, event.clipboardData.files)}
+                        >
                           <ImagePlus size={18} />
                           <span>添加</span>
-                          <input type="file" accept="image/*" multiple onChange={(event) => void uploadImages(item, event)} />
+                          <input
+                            type="file"
+                            accept="image/*"
+                            multiple
+                            onChange={(event) => {
+                              const files = imageFiles(event.currentTarget.files);
+                              event.currentTarget.value = "";
+                              void uploadImages(item, files);
+                            }}
+                          />
                         </label>
                       )}
                     </ResearchImageList>

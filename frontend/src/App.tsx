@@ -60,6 +60,7 @@ import { isSourceClaimInputLabel, selection1ColumnLabel } from "./selection1Colu
 import { ListingObservationSummary, ListingObservationView } from "./ListingObservationView";
 import { compactUrlLabel } from "./urlDisplay";
 import { exportPeriodFilter, filterRowsForExportPeriod, selectExportPeriod } from "./exportPeriods";
+import { imageFiles } from "./imageUploads";
 
 type DingTalkAuthCodeResult = {
   authCode?: string;
@@ -3452,12 +3453,14 @@ function ClaimDraftEditor(props: {
         {props.compact ? (
           <input
             onChange={(event) => props.onPatch({ researchConclusion: event.target.value })}
+            onPaste={(event) => pasteClaimEvidence(event, props.item.id, props.onAddEvidence)}
             placeholder="结论"
             value={draft.researchConclusion}
           />
         ) : (
           <textarea
             onChange={(event) => props.onPatch({ researchConclusion: event.target.value })}
+            onPaste={(event) => pasteClaimEvidence(event, props.item.id, props.onAddEvidence)}
             placeholder="可选，导出到市场监控 AK"
             rows={3}
             value={draft.researchConclusion}
@@ -3734,7 +3737,12 @@ function ClaimMatrixDraftEditor(props: {
       </label>
       <label className="claim-editor-field conclusion-field">
         <span>调研结论</span>
-        <input onChange={(event) => props.onPatch({ researchConclusion: event.target.value })} placeholder="结论" value={props.draft.researchConclusion} />
+        <input
+          onChange={(event) => props.onPatch({ researchConclusion: event.target.value })}
+          onPaste={(event) => pasteClaimEvidence(event, props.item.id, props.onAddEvidence)}
+          placeholder="结论"
+          value={props.draft.researchConclusion}
+        />
       </label>
       <EvidencePicker
         compact
@@ -3782,6 +3790,15 @@ function reviewDraftFor(item?: Opportunity | null): ReviewDraft {
   };
 }
 
+function pasteClaimEvidence(
+  event: ClipboardEvent<HTMLInputElement | HTMLTextAreaElement>,
+  opportunityId: string,
+  onAdd: (images: EvidenceImage[]) => void
+) {
+  const files = imageFiles(event.clipboardData.files);
+  if (files.length) void readEvidenceFiles(files, opportunityId).then(onAdd);
+}
+
 function EvidencePicker(props: {
   images: EvidenceImage[];
   onFiles: (files: FileList | File[]) => void;
@@ -3790,19 +3807,18 @@ function EvidencePicker(props: {
 }) {
   const [preview, setPreview] = useState<EvidenceImage | null>(null);
   function handleInput(event: ChangeEvent<HTMLInputElement>) {
-    if (event.target.files) props.onFiles(event.target.files);
+    const files = imageFiles(event.currentTarget.files);
     event.currentTarget.value = "";
+    if (files.length) props.onFiles(files);
   }
   function handleDrop(event: DragEvent<HTMLLabelElement>) {
     event.preventDefault();
-    props.onFiles(event.dataTransfer.files);
+    const files = imageFiles(event.dataTransfer.files);
+    if (files.length) props.onFiles(files);
   }
   function handlePaste(event: ClipboardEvent<HTMLLabelElement>) {
-    const files = Array.from(event.clipboardData.files).filter((file) => file.type.startsWith("image/"));
-    if (files.length) {
-      event.preventDefault();
-      props.onFiles(files);
-    }
+    const files = imageFiles(event.clipboardData.files);
+    if (files.length) props.onFiles(files);
   }
 
   return (
@@ -4773,8 +4789,7 @@ function parseSubmittedEvidenceImages(note?: string | null): SubmittedEvidenceIm
 }
 
 async function readEvidenceFiles(files: FileList | File[], opportunityId: string) {
-  const imageFiles = Array.from(files).filter((file) => file.type.startsWith("image/"));
-  return Promise.all(imageFiles.map((file) => readEvidenceFile(file, opportunityId)));
+  return Promise.all(imageFiles(files).map((file) => readEvidenceFile(file, opportunityId)));
 }
 
 async function readEvidenceFile(file: File, opportunityId: string): Promise<EvidenceImage> {
