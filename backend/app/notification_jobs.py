@@ -226,14 +226,11 @@ def _pending_elimination_rows(db: Session) -> list[_EliminationRow]:
         )
     ).all()
     period_rows = db.execute(
-        select(models.ItemObservationPeriod, models.ListingRecord)
+        select(models.AuditLog, models.ItemObservationPeriod, models.ListingRecord)
+        .join(models.ItemObservationPeriod, models.ItemObservationPeriod.id == models.AuditLog.entity_id)
         .join(models.ListingRecord, models.ListingRecord.id == models.ItemObservationPeriod.listing_record_id)
-        .where(
-            models.ItemObservationPeriod.product_positioning == ELIMINATION_POSITIONING,
-            models.ItemObservationPeriod.status == "completed",
-            models.ItemObservationPeriod.reviewed_at.is_not(None),
-        )
-        .order_by(models.ItemObservationPeriod.reviewed_at, models.ListingRecord.main_sku, models.ListingRecord.item)
+        .where(models.AuditLog.action == "observation.elimination_entered")
+        .order_by(models.AuditLog.created_at, models.ListingRecord.main_sku, models.ListingRecord.item)
     ).all()
     rows = [
         _EliminationRow(
@@ -250,7 +247,7 @@ def _pending_elimination_rows(db: Session) -> list[_EliminationRow]:
     ]
     rows.extend(
         _EliminationRow(
-            id=period.id,
+            id=event.id,
             business_period=listing.business_period or "-",
             site=listing.site or listing.country or "-",
             main_sku=listing.main_sku,
@@ -259,7 +256,7 @@ def _pending_elimination_rows(db: Session) -> list[_EliminationRow]:
             product_name=listing.main_sku_name or "",
             conclusion=f"第{period.week_number}周",
         )
-        for period, listing in period_rows
+        for event, period, listing in period_rows
     )
     return [row for row in rows if row.id not in notified_ids]
 

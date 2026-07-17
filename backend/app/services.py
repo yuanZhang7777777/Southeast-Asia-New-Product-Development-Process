@@ -1479,11 +1479,11 @@ def review_observation_periods(
     for row_index, row in enumerate(rows):
         period = periods[row.period_id]
         listing = listings[period.listing_record_id]
-        if listing.status != "active" or listing.tracking_status != "active":
+        if listing.status != "active":
             row_errors.append(
                 {"row_index": row_index, "field": "period_id", "message": "listing is not active and tracked"}
             )
-        elif period.status != "pending_review":
+        elif period.status not in {"pending_review", "completed"}:
             row_errors.append(
                 {"row_index": row_index, "field": "period_id", "message": "period must be pending_review"}
             )
@@ -1509,9 +1509,31 @@ def review_observation_periods(
     now = models.now_utc()
     result: list[tuple[models.ItemObservationPeriod, models.ListingRecord]] = []
     touched_listing_ids: set[str] = set()
+    old_values = {period.id: (period.status, period.product_positioning) for period in periods.values()}
+    submitted_positioning = {row.period_id: row.product_positioning for row in rows}
+    listing_periods: dict[str, list[models.ItemObservationPeriod]] = defaultdict(list)
+    for item in db.scalars(
+        select(models.ItemObservationPeriod)
+        .where(models.ItemObservationPeriod.listing_record_id.in_(listings))
+        .order_by(models.ItemObservationPeriod.listing_record_id, models.ItemObservationPeriod.week_number)
+    ):
+        listing_periods[item.listing_record_id].append(item)
     for row in rows:
         period = periods[row.period_id]
         listing = listings[period.listing_record_id]
+        old_status, old_positioning = old_values[period.id]
+        previous_positioning = old_positioning
+        if old_status == "pending_review":
+            previous_positioning = None
+            for previous_period in reversed(listing_periods[listing.id]):
+                if previous_period.week_number >= period.week_number:
+                    continue
+                if previous_period.id in submitted_positioning:
+                    previous_positioning = submitted_positioning[previous_period.id]
+                    break
+                if previous_period.status == "completed" and previous_period.product_positioning:
+                    previous_positioning = previous_period.product_positioning
+                    break
         period.product_positioning = row.product_positioning
         period.optimization_action = row.optimization_action.strip()
         if period.week_number == 4:
@@ -1527,6 +1549,21 @@ def review_observation_periods(
             actor_name,
             actor_user_id,
         )
+        if period.product_positioning == "淘汰款" and previous_positioning != "淘汰款":
+            audit(
+                db,
+                "observation.elimination_entered",
+                "item_observation_period",
+                period.id,
+                {
+                    "listing_record_id": listing.id,
+                    "week_number": period.week_number,
+                    "previous_positioning": previous_positioning,
+                    "product_positioning": "淘汰款",
+                },
+                actor_name,
+                actor_user_id,
+            )
         touched_listing_ids.add(listing.id)
         result.append((period, listing))
     db.flush()
@@ -1716,6 +1753,8 @@ def apply_week_metrics(
     if row is None:
         return None
     period, listing = row
+    if period.metrics_fetched_at is not None:
+        return period
     if metrics is None or listing.status != "active" or listing.tracking_status != "active":
         return period
     required = ("order_count", "total_revenue", "gross_profit_amount")
