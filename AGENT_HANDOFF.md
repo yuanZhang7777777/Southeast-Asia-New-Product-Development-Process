@@ -1,6 +1,6 @@
 # Agent Handoff
 
-> Updated: 2026-07-17 14:25 Asia/Shanghai
+> Updated: 2026-07-17 17:35 Asia/Shanghai
 
 ## Start Here
 
@@ -21,22 +21,25 @@ Do not infer current behavior from old plans or prototypes when they conflict wi
 | Environment | Address | Current code | Rule |
 |---|---|---|---|
 | Production | `http://101.132.26.138:8080` | `b373d65` | In use. Do not connect, deploy or restart without a separately approved non-working-time release window. |
-| Development | `http://139.224.2.166:18081` | `1aae41e` | Unified branch validation and business UAT only. SSH alias: `hz-new-product-dev`. |
+| Development | `http://139.224.2.166:18081` | `b564815` | Unified branch validation and business UAT only. SSH alias: `hz-new-product-dev`. |
 
 Production database is `workflow_prod_20260715`; development database is `workflow_dev_20260715`. Databases, Redis, uploads, volumes, ports and environment variables are isolated. Never commit passwords, tokens, cookies, private keys or `.env` files.
 
 PLM arrival endpoint settings and credentials are stored separately in both server `.env` files. `PLM_SYNC_ENABLED` remains `false` in both environments; do not enable it or restart production without explicit approval.
 
+`caigen-arrival-notifier` is a separate service co-hosted with the workflow production environment on `101.132.26.138`. It is the only sender of arrival cards; neither workflow environment sends arrival cards. The workflow still owns its elimination-summary reminder. Development must not receive a persistent feed from the production notifier. Its current arrival/summary card template is selected through `DINGTALK_ARRIVAL_CARD_TEMPLATE_ID`; never commit the environment value.
+
 ## Verified Baseline
 
 - Branch: `lxc/integrated-workflow`.
 - Merge commit: `1aae41ef6b5b86ba086b43f1e61ae0b9ee3c7d83` with parents `fbf574c` and `a4a61e4`.
-- Backend: `246 passed`.
-- Frontend: `87 passed`.
+- Backend: full baseline `249 passed`; latest secondary-research/listing/notification/card regression `67 passed`.
+- Frontend: `95 passed` and production build passed for the deployed image-upload baseline.
 - TypeScript/Vite production build: passed.
 - Alembic: one head, `a8d4e6f7b901`.
 - Development deployment: public and server-side health returned `environment=development`; frontend bundle contains the front-stage export center, secondary research and listing/observation workbench.
 - Development PostgreSQL and Redis containers were preserved during deployment; both remain at `RestartCount=0`.
+- Real development PLM E2E processed 2,263 rows and 22 salesperson groups, proved same-file idempotency, and completed one controlled Item through secondary research, listing, weeks 1-5 and the week-4 summary. Arrival cards were a one-time test redirected to 刘学城; persistent autosend remains disabled.
 
 ## Implemented Scope
 
