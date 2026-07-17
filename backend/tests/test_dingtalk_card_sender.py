@@ -40,7 +40,7 @@ def test_repository_only_mentions_confirmed_card_templates() -> None:
     for path in paths:
         candidates = path.rglob("*") if path.is_dir() else [path]
         for candidate in candidates:
-            if any(part in {".pytest_cache", "__pycache__"} for part in candidate.parts):
+            if any(part in {".pytest_cache", "__pycache__", "node_modules", "dist"} for part in candidate.parts):
                 continue
             if candidate.is_file() and candidate.suffix.lower() not in {".png", ".jpg", ".jpeg", ".xlsx", ".docx", ".pyc"}:
                 found.update(CARD_TEMPLATE_ID_PATTERN.findall(candidate.read_text(encoding="utf-8", errors="ignore")))
@@ -53,6 +53,14 @@ def test_from_settings_uses_confirmed_card_templates() -> None:
 
     assert config.card_template_id == DINGTALK_NEW_PRODUCT_TODO_TEMPLATE_ID
     assert config.arrival_card_template_id == DINGTALK_ARRIVAL_CARD_TEMPLATE_ID
+
+
+def test_from_settings_allows_current_arrival_template_override() -> None:
+    config = DingTalkCardConfig.from_settings(
+        Settings(dingtalk_arrival_card_template_id="current-arrival-template")
+    )
+
+    assert config.arrival_card_template_id == "current-arrival-template"
 
 
 def test_operator_card_uses_confirmed_template_and_labels() -> None:

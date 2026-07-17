@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     dingtalk_client_secret: str = ""
     dingtalk_agent_id: str = ""
     dingtalk_robot_code: str = ""
+    dingtalk_arrival_card_template_id: str = ""
     dingtalk_card_autosend_enabled: bool = False
     dingtalk_card_test_receiver_name: str = ""
     dingtalk_user_sync_enabled: bool = False

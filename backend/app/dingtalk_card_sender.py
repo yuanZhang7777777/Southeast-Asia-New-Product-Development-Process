@@ -33,6 +33,9 @@ class DingTalkCardConfig:
             client_id=settings.dingtalk_client_id,
             client_secret=settings.dingtalk_client_secret,
             robot_code=settings.dingtalk_robot_code or settings.dingtalk_client_id,
+            arrival_card_template_id=(
+                settings.dingtalk_arrival_card_template_id.strip() or DINGTALK_ARRIVAL_CARD_TEMPLATE_ID
+            ),
         )
 
 
