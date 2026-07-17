@@ -264,8 +264,8 @@ def test_operator_token_cannot_submit_claim_for_another_operator() -> None:
 def test_protected_followup_routes_require_authentication() -> None:
     assert client.get("/arrival/records").status_code == 401
     assert client.post("/arrival/records", json={"opportunity_id": "missing"}).status_code == 401
-    assert client.get("/summary/four-week").status_code == 401
-    assert client.post("/summary/four-week", json={"opportunity_id": "missing"}).status_code == 401
+    assert client.get("/summary/four-week").status_code == 404
+    assert client.post("/summary/four-week", json={"opportunity_id": "missing"}).status_code == 404
 
 
 def test_operator_token_cannot_submit_claim_with_another_operators_task_id() -> None:

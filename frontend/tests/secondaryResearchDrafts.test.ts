@@ -5,8 +5,15 @@ import {
   createSecondaryResearchDraft,
   incompleteSecondaryResearchItems,
   patchSecondaryResearchDraft,
+  SECONDARY_RESEARCH_POSITIONINGS,
+  SECONDARY_RESEARCH_SKIP_LISTING,
   syncSecondaryResearchDraftPatch
 } from "../src/secondaryResearchDrafts.ts";
+
+test("二次调研支持五种定位且只有淘汰款和清仓款跳过刊登", () => {
+  assert.deepEqual(SECONDARY_RESEARCH_POSITIONINGS, ["引流款", "利润款", "淘汰款", "稳定款", "清仓款"]);
+  assert.deepEqual([...SECONDARY_RESEARCH_SKIP_LISTING], ["淘汰款", "清仓款"]);
+});
 
 test("服务器已有草稿会完整还原到对应子 SKU", () => {
   const draft = createSecondaryResearchDraft({

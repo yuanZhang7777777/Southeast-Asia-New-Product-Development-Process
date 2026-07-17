@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
-    "test": "node --test tests/claimDrafts.test.ts tests/secondaryResearchDrafts.test.ts tests/productBoard.test.ts tests/selection1Columns.test.ts tests/importResults.test.ts tests/productDetailNavigation.test.ts tests/reviewLayout.test.ts tests/opportunityGroups.test.ts tests/operatorClaimFilters.test.ts tests/assignmentFilters.test.ts tests/competitorGroups.test.ts tests/businessFormat.test.ts tests/exportPeriods.test.ts",
+    "test": "node --test tests/claimDrafts.test.ts tests/secondaryResearchDrafts.test.ts tests/productBoard.test.ts tests/selection1Columns.test.ts tests/importResults.test.ts tests/productDetailNavigation.test.ts tests/reviewLayout.test.ts tests/opportunityGroups.test.ts tests/operatorClaimFilters.test.ts tests/assignmentFilters.test.ts tests/competitorGroups.test.ts tests/businessFormat.test.ts tests/exportPeriods.test.ts tests/listingObservation.test.ts",
     "build": "tsc && vite build",
     "preview": "vite preview --host 127.0.0.1"
   },

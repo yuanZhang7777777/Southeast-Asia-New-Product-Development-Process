@@ -57,6 +57,7 @@ import { adjacentDetailTarget } from "./productDetailNavigation";
 import { ProductBoardView } from "./ProductBoardView";
 import { SecondaryResearchView } from "./SecondaryResearchView";
 import { isSourceClaimInputLabel, selection1ColumnLabel } from "./selection1Columns";
+import { ListingObservationSummary, ListingObservationView } from "./ListingObservationView";
 import { compactUrlLabel } from "./urlDisplay";
 import { exportPeriodFilter, filterRowsForExportPeriod, selectExportPeriod } from "./exportPeriods";
 
@@ -84,7 +85,7 @@ declare global {
 }
 
 type RoleKey = "operator" | "manager";
-type ViewKey = "dashboard" | "source" | "pool" | "assign" | "claim" | "review" | "stock" | "research";
+type ViewKey = "dashboard" | "source" | "pool" | "assign" | "claim" | "review" | "stock" | "research" | "listing";
 
 type ProductGroup = {
   key: string;
@@ -141,7 +142,7 @@ type AssignmentLoad = {
   draftSubSkus: number;
 };
 
-type DetailSectionKey = "core" | "development" | "market" | "pricing" | "cost" | "claim" | "source";
+type DetailSectionKey = "core" | "development" | "market" | "pricing" | "cost" | "claim" | "listing" | "source";
 type ClaimDrawerModuleKey = "market" | "pricing" | "development" | "cost";
 
 const flowItems: { view: ViewKey; roles: RoleKey[]; icon: ReactNode; label: string }[] = [
@@ -151,7 +152,8 @@ const flowItems: { view: ViewKey; roles: RoleKey[]; icon: ReactNode; label: stri
   { view: "claim", roles: ["operator"], icon: <ClipboardPen size={16} />, label: "运营认领" },
   { view: "review", roles: ["manager"], icon: <ShieldCheck size={16} />, label: "主管复核" },
   { view: "stock", roles: ["manager"], icon: <Download size={16} />, label: "导出中心" },
-  { view: "research", roles: ["operator", "manager"], icon: <ClipboardPen size={16} />, label: "二次调研" }
+  { view: "research", roles: ["operator", "manager"], icon: <ClipboardPen size={16} />, label: "二次调研" },
+  { view: "listing", roles: ["operator", "manager"], icon: <FileCheck2 size={16} />, label: "刊登与观察" }
 ];
 
 const viewMeta: Record<ViewKey, { title: string; desc: string }> = {
@@ -162,7 +164,8 @@ const viewMeta: Record<ViewKey, { title: string; desc: string }> = {
   claim: { title: "运营认领", desc: "分配任务必须认领或不认领；财根机会池允许其他运营自认领，人数不限。" },
   review: { title: "主管复核", desc: "主管只能通过、确认不认领或退回补充，不允许代改运营填写内容。" },
   stock: { title: "导出中心", desc: "只导出 Excel。按子 SKU 明细出行，同一子 SKU 被不同运营认领时另起一行。" },
-  research: { title: "二次调研", desc: "按主 SKU 整组处理到货后的复查；全部子 SKU 在同一界面填写，草稿自动保存。" }
+  research: { title: "二次调研", desc: "按主 SKU 整组处理到货后的复查；全部子 SKU 在同一界面填写，草稿自动保存。" },
+  listing: { title: "刊登与观察工作台", desc: "按主 SKU 新增店铺与 Item，并逐周期完成数据复盘。" }
 };
 
 const statusMeta: Record<string, { label: string; klass: string }> = {
@@ -541,13 +544,13 @@ function App() {
 
   useEffect(() => {
     if (activeRole !== "operator") return;
-    if (authSession?.operator_name) {
+    if (authSession?.operator_name && !canManage) {
       if (activeOperator !== authSession.operator_name) setActiveOperator(authSession.operator_name);
       return;
     }
     if (activeOperator && operatorProfiles.some((profile) => profile.enabled && profile.operator_name === activeOperator)) return;
     setActiveOperator(sortOperatorProfiles(operatorProfiles.filter((profile) => profile.enabled))[0]?.operator_name || "");
-  }, [activeOperator, activeRole, authSession, operatorProfiles]);
+  }, [activeOperator, activeRole, authSession, canManage, operatorProfiles]);
 
   useEffect(() => {
     if (!statusMessage || statusMessage.includes("中...") || statusMessage.includes("正在") || statusMessage.includes("失败") || statusMessage.includes("Error")) return;
@@ -1017,7 +1020,7 @@ function App() {
           <span className="hub-note">当前为测试阶段：真实钉钉自动推送保持关闭</span>
         </nav>
 
-        <section className={["claim", "research"].includes(activeView) && !detailGroup ? "layout claim-full-layout" : "layout"}>
+        <section className={["claim", "research", "listing"].includes(activeView) && !detailGroup ? "layout claim-full-layout" : "layout"}>
           <div className="panel screen">
             <div className="screen-top">
               <div>
@@ -1060,6 +1063,8 @@ function App() {
                 }
                 canGoPrevious={detailSequenceIndex > 0}
                 canGoNext={detailSequenceIndex >= 0 && detailSequenceIndex < detailSequence.length - 1}
+                operatorName={activeOperator}
+                canManage={canManage}
                 onBack={() => {
                   setDetailGroupKey(null);
                   setDetailChildId(null);
@@ -1194,12 +1199,22 @@ function App() {
                 onStatus={setStatusMessage}
               />
             )}
+            {activeView === "listing" && (
+              <ListingObservationView
+                key={authSession.user.id}
+                draftUserId={authSession.user.id}
+                role={activeRole}
+                operatorName={activeOperator}
+                canManage={canManage}
+                onStatus={setStatusMessage}
+              />
+            )}
             </>
             )}
             </div>
           </div>
 
-          {activeView !== "claim" && activeView !== "research" && (
+          {activeView !== "claim" && activeView !== "research" && activeView !== "listing" && (
           <aside className="side">
             <section className="panel side-card">
               <h2>
@@ -1742,6 +1757,7 @@ const detailSections: { key: DetailSectionKey; label: string }[] = [
   { key: "pricing", label: "价格参考" },
   { key: "cost", label: "成本参数" },
   { key: "claim", label: "认领与复核" },
+  { key: "listing", label: "刊登与观察" },
   { key: "source", label: "源表字段" }
 ];
 
@@ -1846,6 +1862,8 @@ function ProductDetailView(props: {
   navLabel: string;
   canGoPrevious: boolean;
   canGoNext: boolean;
+  operatorName: string;
+  canManage: boolean;
   onBack: () => void;
   onSelectChild: (id: string) => void;
   onNavigate: (delta: -1 | 1, currentChildId: string) => void;
@@ -2031,6 +2049,19 @@ function ProductDetailView(props: {
                 <h3>认领与复核</h3>
                 {hasOperatorSubmission(activeChild) ? <OperatorSubmissionSummary item={activeChild} /> : <p className="muted detail-empty">暂无运营提交记录。</p>}
                 <ClaimReviewTable item={activeChild} />
+              </div>
+            )}
+            {activeSection === "listing" && (
+              <div className="detail-pane">
+                <h3>刊登与周期观察（只读）</h3>
+                <ListingObservationSummary
+                  mainSku={group.main_sku}
+                  country={activeChild.country || item.country}
+                  currentBusinessPeriod={activeChild.batch || item.batch || activeChild.source_sheet || item.source_sheet}
+                  role={props.activeRole}
+                  operatorName={props.operatorName}
+                  canManage={props.canManage}
+                />
               </div>
             )}
             {activeSection === "source" && (

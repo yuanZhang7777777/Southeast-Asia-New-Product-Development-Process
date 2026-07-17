@@ -210,6 +210,35 @@ def test_group_submit_requires_every_child_and_splits_positioning_statuses() -> 
     assert audit_actions[-2:] == ["secondary_research.completed", "secondary_research.completed"]
 
 
+def test_group_submit_accepts_stable_and_disables_clearance_positioning() -> None:
+    opportunity_a, claim_a = make_claim("SUB-A", "销售A", downstream_status="waiting_secondary_research")
+    opportunity_b, claim_b = make_claim("SUB-B", "销售A", downstream_status="waiting_secondary_research")
+    with SessionLocal() as db:
+        db.add_all([opportunity_a, opportunity_b, claim_a, claim_b])
+        db.commit()
+        claim_ids = [claim_a.id, claim_b.id]
+
+    for claim_id, positioning in zip(claim_ids, ["稳定款", "清仓款"], strict=True):
+        saved = client.patch(
+            f"/secondary-research/{claim_id}",
+            params={"salesperson_name": "销售A"},
+            json={"secondary_conclusion": "已完成复盘", "product_positioning": positioning},
+        )
+        assert saved.status_code == 200
+
+    submitted = client.post(
+        "/secondary-research/submit-group",
+        params={"salesperson_name": "销售A"},
+        json={"claim_record_ids": claim_ids},
+    )
+
+    assert submitted.status_code == 200
+    assert {item["sub_sku"]: item["downstream_status"] for item in submitted.json()} == {
+        "SUB-A": "waiting_listing",
+        "SUB-B": "disabled",
+    }
+
+
 def test_group_submit_allows_blank_competitor_url_defaults_al_and_preserves_user_al() -> None:
     opportunity_a, claim_a = make_claim("SUB-A", "销售A", downstream_status="waiting_secondary_research")
     opportunity_b, claim_b = make_claim("SUB-B", "销售A", downstream_status="waiting_secondary_research")

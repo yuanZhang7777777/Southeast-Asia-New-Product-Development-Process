@@ -5,7 +5,6 @@ export type ProductBoardFilters = {
   businessPeriod?: string;
   owner?: string;
   status?: string;
-  arrivalDate?: string;
   site?: string;
 };
 
@@ -57,13 +56,12 @@ export function filterProductBoardRows(rows: ProductBoardRow[], filters: Product
       let responsibilities = row.responsibilities;
       if (filters.owner) responsibilities = responsibilities.filter((item) => item.salesperson_name === filters.owner);
       if (filters.status) responsibilities = responsibilities.filter((item) => item.visible_status === filters.status);
-      if (filters.arrivalDate) responsibilities = responsibilities.filter((item) => dateText(item.arrival_detected_at) === filters.arrivalDate);
       return { ...row, responsibilities, responsibilityCount: responsibilities.length };
     })
     .filter((row) => {
       if (filters.businessPeriod && row.business_period !== filters.businessPeriod) return false;
       if (filters.site && (row.site || row.country || "") !== filters.site) return false;
-      if ((filters.owner || filters.status || filters.arrivalDate) && !row.responsibilities.length) return false;
+      if ((filters.owner || filters.status) && !row.responsibilities.length) return false;
       if (!needle) return true;
       return normalize([
         row.business_period,
@@ -91,8 +89,4 @@ export function unique(values: string[]) {
 
 function normalize(value: string) {
   return value.toLowerCase().replace(/\s+/g, "");
-}
-
-function dateText(value?: string | null) {
-  return value ? value.slice(0, 10) : "";
 }

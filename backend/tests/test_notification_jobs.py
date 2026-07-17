@@ -1,7 +1,7 @@
 import os
 import sys
 import hashlib
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -25,12 +25,16 @@ def setup_function() -> None:
 
 
 class FakeSender:
-    def __init__(self) -> None:
+    def __init__(self, arrival_failures: int = 0) -> None:
         self.arrival_cards = []
         self.todo_cards = []
+        self.arrival_failures = arrival_failures
 
     def send_arrival_card(self, card):
         self.arrival_cards.append(card)
+        if self.arrival_failures:
+            self.arrival_failures -= 1
+            raise RuntimeError("arrival card failed")
         return {"ok": True}
 
     def send_new_product_todo(self, card):
@@ -174,6 +178,160 @@ def test_elimination_daily_summary_sends_unnotified_rows_to_managers_and_marks_d
         assert all(card.left_label == "淘汰款" and card.left_count == 1 for card in sender.arrival_cards)
         assert all("2026-W29 | PH | MAIN-E | SUB-E | 销售A | 淘汰商品 | 销量趋势变差" in card.sku_markdown for card in sender.arrival_cards)
         assert db.query(models.NotificationLog).filter_by(message_title="淘汰款已汇总").count() == 1
+
+
+def test_elimination_daily_summary_sends_each_observation_transition_once() -> None:
+    settings = Settings(dingtalk_card_autosend_enabled=True, platform_base_url="https://np.example")
+    sender = FakeSender()
+    with SessionLocal() as db:
+        db.add(models.RoleMapping(name="经理A", role="manager", dingtalk_user_id="dt-manager-a", enabled=True))
+        listing = models.ListingRecord(
+            id="listing-weekly",
+            source_group_key="task-weekly",
+            source_claim_ids=[],
+            source_type="test",
+            business_period="开发0710期",
+            country="PH",
+            main_sku="MAIN-W",
+            main_sku_name="周期淘汰商品",
+            salesperson_name="销售A",
+            shop="Shop A",
+            item="ITEM-W",
+            listing_strategy="策略",
+            first_period_start=date(2026, 7, 16),
+            first_period_end=date(2026, 7, 22),
+        )
+        listing.periods.append(
+            models.ItemObservationPeriod(
+                id="period-elimination",
+                week_number=1,
+                period_start=date(2026, 7, 16),
+                period_end=date(2026, 7, 22),
+                status="completed",
+                product_positioning="稳定款",
+                optimization_action="继续观察",
+                reviewed_at=models.now_utc(),
+            )
+        )
+        db.add(listing)
+        db.add_all(
+            [
+                models.AuditLog(
+                    id="audit-enter-1",
+                    action="observation.elimination_entered",
+                    entity_type="item_observation_period",
+                    entity_id="period-elimination",
+                    detail={
+                        "listing_record_id": "listing-weekly",
+                        "week_number": 1,
+                        "previous_positioning": "利润款",
+                        "product_positioning": "淘汰款",
+                    },
+                    actor_name="销售A",
+                ),
+                models.AuditLog(
+                    id="audit-enter-2",
+                    action="observation.elimination_entered",
+                    entity_type="item_observation_period",
+                    entity_id="period-elimination",
+                    detail={
+                        "listing_record_id": "listing-weekly",
+                        "week_number": 1,
+                        "previous_positioning": "稳定款",
+                        "product_positioning": "淘汰款",
+                    },
+                    actor_name="销售A",
+                ),
+                models.AuditLog(
+                    id="audit-reviewed-clearance",
+                    action="observation.reviewed",
+                    entity_type="item_observation_period",
+                    entity_id="period-elimination",
+                    detail={"week_number": 1, "product_positioning": "清仓款"},
+                    actor_name="销售A",
+                ),
+            ]
+        )
+        db.flush()
+
+        first = send_daily_elimination_summary(db, settings, sender, "2026-07-30")
+        second = send_daily_elimination_summary(db, settings, sender, "2026-07-30")
+
+        assert len(first) == 1
+        assert second == []
+        assert len(sender.arrival_cards) == 1
+        assert sender.arrival_cards[0].left_count == 2
+        assert sender.arrival_cards[0].sku_markdown.count(
+            "开发0710期 | PH | MAIN-W | ITEM-W | 销售A | 周期淘汰商品 | 第1周"
+        ) == 2
+        marked_ids = {
+            log.provider_message_id
+            for log in db.query(models.NotificationLog).filter_by(message_title="淘汰款已汇总")
+        }
+        assert marked_ids == {"audit-enter-1", "audit-enter-2"}
+
+
+def test_elimination_daily_summary_retries_failed_observation_transition() -> None:
+    settings = Settings(dingtalk_card_autosend_enabled=True, platform_base_url="https://np.example")
+    sender = FakeSender(arrival_failures=1)
+    with SessionLocal() as db:
+        db.add(models.RoleMapping(name="经理A", role="manager", dingtalk_user_id="dt-manager-a", enabled=True))
+        listing = models.ListingRecord(
+            id="listing-transition-retry",
+            source_group_key="task-transition-retry",
+            source_claim_ids=[],
+            source_type="test",
+            main_sku="MAIN-RETRY",
+            salesperson_name="销售A",
+            shop="Shop A",
+            item="ITEM-RETRY",
+            listing_strategy="策略",
+            first_period_start=date(2026, 7, 16),
+            first_period_end=date(2026, 7, 22),
+        )
+        listing.periods.append(
+            models.ItemObservationPeriod(
+                id="period-transition-retry",
+                week_number=1,
+                period_start=date(2026, 7, 16),
+                period_end=date(2026, 7, 22),
+                status="completed",
+                product_positioning="淘汰款",
+                optimization_action="停止投放",
+                reviewed_at=models.now_utc(),
+            )
+        )
+        db.add(listing)
+        db.add(
+            models.AuditLog(
+                id="audit-transition-retry",
+                action="observation.elimination_entered",
+                entity_type="item_observation_period",
+                entity_id="period-transition-retry",
+                detail={
+                    "listing_record_id": "listing-transition-retry",
+                    "week_number": 1,
+                    "previous_positioning": "利润款",
+                    "product_positioning": "淘汰款",
+                },
+                actor_name="销售A",
+            )
+        )
+        db.flush()
+
+        first = send_daily_elimination_summary(db, settings, sender, "2026-07-30")
+
+        assert len(first) == 1
+        assert first[0].send_status == "failed"
+        assert db.query(models.NotificationLog).filter_by(message_title="淘汰款已汇总").count() == 0
+
+        second = send_daily_elimination_summary(db, settings, sender, "2026-07-30")
+
+        assert len(second) == 1
+        assert second[0].send_status == "sent"
+        assert len(sender.arrival_cards) == 2
+        marked = db.query(models.NotificationLog).filter_by(message_title="淘汰款已汇总").one()
+        assert marked.provider_message_id == "audit-transition-retry"
 
 
 def test_elimination_daily_summary_retries_failed_manager_card() -> None:
