@@ -315,6 +315,8 @@ export type PendingListingTask = {
   salesperson_name: string;
   claim_record_ids: string[];
   default_first_period_start: string;
+  requires_confirmation: boolean;
+  reusable_listing_ids: string[];
 };
 
 export type ListingRecord = {
@@ -329,6 +331,8 @@ export type ListingRecord = {
   item: string;
   listing_strategy: string;
   first_period_start: string;
+  business_period?: string | null;
+  source_business_periods: string[];
   status: "active" | "voided";
   tracking_status: ListingTrackingStatus;
   first_round_completed_at?: string | null;
@@ -346,6 +350,7 @@ export type ObservationPeriodRow = {
   week_number: number;
   period_start: string;
   period_end: string;
+  business_period?: string | null;
   status: ObservationPeriodStatus;
   tracking_status: ListingTrackingStatus;
   order_count?: number | null;
@@ -353,6 +358,7 @@ export type ObservationPeriodRow = {
   gross_profit_amount?: number | null;
   gross_profit_rate?: number | null;
   product_positioning?: ProductPositioning | null;
+  default_product_positioning?: ProductPositioning | null;
   optimization_action?: string | null;
   four_week_summary?: string | null;
   first_round_completed_at?: string | null;
@@ -381,6 +387,7 @@ export type ListingWorkbenchFilter = {
 export type ListingBatchPayload = {
   task_key: string;
   rows: Array<{ shop: string; item: string; listing_strategy: string; first_period_start: string }>;
+  reuse_listing_ids?: string[];
 };
 
 export type PeriodReviewBatchPayload = {

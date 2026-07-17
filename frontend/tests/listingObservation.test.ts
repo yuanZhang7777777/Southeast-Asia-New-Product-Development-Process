@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import type { ListingRecord, ObservationPeriodRow, PendingListingTask } from "../src/api.ts";
+import type { ListingBatchPayload, ListingRecord, ObservationPeriodRow, PendingListingTask } from "../src/api.ts";
+import * as listingObservation from "../src/listingObservation.ts";
 
 import {
   buildListingWorkbenchGroups,
@@ -20,10 +21,43 @@ import {
   resolveWorkbenchScope,
   summarySalespersonScope,
   sortObservationRows,
+  type ListingDraft,
+  type ObservationReviewDraft,
   validateObservationReviews,
   validateListingDrafts,
   visibleSelectedPeriodIds
 } from "../src/listingObservation.ts";
+
+type ListingObservationContract = {
+  canEditObservationPeriod: (
+    row: Pick<ObservationPeriodRow, "status">,
+    listing?: Pick<ListingRecord, "status">
+  ) => boolean;
+  createObservationReviewDraft: (row: ObservationPeriodRow) => ObservationReviewDraft;
+  productListingSummaryByBusinessPeriod: (
+    data: { listing_records: readonly ListingRecord[]; period_rows: readonly ObservationPeriodRow[] },
+    mainSku: string,
+    country: string | null | undefined,
+    currentBusinessPeriod: string | null | undefined
+  ) => Array<{ business_period: string | null; listings: ListingRecord[]; periods: ObservationPeriodRow[] }>;
+  saveListingDrafts: (storage: Storage, userId: string, taskKey: string, drafts: readonly ListingDraft[]) => void;
+  restoreListingDrafts: (
+    storage: Storage,
+    userId: string,
+    taskKey: string,
+    fallback: readonly ListingDraft[]
+  ) => ListingDraft[];
+  clearListingDrafts: (storage: Storage, userId: string, taskKey: string) => void;
+  saveObservationReviewDraft: (storage: Storage, userId: string, periodId: string, draft: ObservationReviewDraft) => void;
+  restoreObservationReviewDraft: (
+    storage: Storage,
+    userId: string,
+    row: ObservationPeriodRow
+  ) => ObservationReviewDraft;
+  clearObservationReviewDraft: (storage: Storage, userId: string, periodId: string) => void;
+};
+
+const desiredHelpers = listingObservation as unknown as ListingObservationContract;
 
 const listingObservationViewSource = readFileSync(new URL("../src/ListingObservationView.tsx", import.meta.url), "utf8");
 const listingStylesSource = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");
@@ -45,6 +79,8 @@ function pendingTask(patch: Partial<PendingListingTask> = {}): PendingListingTas
     salesperson_name: "运营甲",
     claim_record_ids: ["claim-1"],
     default_first_period_start: "2026-07-23",
+    requires_confirmation: true,
+    reusable_listing_ids: [],
     ...patch
   };
 }
@@ -62,6 +98,8 @@ function listingRecord(patch: Partial<ListingRecord> = {}): ListingRecord {
     item: "ITEM-1",
     listing_strategy: "低价切入",
     first_period_start: "2026-07-23",
+    business_period: "2026-07",
+    source_business_periods: ["2026-07"],
     status: "active",
     tracking_status: "active",
     first_round_completed_at: null,
@@ -82,6 +120,7 @@ function observationRow(patch: Partial<ObservationPeriodRow> = {}): ObservationP
     week_number: 1,
     period_start: "2026-07-23",
     period_end: "2026-07-29",
+    business_period: "2026-07",
     status: "pending_data",
     tracking_status: "active",
     order_count: null,
@@ -89,6 +128,7 @@ function observationRow(patch: Partial<ObservationPeriodRow> = {}): ObservationP
     gross_profit_amount: null,
     gross_profit_rate: null,
     product_positioning: null,
+    default_product_positioning: null,
     optimization_action: null,
     four_week_summary: null,
     first_round_completed_at: null,
@@ -421,4 +461,194 @@ test("商品详情只读汇总严格匹配主 SKU 和国家", () => {
     listings: [data.listing_records[0]],
     periods: [data.period_rows[0]]
   });
+});
+
+test("待复盘业务筛选保留命中 Item 全部历史并允许高级周期筛选收窄", () => {
+  const groups = buildListingWorkbenchGroups(
+    [pendingTask()],
+    [
+      listingRecord({ id: "listing-review" }),
+      listingRecord({ id: "listing-without-review", item: "ITEM-2" })
+    ],
+    [
+      observationRow({ id: "completed", listing_record_id: "listing-review", week_number: 1, status: "completed" }),
+      observationRow({ id: "review", listing_record_id: "listing-review", week_number: 2, status: "pending_review" }),
+      observationRow({ id: "future", listing_record_id: "listing-review", week_number: 3, status: "pending_data" }),
+      observationRow({ id: "other", listing_record_id: "listing-without-review", item: "ITEM-2", status: "completed" })
+    ],
+    "2026-07-23"
+  );
+
+  const pendingReview = filterListingWorkbenchGroups(groups, "pending_review");
+  assert.deepEqual(pendingReview[0].listings.map((listing) => listing.id), ["listing-review"]);
+  assert.deepEqual(pendingReview[0].periodRows.map((row) => row.id), ["completed", "review", "future"]);
+  assert.deepEqual(filterObservationRows(pendingReview[0].periodRows, { status: "completed" }).map((row) => row.id), ["completed"]);
+});
+
+test("已完成和停止后已取数周期可编辑，待取数与作废记录不可编辑", () => {
+  assert.equal(desiredHelpers.canEditObservationPeriod({ status: "completed" }, { status: "active" }), true);
+  assert.equal(desiredHelpers.canEditObservationPeriod(
+    observationRow({ status: "pending_review", tracking_status: "stopped" }),
+    listingRecord({ tracking_status: "stopped" })
+  ), true);
+  assert.equal(desiredHelpers.canEditObservationPeriod({ status: "pending_data" }, { status: "active" }), false);
+  assert.equal(desiredHelpers.canEditObservationPeriod({ status: "completed" }, { status: "voided" }), false);
+  assert.equal(desiredHelpers.canEditObservationPeriod({ status: "completed" }), false);
+});
+
+test("周期复盘草稿优先服务端保存值并回退后端默认定位", () => {
+  assert.deepEqual(desiredHelpers.createObservationReviewDraft(observationRow({
+    status: "completed",
+    product_positioning: "稳定款",
+    default_product_positioning: "利润款",
+    optimization_action: "保留已保存操作",
+    four_week_summary: "保留已保存总结"
+  })), {
+    period_id: "period-1",
+    week_number: 1,
+    product_positioning: "稳定款",
+    optimization_action: "保留已保存操作",
+    four_week_summary: "保留已保存总结"
+  });
+  assert.equal(desiredHelpers.createObservationReviewDraft(observationRow({
+    status: "pending_review",
+    product_positioning: null,
+    default_product_positioning: "引流款"
+  })).product_positioning, "引流款");
+});
+
+test("待确认业务期沿用旧 Item 且不生成原上下文重复组", () => {
+  const groups = buildListingWorkbenchGroups(
+    [pendingTask({ task_key: "task-current", business_period: "开发0710期", reusable_listing_ids: ["listing-old"] })],
+    [listingRecord({
+      id: "listing-old",
+      task_key: "task-old",
+      business_period: "开发0703期",
+      source_business_periods: ["开发0703期", "开发0710期"]
+    })],
+    [observationRow({ id: "period-old", listing_record_id: "listing-old", business_period: "开发0703期" })],
+    "2026-07-23"
+  );
+
+  assert.equal(groups.length, 1);
+  assert.equal(groups[0].context.task_key, "task-current");
+  assert.equal(groups[0].pendingListing, true);
+  assert.deepEqual(groups[0].listings.map((listing) => listing.id), ["listing-old"]);
+  assert.deepEqual(groups[0].periodRows.map((row) => row.id), ["period-old"]);
+});
+
+test("复用提交 payload 可同时包含新增行和旧 Listing", () => {
+  const payload: ListingBatchPayload = {
+    task_key: "task-current",
+    rows: [{ shop: "Shopee-PH", item: "ITEM-NEW", listing_strategy: "低价切入", first_period_start: "2026-07-23" }],
+    reuse_listing_ids: ["listing-old"]
+  };
+
+  assert.equal(payload.rows.length, 1);
+  assert.deepEqual(payload.reuse_listing_ids, ["listing-old"]);
+});
+
+test("商品详情按来源业务期分组且当前业务期排在最前", () => {
+  const listing = listingRecord({
+    id: "listing-shared",
+    business_period: "开发0703期",
+    source_business_periods: ["开发0703期", "开发0710期"]
+  });
+  const period = observationRow({ id: "period-shared", listing_record_id: listing.id, business_period: "开发0703期" });
+  const groups = desiredHelpers.productListingSummaryByBusinessPeriod(
+    { listing_records: [listing], period_rows: [period] },
+    "SKU1",
+    "菲律宾",
+    "开发0710期"
+  );
+
+  assert.deepEqual(groups.map((group) => group.business_period), ["开发0710期", "开发0703期"]);
+  assert.deepEqual(groups.map((group) => group.listings.map((row) => row.id)), [["listing-shared"], ["listing-shared"]]);
+  assert.deepEqual(groups.map((group) => group.periods.map((row) => row.id)), [["period-shared"], ["period-shared"]]);
+});
+
+class MemoryStorage implements Storage {
+  readonly values = new Map<string, string>();
+  readonly throwing: Set<"get" | "set" | "remove">;
+
+  constructor(throwing: Array<"get" | "set" | "remove"> = []) {
+    this.throwing = new Set(throwing);
+  }
+
+  get length() { return this.values.size; }
+  clear() { this.values.clear(); }
+  key(index: number) { return Array.from(this.values.keys())[index] ?? null; }
+  getItem(key: string) {
+    if (this.throwing.has("get")) throw new Error("get blocked");
+    return this.values.get(key) ?? null;
+  }
+  setItem(key: string, value: string) {
+    if (this.throwing.has("set")) throw new Error("set blocked");
+    this.values.set(key, value);
+  }
+  removeItem(key: string) {
+    if (this.throwing.has("remove")) throw new Error("remove blocked");
+    this.values.delete(key);
+  }
+}
+
+test("版本化本地草稿按登录用户、任务和周期隔离并保留主动清空", () => {
+  const storage = new MemoryStorage();
+  const listingFallback = [{ shop: "服务端店铺", item: "ITEM-SERVER", listing_strategy: "服务端策略", first_period_start: "2026-07-23" }];
+  const listingDrafts = [{ shop: "本地店铺", item: "ITEM-LOCAL", listing_strategy: "", first_period_start: "2026-07-30" }];
+  const row = observationRow({ product_positioning: "稳定款", optimization_action: "服务端操作", four_week_summary: "服务端总结" });
+  const localReview: ObservationReviewDraft = {
+    period_id: row.id,
+    week_number: row.week_number,
+    product_positioning: "",
+    optimization_action: "",
+    four_week_summary: ""
+  };
+
+  desiredHelpers.saveListingDrafts(storage, "user-a", "task-a", listingDrafts);
+  desiredHelpers.saveObservationReviewDraft(storage, "user-a", row.id, localReview);
+
+  assert.ok(storage.getItem("listing-observation:v1:user-a:listing:task-a"));
+  assert.ok(storage.getItem("listing-observation:v1:user-a:period:period-1"));
+  assert.deepEqual(desiredHelpers.restoreListingDrafts(storage, "user-a", "task-a", listingFallback), listingDrafts);
+  assert.deepEqual(desiredHelpers.restoreListingDrafts(storage, "user-a", "task-b", listingFallback), listingFallback);
+  assert.deepEqual(desiredHelpers.restoreListingDrafts(storage, "user-b", "task-a", listingFallback), listingFallback);
+  assert.deepEqual(desiredHelpers.restoreObservationReviewDraft(storage, "user-a", row), localReview);
+  assert.deepEqual(desiredHelpers.restoreObservationReviewDraft(storage, "user-b", row), desiredHelpers.createObservationReviewDraft(row));
+  assert.deepEqual(
+    desiredHelpers.restoreObservationReviewDraft(storage, "user-a", observationRow({ id: "period-2" })),
+    desiredHelpers.createObservationReviewDraft(observationRow({ id: "period-2" }))
+  );
+});
+
+test("损坏、版本不兼容或结构非法的草稿会删除并回退服务端数据", () => {
+  const storage = new MemoryStorage();
+  const listingFallback = [{ shop: "服务端店铺", item: "ITEM-SERVER", listing_strategy: "服务端策略", first_period_start: "2026-07-23" }];
+  const row = observationRow({ default_product_positioning: "利润款" });
+  const corruptKey = "listing-observation:v1:user-a:listing:corrupt";
+  const oldKey = "listing-observation:v1:user-a:listing:old";
+  const invalidKey = "listing-observation:v1:user-a:period:period-1";
+  storage.setItem(corruptKey, "{");
+  storage.setItem(oldKey, JSON.stringify({ version: 2, data: [] }));
+  storage.setItem(invalidKey, JSON.stringify({ version: 1, data: { period_id: row.id, week_number: 1, product_positioning: "任意款" } }));
+
+  assert.deepEqual(desiredHelpers.restoreListingDrafts(storage, "user-a", "corrupt", listingFallback), listingFallback);
+  assert.deepEqual(desiredHelpers.restoreListingDrafts(storage, "user-a", "old", listingFallback), listingFallback);
+  assert.deepEqual(desiredHelpers.restoreObservationReviewDraft(storage, "user-a", row), desiredHelpers.createObservationReviewDraft(row));
+  assert.equal(storage.getItem(corruptKey), null);
+  assert.equal(storage.getItem(oldKey), null);
+  assert.equal(storage.getItem(invalidKey), null);
+});
+
+test("Storage 读写删除抛错都不阻塞页面", () => {
+  const listingFallback = [{ shop: "服务端店铺", item: "ITEM-SERVER", listing_strategy: "服务端策略", first_period_start: "2026-07-23" }];
+  const row = observationRow({ default_product_positioning: "利润款" });
+  const review = desiredHelpers.createObservationReviewDraft(row);
+
+  assert.deepEqual(desiredHelpers.restoreListingDrafts(new MemoryStorage(["get"]), "user-a", "task-a", listingFallback), listingFallback);
+  assert.deepEqual(desiredHelpers.restoreObservationReviewDraft(new MemoryStorage(["get"]), "user-a", row), review);
+  assert.doesNotThrow(() => desiredHelpers.saveListingDrafts(new MemoryStorage(["set"]), "user-a", "task-a", listingFallback));
+  assert.doesNotThrow(() => desiredHelpers.saveObservationReviewDraft(new MemoryStorage(["set"]), "user-a", row.id, review));
+  assert.doesNotThrow(() => desiredHelpers.clearListingDrafts(new MemoryStorage(["remove"]), "user-a", "task-a"));
+  assert.doesNotThrow(() => desiredHelpers.clearObservationReviewDraft(new MemoryStorage(["remove"]), "user-a", row.id));
 });
