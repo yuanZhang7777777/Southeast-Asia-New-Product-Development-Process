@@ -3255,14 +3255,20 @@ function ClaimView(props: {
   function addEvidence(itemId: string, images: EvidenceImage[]) {
     if (!images.length) return;
     const item = props.rows.find((row) => row.id === itemId);
-    const current = item ? draftFor(item) : draftForId();
-    patchDraft(itemId, { evidenceImages: [...current.evidenceImages, ...images] });
+    props.setDrafts((current) => {
+      const seeded = current[itemId] || !item ? current : { ...current, [itemId]: draftForOpportunity(item) };
+      const draft = seeded[itemId] || draftForId();
+      return patchClaimDraftGroup(seeded, itemId, { evidenceImages: [...draft.evidenceImages, ...images] });
+    });
   }
 
   function removeEvidence(itemId: string, imageId: string) {
     const item = props.rows.find((row) => row.id === itemId);
-    const current = item ? draftFor(item) : draftForId();
-    patchDraft(itemId, { evidenceImages: current.evidenceImages.filter((image) => image.id !== imageId) });
+    props.setDrafts((current) => {
+      const seeded = current[itemId] || !item ? current : { ...current, [itemId]: draftForOpportunity(item) };
+      const draft = seeded[itemId] || draftForId();
+      return patchClaimDraftGroup(seeded, itemId, { evidenceImages: draft.evidenceImages.filter((image) => image.id !== imageId) });
+    });
   }
 
   return (
@@ -3470,7 +3476,7 @@ function ClaimDraftEditor(props: {
       <EvidencePicker
         compact={props.compact}
         images={draft.evidenceImages}
-        onFiles={(files) => void readEvidenceFiles(files, props.item.id).then(props.onAddEvidence)}
+        onFiles={(files) => readEvidenceFiles(files, props.item.id).then(props.onAddEvidence)}
         onRemove={props.onRemoveEvidence}
       />
       <div className="claim-editor-actions">
@@ -3747,7 +3753,7 @@ function ClaimMatrixDraftEditor(props: {
       <EvidencePicker
         compact
         images={props.draft.evidenceImages}
-        onFiles={(files) => void readEvidenceFiles(files, props.item.id).then(props.onAddEvidence)}
+        onFiles={(files) => readEvidenceFiles(files, props.item.id).then(props.onAddEvidence)}
         onRemove={props.onRemoveEvidence}
       />
       <ClaimSubmissionBadge draft={props.draft} item={props.item} />
@@ -3796,12 +3802,16 @@ function pasteClaimEvidence(
   onAdd: (images: EvidenceImage[]) => void
 ) {
   const files = imageFiles(event.clipboardData.files);
-  if (files.length) void readEvidenceFiles(files, opportunityId).then(onAdd);
+  if (files.length) void readEvidenceFiles(files, opportunityId).then(onAdd).catch(showUploadError);
+}
+
+function showUploadError(error: unknown) {
+  window.alert(error instanceof Error && error.message ? error.message : "图片上传失败");
 }
 
 function EvidencePicker(props: {
   images: EvidenceImage[];
-  onFiles: (files: FileList | File[]) => void;
+  onFiles: (files: FileList | File[]) => Promise<void>;
   onRemove: (imageId: string) => void;
   compact?: boolean;
 }) {
@@ -3809,16 +3819,16 @@ function EvidencePicker(props: {
   function handleInput(event: ChangeEvent<HTMLInputElement>) {
     const files = imageFiles(event.currentTarget.files);
     event.currentTarget.value = "";
-    if (files.length) props.onFiles(files);
+    if (files.length) void props.onFiles(files).catch(showUploadError);
   }
   function handleDrop(event: DragEvent<HTMLLabelElement>) {
     event.preventDefault();
     const files = imageFiles(event.dataTransfer.files);
-    if (files.length) props.onFiles(files);
+    if (files.length) void props.onFiles(files).catch(showUploadError);
   }
   function handlePaste(event: ClipboardEvent<HTMLLabelElement>) {
     const files = imageFiles(event.clipboardData.files);
-    if (files.length) props.onFiles(files);
+    if (files.length) void props.onFiles(files).catch(showUploadError);
   }
 
   return (
@@ -4793,32 +4803,15 @@ async function readEvidenceFiles(files: FileList | File[], opportunityId: string
 }
 
 async function readEvidenceFile(file: File, opportunityId: string): Promise<EvidenceImage> {
-  try {
-    const uploaded = await api.uploadClaimEvidence(opportunityId, file);
-    return {
-      id: typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `${Date.now()}-${file.name}`,
-      name: uploaded.name || file.name || "clipboard-image.png",
-      type: uploaded.type || file.type,
-      size: uploaded.size || file.size,
-      previewUrl: imageSrc(uploaded.url),
-      url: uploaded.url
-    };
-  } catch {
-    // ponytail: if upload is down, keep the workflow usable by storing the data URL in the claim note.
-  }
-  return new Promise((resolve) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      resolve({
-        id: typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `${Date.now()}-${file.name}`,
-        name: file.name || "clipboard-image.png",
-        type: file.type,
-        size: file.size,
-        previewUrl: String(reader.result || "")
-      });
-    };
-    reader.readAsDataURL(file);
-  });
+  const uploaded = await api.uploadClaimEvidence(opportunityId, file);
+  return {
+    id: typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `${Date.now()}-${file.name}`,
+    name: uploaded.name || file.name || "clipboard-image.png",
+    type: uploaded.type || file.type,
+    size: uploaded.size || file.size,
+    previewUrl: imageSrc(uploaded.url),
+    url: uploaded.url
+  };
 }
 
 function formatDate(value: string) {

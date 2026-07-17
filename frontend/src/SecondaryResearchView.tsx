@@ -21,7 +21,7 @@ import {
 } from "./secondaryResearchDrafts";
 import { isSourceClaimInputLabel, selection1ColumnLabel } from "./selection1Columns";
 import { formatBusinessNumber } from "./businessFormat";
-import { imageFiles } from "./imageUploads";
+import { createKeyedSaveQueue, imageFiles } from "./imageUploads";
 
 type ModuleKey = "secondary" | "market" | "pricing" | "development" | "cost" | "claims";
 
@@ -54,6 +54,7 @@ export function SecondaryResearchView(props: {
   const [activeModule, setActiveModule] = useState<ModuleKey>("secondary");
   const [drafts, setDrafts] = useState<DraftMap>({});
   const draftsRef = useRef<DraftMap>({});
+  const saveQueue = useRef(createKeyedSaveQueue()).current;
   const [saveState, setSaveState] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
   const periods = useMemo(
@@ -119,7 +120,7 @@ export function SecondaryResearchView(props: {
     if (!props.editable || !draft) return;
     setSaveState((current) => ({ ...current, [item.claim_record_id]: "保存中" }));
     try {
-      await api.updateSecondaryResearch(item.claim_record_id, props.salespersonName, draftPayload(draft));
+      await saveQueue(item.claim_record_id, () => api.updateSecondaryResearch(item.claim_record_id, props.salespersonName, draftPayload(draft)));
       setSaveState((current) => ({ ...current, [item.claim_record_id]: "已保存" }));
     } catch (error) {
       setSaveState((current) => ({ ...current, [item.claim_record_id]: "保存失败" }));

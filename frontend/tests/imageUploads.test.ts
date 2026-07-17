@@ -23,8 +23,112 @@ test("claim conclusion fields paste images without blocking text paste", () => {
 });
 
 test("secondary research conclusion and image control are row-scoped paste and drop targets", () => {
-  assert.match(secondary, /AN 调研结论[\s\S]*onPaste=.*uploadImages/);
-  assert.match(secondary, /research-upload[\s\S]*onDrop=.*uploadImages/);
-  assert.match(secondary, /research-upload[\s\S]*onPaste=.*uploadImages/);
+  const conclusionStart = secondary.lastIndexOf("<span>AN 调研结论</span>");
+  const conclusion = secondary.slice(conclusionStart, secondary.indexOf("<span>AO 商品定位</span>", conclusionStart));
+  const uploadStart = secondary.indexOf('className="research-upload"');
+  const upload = secondary.slice(uploadStart, secondary.indexOf("</label>", uploadStart));
+  assert.match(conclusion, /onPaste=\{\(event: ClipboardEvent<HTMLTextAreaElement>\) => void uploadImages\(item, event\.clipboardData\.files\)\}/);
+  assert.match(upload, /onDrop=\{\(event\) => \{ event\.preventDefault\(\); void uploadImages\(item, event\.dataTransfer\.files\); \}\}/);
+  assert.match(upload, /onPaste=\{\(event\) => void uploadImages\(item, event\.clipboardData\.files\)\}/);
   assert.doesNotMatch(secondary, /document\.addEventListener\(["']paste/);
+});
+
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
+async function keyedQueue() {
+  const { createKeyedSaveQueue } = await import("../src/imageUploads.ts");
+  return createKeyedSaveQueue();
+}
+
+async function flushQueue() {
+  await new Promise<void>((resolve) => setTimeout(resolve, 0));
+}
+
+test("same claim saves start in call order", async () => {
+  const queue = await keyedQueue();
+  const first = deferred<void>();
+  const second = deferred<void>();
+  const started: string[] = [];
+  const firstSave = queue("claim-1", async () => {
+    started.push("first");
+    await first.promise;
+  });
+  const secondSave = queue("claim-1", async () => {
+    started.push("second");
+    await second.promise;
+  });
+
+  await flushQueue();
+  assert.deepEqual(started, ["first"]);
+  first.resolve();
+  await firstSave;
+  await flushQueue();
+  assert.deepEqual(started, ["first", "second"]);
+  second.resolve();
+  await secondSave;
+});
+
+test("a rejected save does not block the next save for the same claim", async () => {
+  const queue = await keyedQueue();
+  const first = deferred<void>();
+  const second = deferred<void>();
+  const started: string[] = [];
+  const failedSave = queue("claim-1", async () => {
+    started.push("first");
+    await first.promise;
+  });
+  const nextSave = queue("claim-1", async () => {
+    started.push("second");
+    await second.promise;
+  });
+
+  const failure = assert.rejects(failedSave);
+  await flushQueue();
+  first.reject(new Error("save failed"));
+  await failure;
+  await Promise.resolve();
+  assert.deepEqual(started, ["first", "second"]);
+  second.resolve();
+  await nextSave;
+});
+
+test("different claim save queues start independently", async () => {
+  const queue = await keyedQueue();
+  const first = deferred<void>();
+  const second = deferred<void>();
+  const started: string[] = [];
+  const firstSave = queue("claim-1", async () => {
+    started.push("claim-1");
+    await first.promise;
+  });
+  const secondSave = queue("claim-2", async () => {
+    started.push("claim-2");
+    await second.promise;
+  });
+
+  await flushQueue();
+  assert.deepEqual(started.sort(), ["claim-1", "claim-2"]);
+  first.resolve();
+  second.resolve();
+  await Promise.all([firstSave, secondSave]);
+});
+
+test("operator evidence updates use current drafts and surface upload failures", () => {
+  const workspace = app.slice(app.indexOf("function ClaimView"), app.indexOf("function claimSubmitButtonText"));
+  const upload = app.slice(app.indexOf("async function readEvidenceFile"), app.indexOf("function formatDate"));
+  const picker = app.slice(app.indexOf("function EvidencePicker"));
+
+  assert.match(workspace, /function addEvidence[\s\S]*?props\.setDrafts\(\(current\) => \{[\s\S]*?evidenceImages: \[\.\.\.draft\.evidenceImages, \.\.\.images\]/);
+  assert.match(workspace, /function removeEvidence[\s\S]*?props\.setDrafts\(\(current\) => \{[\s\S]*?evidenceImages: draft\.evidenceImages\.filter/);
+  assert.doesNotMatch(upload, /FileReader|catch\s*\(/);
+  assert.match(app, /function pasteClaimEvidence[\s\S]*?\.catch\(showUploadError\)/);
+  assert.match(picker, /props\.onFiles\(files\)\.catch\(showUploadError\)/);
 });
