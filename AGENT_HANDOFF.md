@@ -270,12 +270,15 @@ Do **not** ask again whether first version is export-only. It is already confirm
 第一版正式冻结为：只导入、分配、认领/不认领、主管复核、导出；不做在线表自动写回入口。
 ```
 
+As of 2026-07-17, the listing/observation business scope is sufficient and frozen. Do not invent more edge cases; ask only questions that block implementation, then fix the confirmed gaps in `docs/02-功能实现状态.md`.
+
 If the user asks "接下来做什么", continue from `docs/20-项目推进总控.md` and `docs/02-功能实现状态.md`:
 
-1. Verify the isolated development deployment and the user-facing listing/observation workflow.
-2. Collect the real weekly Item API endpoint, authentication method, and an unfiltered aggregate response sample.
-3. Add the scheduler/adapter behind the existing `apply_week_metrics(...)` boundary and verify missing-data retry behavior.
-4. Keep production changes separate and schedule them outside user working time.
+1. Implement and test the already-confirmed listing/observation gaps recorded in `docs/02-功能实现状态.md`.
+2. Verify the isolated development deployment and the user-facing listing/observation workflow.
+3. Collect the real weekly Item API endpoint, authentication method, and an unfiltered aggregate response sample.
+4. Add the scheduler/adapter behind the existing `apply_week_metrics(...)` boundary and verify missing-data retry behavior.
+5. Keep production changes separate and schedule them outside user working time.
 
 Only return to `docs/15` for later-stage open questions such as PLM 到货、二次调研、刊登、监控、四周总结, not for the frozen first-version export-only boundary.
 
