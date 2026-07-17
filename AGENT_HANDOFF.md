@@ -34,7 +34,7 @@ PLM arrival endpoint settings and credentials are stored separately in both serv
 - Branch: `lxc/integrated-workflow`.
 - Merge commit: `1aae41ef6b5b86ba086b43f1e61ae0b9ee3c7d83` with parents `fbf574c` and `a4a61e4`.
 - Backend: full baseline `249 passed`; latest secondary-research/listing/notification/card regression `67 passed`.
-- Frontend: `95 passed` and production build passed for the deployed image-upload baseline.
+- Frontend: current undeployed branch `98 passed` and production build passed; the rejection-reason picker is not in the development deployment.
 - TypeScript/Vite production build: passed.
 - Alembic: one head, `a8d4e6f7b901`.
 - Development deployment: public and server-side health returned `environment=development`; frontend bundle contains the front-stage export center, secondary research and listing/observation workbench.
