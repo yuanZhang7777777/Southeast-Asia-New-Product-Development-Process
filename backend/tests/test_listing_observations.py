@@ -264,46 +264,244 @@ def test_period_review_is_atomic_and_week_four_requires_summary() -> None:
         assert db.query(models.AuditLog).filter_by(action="observation.reviewed", actor_name="销售A").count() == 4
 
 
-def test_period_review_rejects_completed_or_inactive_rows_atomically() -> None:
+def test_completed_period_can_be_edited_by_owner_and_manager() -> None:
+    owner_headers = login("销售A", "operator", "dt-a")
+    other_headers = login("销售B", "operator", "dt-b")
+    manager_headers = login("主管A", "manager", "dt-manager")
+    with SessionLocal() as db:
+        listing = seeded_listing("销售A", date(2026, 7, 16))
+        listing.item = "ITEM-EDIT"
+        period = listing.periods[0]
+        period.status = "completed"
+        period.order_count = 8
+        period.total_revenue = 200
+        period.gross_profit_amount = 50
+        period.metrics_fetched_at = models.now_utc()
+        period.product_positioning = "利润款"
+        period.optimization_action = "原复盘动作"
+        period.reviewed_at = models.now_utc()
+        db.add(listing)
+        db.commit()
+        period_id = period.id
+        metrics_fetched_at = period.metrics_fetched_at
+
+    denied = client.post(
+        "/listing-workbench/periods/review-batch",
+        headers=other_headers,
+        json={
+            "rows": [
+                {"period_id": period_id, "product_positioning": "淘汰款", "optimization_action": "越权修改"}
+            ]
+        },
+    )
+    assert denied.status_code == 403
+
+    owner_saved = client.post(
+        "/listing-workbench/periods/review-batch",
+        headers=owner_headers,
+        json={
+            "rows": [
+                {"period_id": period_id, "product_positioning": "稳定款", "optimization_action": "负责人更新"}
+            ]
+        },
+    )
+    assert owner_saved.status_code == 200
+    assert owner_saved.json()[0]["status"] == "completed"
+    with SessionLocal() as db:
+        saved = db.get(models.ItemObservationPeriod, period_id)
+        assert (saved.order_count, saved.total_revenue, saved.gross_profit_amount) == (8, 200, 50)
+        assert saved.metrics_fetched_at == metrics_fetched_at
+        assert (saved.product_positioning, saved.optimization_action) == ("稳定款", "负责人更新")
+        assert db.query(models.AuditLog).filter_by(
+            action="observation.reviewed", entity_id=period_id, actor_name="销售A"
+        ).count() == 1
+
+    manager_saved = client.post(
+        "/listing-workbench/periods/review-batch",
+        headers=manager_headers,
+        json={
+            "rows": [
+                {"period_id": period_id, "product_positioning": "利润款", "optimization_action": "主管更新"}
+            ]
+        },
+    )
+    assert manager_saved.status_code == 200
+    assert manager_saved.json()[0]["status"] == "completed"
+    with SessionLocal() as db:
+        saved = db.get(models.ItemObservationPeriod, period_id)
+        assert (saved.order_count, saved.total_revenue, saved.gross_profit_amount) == (8, 200, 50)
+        assert saved.metrics_fetched_at == metrics_fetched_at
+        assert (saved.product_positioning, saved.optimization_action) == ("利润款", "主管更新")
+        audits = db.query(models.AuditLog).filter_by(
+            action="observation.reviewed", entity_id=period_id
+        ).all()
+        assert len(audits) == 2
+        assert {log.actor_name for log in audits} == {"销售A", "主管A"}
+
+
+def test_stopped_listing_can_complete_already_fetched_pending_review() -> None:
     headers = login("销售A", "operator", "dt-a")
-    create_waiting_listing_group("销售A", "MAIN-A")
-    listing = create_listing(headers, "10001")
     with SessionLocal() as db:
-        periods = db.query(models.ItemObservationPeriod).order_by(models.ItemObservationPeriod.week_number).all()
-        periods[0].status = "completed"
-        periods[1].status = "pending_review"
+        listing = seeded_listing("销售A", date(2026, 7, 16))
+        listing.item = "ITEM-STOP-REVIEW"
+        listing.tracking_status = "stopped"
+        period = listing.periods[0]
+        period.status = "pending_review"
+        period.order_count = 3
+        period.total_revenue = 90
+        period.gross_profit_amount = 18
+        period.metrics_fetched_at = models.now_utc()
+        db.add(listing)
         db.commit()
-        first_id, second_id = periods[0].id, periods[1].id
+        period_id = period.id
 
-    payload = {
-        "rows": [
-            {"period_id": first_id, "product_positioning": "稳定款", "optimization_action": "不应重提"},
-            {"period_id": second_id, "product_positioning": "利润款", "optimization_action": "保持原状"},
-        ]
-    }
-    invalid_status = client.post("/listing-workbench/periods/review-batch", headers=headers, json=payload)
-    assert invalid_status.status_code == 400
-    assert invalid_status.json()["detail"]["row_errors"] == [
-        {"row_index": 0, "field": "period_id", "message": "period must be pending_review"}
-    ]
-    with SessionLocal() as db:
-        assert db.get(models.ItemObservationPeriod, second_id).status == "pending_review"
-        db.get(models.ListingRecord, listing["id"]).tracking_status = "stopped"
-        db.commit()
-
-    inactive = client.post(
+    response = client.post(
         "/listing-workbench/periods/review-batch",
         headers=headers,
         json={
             "rows": [
-                {"period_id": second_id, "product_positioning": "利润款", "optimization_action": "保持原状"}
+                {"period_id": period_id, "product_positioning": "利润款", "optimization_action": "完成已取数复盘"}
             ]
         },
     )
-    assert inactive.status_code == 400
-    assert inactive.json()["detail"]["row_errors"] == [
+
+    assert response.status_code == 200
+    assert response.json()[0]["status"] == "completed"
+    with SessionLocal() as db:
+        saved = db.get(models.ItemObservationPeriod, period_id)
+        assert (saved.order_count, saved.total_revenue, saved.gross_profit_amount) == (3, 90, 18)
+        assert (saved.product_positioning, saved.optimization_action) == ("利润款", "完成已取数复盘")
+
+
+def test_voided_listing_period_cannot_be_reviewed_atomically() -> None:
+    headers = login("销售A", "operator", "dt-a")
+    with SessionLocal() as db:
+        voided_listing = seeded_listing("销售A", date(2026, 7, 16))
+        voided_listing.item = "ITEM-VOIDED"
+        voided_listing.status = "voided"
+        voided_period = voided_listing.periods[0]
+        voided_period.status = "pending_review"
+        voided_period.metrics_fetched_at = models.now_utc()
+        voided_period.product_positioning = "稳定款"
+        voided_period.optimization_action = "作废前原值"
+        active_listing = seeded_listing("销售A", date(2026, 8, 13))
+        active_listing.item = "ITEM-ACTIVE"
+        active_period = active_listing.periods[0]
+        active_period.status = "pending_review"
+        active_period.metrics_fetched_at = models.now_utc()
+        active_period.product_positioning = "稳定款"
+        active_period.optimization_action = "有效行原值"
+        db.add_all([voided_listing, active_listing])
+        db.commit()
+        voided_period_id = voided_period.id
+        active_period_id = active_period.id
+
+    response = client.post(
+        "/listing-workbench/periods/review-batch",
+        headers=headers,
+        json={
+            "rows": [
+                {"period_id": voided_period_id, "product_positioning": "淘汰款", "optimization_action": "不应修改"},
+                {"period_id": active_period_id, "product_positioning": "利润款", "optimization_action": "整批不应修改"},
+            ]
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"]["row_errors"] == [
         {"row_index": 0, "field": "period_id", "message": "listing is not active and tracked"}
     ]
+    with SessionLocal() as db:
+        voided_saved = db.get(models.ItemObservationPeriod, voided_period_id)
+        active_saved = db.get(models.ItemObservationPeriod, active_period_id)
+        assert (voided_saved.status, voided_saved.product_positioning, voided_saved.optimization_action) == (
+            "pending_review",
+            "稳定款",
+            "作废前原值",
+        )
+        assert (active_saved.status, active_saved.product_positioning, active_saved.optimization_action) == (
+            "pending_review",
+            "稳定款",
+            "有效行原值",
+        )
+        assert db.query(models.AuditLog).filter_by(action="observation.reviewed").count() == 0
+
+
+def test_observation_elimination_events_only_on_transitions() -> None:
+    headers = login("销售A", "operator", "dt-a")
+    with SessionLocal() as db:
+        sequence_listing = seeded_listing("销售A", date(2026, 7, 16))
+        sequence_listing.item = "ITEM-SEQUENCE"
+        sequence_period = sequence_listing.periods[0]
+        sequence_period.status = "pending_review"
+        sequence_period.metrics_fetched_at = models.now_utc()
+
+        batch_listing = seeded_listing("销售A", date(2026, 8, 13))
+        batch_listing.item = "ITEM-BATCH"
+        batch_periods = sorted(batch_listing.periods, key=lambda period: period.week_number)[:2]
+        for period in batch_periods:
+            period.status = "pending_review"
+            period.metrics_fetched_at = models.now_utc()
+        db.add_all([sequence_listing, batch_listing])
+        db.commit()
+        sequence_period_id = sequence_period.id
+        batch_listing_id = batch_listing.id
+        batch_period_ids = [period.id for period in batch_periods]
+
+    for positioning in ["利润款", "淘汰款", "淘汰款", "稳定款", "淘汰款"]:
+        response = client.post(
+            "/listing-workbench/periods/review-batch",
+            headers=headers,
+            json={
+                "rows": [
+                    {
+                        "period_id": sequence_period_id,
+                        "product_positioning": positioning,
+                        "optimization_action": f"调整为{positioning}",
+                    }
+                ]
+            },
+        )
+        assert response.status_code == 200
+
+    with SessionLocal() as db:
+        sequence_events = db.query(models.AuditLog).filter_by(
+            action="observation.elimination_entered", entity_id=sequence_period_id
+        ).order_by(models.AuditLog.created_at).all()
+        assert [event.detail["previous_positioning"] for event in sequence_events] == ["利润款", "稳定款"]
+
+    batch_response = client.post(
+        "/listing-workbench/periods/review-batch",
+        headers=headers,
+        json={
+            "rows": [
+                {
+                    "period_id": batch_period_ids[1],
+                    "product_positioning": "淘汰款",
+                    "optimization_action": "第2周淘汰",
+                },
+                {
+                    "period_id": batch_period_ids[0],
+                    "product_positioning": "淘汰款",
+                    "optimization_action": "第1周淘汰",
+                },
+            ]
+        },
+    )
+
+    assert batch_response.status_code == 200
+    with SessionLocal() as db:
+        batch_events = db.query(models.AuditLog).filter(
+            models.AuditLog.action == "observation.elimination_entered",
+            models.AuditLog.entity_id.in_(batch_period_ids),
+        ).all()
+        assert [event.entity_id for event in batch_events] == [batch_period_ids[0]]
+        assert batch_events[0].detail == {
+            "listing_record_id": batch_listing_id,
+            "week_number": 1,
+            "previous_positioning": None,
+            "product_positioning": "淘汰款",
+        }
 
 
 def test_authenticated_account_name_is_audit_actor_not_operator_owner() -> None:
@@ -547,24 +745,45 @@ def test_apply_week_metrics_distinguishes_missing_source_from_true_zero() -> Non
         assert db.query(models.NotificationLog).count() == 1
 
 
-def test_apply_week_metrics_calculates_rate_on_read_and_deduplicates_notification() -> None:
+def test_apply_week_metrics_freezes_first_success() -> None:
     with SessionLocal() as db:
         listing = seeded_listing("销售A", date(2026, 7, 16))
         listing.item = "ITEM-PROFIT"
         db.add(listing)
         db.commit()
 
-    metrics = {"order_count": 8, "total_revenue": 200, "gross_profit_amount": 50}
+    metrics_a = {
+        "order_count": 8,
+        "total_revenue": 200,
+        "gross_profit_amount": 50,
+        "source_snapshot": {"file": "week-a.zip", "row": 1},
+    }
+    metrics_b = {
+        "order_count": 99,
+        "total_revenue": 999,
+        "gross_profit_amount": 1,
+        "source_snapshot": {"file": "week-b.zip", "row": 9},
+    }
     with SessionLocal() as db:
-        period = services.apply_week_metrics(db, "ITEM-PROFIT", date(2026, 7, 16), metrics)
-        services.apply_week_metrics(db, "ITEM-PROFIT", date(2026, 7, 16), metrics)
+        first = services.apply_week_metrics(db, "ITEM-PROFIT", date(2026, 7, 16), metrics_a)
+        db.commit()
+        first_fetched_at = first.metrics_fetched_at
+
+        period = services.apply_week_metrics(db, "ITEM-PROFIT", date(2026, 7, 16), metrics_b)
         db.commit()
         listing = db.get(models.ListingRecord, period.listing_record_id)
         row = services.observation_period_read(period, listing)
+        saved_snapshot = period.source_snapshot
+        saved_fetched_at = period.metrics_fetched_at
         notification_count = db.query(models.NotificationLog).count()
+        metrics_audit_count = db.query(models.AuditLog).filter_by(action="observation.metrics_applied").count()
 
+    assert (row["order_count"], row["total_revenue"], row["gross_profit_amount"]) == (8, 200, 50)
     assert row["gross_profit_rate"] == 0.25
+    assert saved_snapshot == {"file": "week-a.zip", "row": 1}
+    assert saved_fetched_at == first_fetched_at
     assert notification_count == 1
+    assert metrics_audit_count == 1
 
 
 def test_apply_week_metrics_skips_stopped_listing() -> None:

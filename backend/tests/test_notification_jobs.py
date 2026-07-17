@@ -176,7 +176,7 @@ def test_elimination_daily_summary_sends_unnotified_rows_to_managers_and_marks_d
         assert db.query(models.NotificationLog).filter_by(message_title="淘汰款已汇总").count() == 1
 
 
-def test_elimination_daily_summary_includes_reviewed_item_period_but_not_clearance() -> None:
+def test_elimination_daily_summary_sends_each_observation_transition_once() -> None:
     settings = Settings(dingtalk_card_autosend_enabled=True, platform_base_url="https://np.example")
     sender = FakeSender()
     with SessionLocal() as db:
@@ -197,31 +197,57 @@ def test_elimination_daily_summary_includes_reviewed_item_period_but_not_clearan
             first_period_start=date(2026, 7, 16),
             first_period_end=date(2026, 7, 22),
         )
-        listing.periods.extend(
+        listing.periods.append(
+            models.ItemObservationPeriod(
+                id="period-elimination",
+                week_number=1,
+                period_start=date(2026, 7, 16),
+                period_end=date(2026, 7, 22),
+                status="completed",
+                product_positioning="稳定款",
+                optimization_action="继续观察",
+                reviewed_at=models.now_utc(),
+            )
+        )
+        db.add(listing)
+        db.add_all(
             [
-                models.ItemObservationPeriod(
-                    id="period-elimination",
-                    week_number=1,
-                    period_start=date(2026, 7, 16),
-                    period_end=date(2026, 7, 22),
-                    status="completed",
-                    product_positioning="淘汰款",
-                    optimization_action="停止投放",
-                    reviewed_at=models.now_utc(),
+                models.AuditLog(
+                    id="audit-enter-1",
+                    action="observation.elimination_entered",
+                    entity_type="item_observation_period",
+                    entity_id="period-elimination",
+                    detail={
+                        "listing_record_id": "listing-weekly",
+                        "week_number": 1,
+                        "previous_positioning": "利润款",
+                        "product_positioning": "淘汰款",
+                    },
+                    actor_name="销售A",
                 ),
-                models.ItemObservationPeriod(
-                    id="period-clearance",
-                    week_number=2,
-                    period_start=date(2026, 7, 23),
-                    period_end=date(2026, 7, 29),
-                    status="completed",
-                    product_positioning="清仓款",
-                    optimization_action="清理库存",
-                    reviewed_at=models.now_utc(),
+                models.AuditLog(
+                    id="audit-enter-2",
+                    action="observation.elimination_entered",
+                    entity_type="item_observation_period",
+                    entity_id="period-elimination",
+                    detail={
+                        "listing_record_id": "listing-weekly",
+                        "week_number": 1,
+                        "previous_positioning": "稳定款",
+                        "product_positioning": "淘汰款",
+                    },
+                    actor_name="销售A",
+                ),
+                models.AuditLog(
+                    id="audit-reviewed-clearance",
+                    action="observation.reviewed",
+                    entity_type="item_observation_period",
+                    entity_id="period-elimination",
+                    detail={"week_number": 1, "product_positioning": "清仓款"},
+                    actor_name="销售A",
                 ),
             ]
         )
-        db.add(listing)
         db.flush()
 
         first = send_daily_elimination_summary(db, settings, sender, "2026-07-30")
@@ -229,10 +255,16 @@ def test_elimination_daily_summary_includes_reviewed_item_period_but_not_clearan
 
         assert len(first) == 1
         assert second == []
-        assert sender.arrival_cards[0].left_count == 1
-        assert "开发0710期 | PH | MAIN-W | ITEM-W | 销售A | 周期淘汰商品 | 第1周" in sender.arrival_cards[0].sku_markdown
-        marked = db.query(models.NotificationLog).filter_by(message_title="淘汰款已汇总").one()
-        assert marked.provider_message_id == "period-elimination"
+        assert len(sender.arrival_cards) == 1
+        assert sender.arrival_cards[0].left_count == 2
+        assert sender.arrival_cards[0].sku_markdown.count(
+            "开发0710期 | PH | MAIN-W | ITEM-W | 销售A | 周期淘汰商品 | 第1周"
+        ) == 2
+        marked_ids = {
+            log.provider_message_id
+            for log in db.query(models.NotificationLog).filter_by(message_title="淘汰款已汇总")
+        }
+        assert marked_ids == {"audit-enter-1", "audit-enter-2"}
 
 
 def test_elimination_daily_summary_retries_failed_manager_card() -> None:
