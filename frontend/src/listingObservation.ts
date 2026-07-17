@@ -134,16 +134,26 @@ export function buildListingWorkbenchGroups(
   periodRows: readonly ObservationPeriodRow[],
   defaultFirstPeriodStart: string
 ): ListingWorkbenchGroup[] {
-  const contexts = buildListingTaskContexts(tasks, listings, defaultFirstPeriodStart) as PendingListingTask[];
-  return contexts.map((context) => {
-    const groupListings = listings.filter((listing) => listing.task_key === context.task_key);
+  const reusableListingIds = new Set(tasks.flatMap((task) => task.reusable_listing_ids));
+  const contexts = buildListingTaskContexts(
+    tasks,
+    listings.filter((listing) => !reusableListingIds.has(listing.id)),
+    defaultFirstPeriodStart
+  ) as PendingListingTask[];
+  return contexts.flatMap((context) => {
+    const reusableIds = new Set(context.reusable_listing_ids || []);
+    const groupListings = listings.filter((listing) =>
+      reusableIds.has(listing.id)
+      || (listing.task_key === context.task_key && !reusableListingIds.has(listing.id))
+    );
+    if (!context.requires_confirmation && !groupListings.length) return [];
     const listingIds = new Set(groupListings.map((listing) => listing.id));
-    return {
+    return [{
       context,
       listings: groupListings,
       periodRows: periodRows.filter((row) => listingIds.has(row.listing_record_id)),
-      pendingListing: groupListings.length === 0
-    };
+      pendingListing: Boolean(context.requires_confirmation)
+    }];
   });
 }
 
@@ -155,12 +165,21 @@ export function filterListingWorkbenchGroups(
     if (status === "pending_listing") return group.pendingListing ? [{ ...group, periodRows: [] }] : [];
     if (status === "all") return [group];
     const listingById = new Map(group.listings.map((listing) => [listing.id, listing]));
+    if (status === "pending_review") {
+      const visibleListingIds = new Set(group.periodRows.flatMap((row) => {
+        const listing = listingById.get(row.listing_record_id);
+        return listing?.status === "active" && row.status === "pending_review" ? [listing.id] : [];
+      }));
+      const periodRows = group.periodRows.filter((row) => visibleListingIds.has(row.listing_record_id));
+      return periodRows.length ? [{
+        ...group,
+        listings: group.listings.filter((listing) => visibleListingIds.has(listing.id)),
+        periodRows
+      }] : [];
+    }
     const periodRows = group.periodRows.filter((row) => {
       const listing = listingById.get(row.listing_record_id);
       if (!listing) return false;
-      if (status === "pending_review") {
-        return listing.status === "active" && row.tracking_status === "active" && row.status === "pending_review";
-      }
       if (status === "first_round_completed") return Boolean(listing.first_round_completed_at);
       if (status === "stopped") return listing.status === "active" && listing.tracking_status === "stopped";
       return listing.status === "voided";
@@ -175,13 +194,30 @@ export function filterListingWorkbenchGroups(
       const listingById = new Map(group.listings.map((listing) => [listing.id, listing]));
       return group.periodRows.some((row) => {
         const listing = listingById.get(row.listing_record_id);
-        return listing?.status === "active" && row.tracking_status === "active" && row.status === "pending_review";
+        return listing?.status === "active" && row.status === "pending_review";
       }) ? 1 : 2;
     };
     return priority(left) - priority(right)
       || left.context.main_sku.localeCompare(right.context.main_sku)
       || left.context.salesperson_name.localeCompare(right.context.salesperson_name);
   });
+}
+
+export function canEditObservationPeriod(
+  row: Pick<ObservationPeriodRow, "status">,
+  listing?: Pick<ListingRecord, "status">
+) {
+  return listing?.status === "active" && row.status !== "pending_data";
+}
+
+export function createObservationReviewDraft(row: ObservationPeriodRow): ObservationReviewDraft {
+  return {
+    period_id: row.id,
+    week_number: row.week_number,
+    product_positioning: row.product_positioning || row.default_product_positioning || "",
+    optimization_action: row.optimization_action || "",
+    four_week_summary: row.four_week_summary || ""
+  };
 }
 
 export function validateListingDrafts(rows: readonly ListingDraft[]): ListingDraftErrors[] {
@@ -334,6 +370,76 @@ export function productListingSummary<
   return { listings, periods: data.period_rows.filter((period) => listingIds.has(period.listing_record_id)) };
 }
 
+export function productListingSummaryByBusinessPeriod(
+  data: { listing_records: readonly ListingRecord[]; period_rows: readonly ObservationPeriodRow[] },
+  mainSku: string,
+  country?: string | null,
+  currentBusinessPeriod?: string | null
+) {
+  const summary = productListingSummary(data, mainSku, country);
+  const businessPeriods = [...new Set(summary.listings.flatMap((listing) => listing.source_business_periods))]
+    .sort((left, right) => Number(right === currentBusinessPeriod) - Number(left === currentBusinessPeriod));
+  return businessPeriods.map((businessPeriod) => {
+    const listings = summary.listings.filter((listing) => listing.source_business_periods.includes(businessPeriod));
+    const listingIds = new Set(listings.map((listing) => listing.id));
+    return {
+      business_period: businessPeriod,
+      listings,
+      periods: summary.periods.filter((period) => listingIds.has(period.listing_record_id))
+    };
+  });
+}
+
+export function saveListingDrafts(
+  storage: Storage,
+  userId: string,
+  taskKey: string,
+  drafts: readonly ListingDraft[]
+) {
+  saveDraft(storage, listingDraftKey(userId, taskKey), drafts);
+}
+
+export function restoreListingDrafts(
+  storage: Storage,
+  userId: string,
+  taskKey: string,
+  fallback: readonly ListingDraft[]
+): ListingDraft[] {
+  return restoreDraft(storage, listingDraftKey(userId, taskKey), isListingDrafts) || [...fallback];
+}
+
+export function clearListingDrafts(storage: Storage, userId: string, taskKey: string) {
+  clearDraft(storage, listingDraftKey(userId, taskKey));
+}
+
+export function saveObservationReviewDraft(
+  storage: Storage,
+  userId: string,
+  periodId: string,
+  draft: ObservationReviewDraft
+) {
+  saveDraft(storage, observationReviewDraftKey(userId, periodId), draft);
+}
+
+export function restoreObservationReviewDraft(
+  storage: Storage,
+  userId: string,
+  row: ObservationPeriodRow
+): ObservationReviewDraft {
+  return restoreDraft(
+    storage,
+    observationReviewDraftKey(userId, row.id),
+    (value): value is ObservationReviewDraft => isObservationReviewDraft(value)
+      && value.period_id === row.id
+      && value.week_number === row.week_number
+  )
+    || createObservationReviewDraft(row);
+}
+
+export function clearObservationReviewDraft(storage: Storage, userId: string, periodId: string) {
+  clearDraft(storage, observationReviewDraftKey(userId, periodId));
+}
+
 export function mapServerRowErrors(error: unknown): Record<number, ListingDraftErrors> {
   const source = parseError(error);
   const detail = isRecord(source.detail) ? source.detail : source;
@@ -364,6 +470,60 @@ function parseError(error: unknown): Record<string, unknown> {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function listingDraftKey(userId: string, taskKey: string) {
+  return `listing-observation:v1:${userId}:listing:${taskKey}`;
+}
+
+function observationReviewDraftKey(userId: string, periodId: string) {
+  return `listing-observation:v1:${userId}:period:${periodId}`;
+}
+
+function saveDraft(storage: Storage, key: string, data: unknown) {
+  try {
+    storage.setItem(key, JSON.stringify({ version: 1, data }));
+  } catch {
+    // Browsers may disable or exhaust Storage; the in-memory draft still works.
+  }
+}
+
+function restoreDraft<T>(storage: Storage, key: string, validate: (value: unknown) => value is T): T | null {
+  try {
+    const raw = storage.getItem(key);
+    if (raw === null) return null;
+    const value: unknown = JSON.parse(raw);
+    if (isRecord(value) && value.version === 1 && validate(value.data)) return value.data;
+  } catch {
+    // Invalid or unavailable Storage falls back to server data below.
+  }
+  clearDraft(storage, key);
+  return null;
+}
+
+function clearDraft(storage: Storage, key: string) {
+  try {
+    storage.removeItem(key);
+  } catch {
+    // Storage cleanup must not block the page.
+  }
+}
+
+function isListingDrafts(value: unknown): value is ListingDraft[] {
+  return Array.isArray(value) && value.every((draft) => isRecord(draft)
+    && typeof draft.shop === "string"
+    && typeof draft.item === "string"
+    && typeof draft.listing_strategy === "string"
+    && typeof draft.first_period_start === "string");
+}
+
+function isObservationReviewDraft(value: unknown): value is ObservationReviewDraft {
+  return isRecord(value)
+    && typeof value.period_id === "string"
+    && typeof value.week_number === "number"
+    && (value.product_positioning === "" || PRODUCT_POSITIONINGS.includes(value.product_positioning as ProductPositioning))
+    && typeof value.optimization_action === "string"
+    && typeof value.four_week_summary === "string";
 }
 
 function shanghaiDateText() {

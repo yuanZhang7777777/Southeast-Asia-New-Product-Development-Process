@@ -10,6 +10,10 @@ import {
 } from "./api";
 import {
   buildListingWorkbenchGroups,
+  canEditObservationPeriod,
+  clearListingDrafts,
+  clearObservationReviewDraft,
+  createObservationReviewDraft,
   createRequestGate,
   defaultNextBusinessPeriodStart,
   filterListingWorkbenchGroups,
@@ -27,8 +31,12 @@ import {
   ObservationReviewErrors,
   PRODUCT_POSITIONINGS,
   ProductPositioning,
-  productListingSummary,
+  productListingSummaryByBusinessPeriod,
   resolveWorkbenchScope,
+  restoreListingDrafts,
+  restoreObservationReviewDraft,
+  saveListingDrafts,
+  saveObservationReviewDraft,
   summarySalespersonScope,
   sortObservationRows,
   validateListingDrafts,
@@ -54,6 +62,7 @@ const DEFAULT_FILTERS: WorkbenchFilters = {
 };
 
 export function ListingObservationView(props: {
+  draftUserId: string;
   role: "operator" | "manager";
   operatorName: string;
   canManage: boolean;
@@ -98,13 +107,21 @@ export function ListingObservationView(props: {
         ...scope
       });
       if (!requestGate.current.isCurrent(requestId)) return;
+      const storage = browserStorage();
+      const taskKeys = unique([
+        ...response.pending_listing_tasks.map((task) => task.task_key),
+        ...response.listing_records.map((listing) => listing.task_key)
+      ]);
       setData(response);
       setSelectedPeriods([]);
-      setReviewDrafts((current) => {
-        const next = { ...current };
-        for (const row of response.period_rows) if (!next[row.id]) next[row.id] = reviewDraft(row);
-        return next;
-      });
+      setListingDrafts(Object.fromEntries(taskKeys.map((taskKey) => [
+        taskKey,
+        storage ? restoreListingDrafts(storage, props.draftUserId, taskKey, []) : []
+      ])));
+      setReviewDrafts(Object.fromEntries(response.period_rows.map((row) => [
+        row.id,
+        storage ? restoreObservationReviewDraft(storage, props.draftUserId, row) : createObservationReviewDraft(row)
+      ])));
     } catch (error) {
       if (requestGate.current.isCurrent(requestId)) props.onStatus(errorMessage(error, "刊登与观察工作台加载失败"));
     } finally {
@@ -114,7 +131,7 @@ export function ListingObservationView(props: {
 
   useEffect(() => {
     void loadWorkbench();
-  }, [props.role, props.canManage, props.operatorName]);
+  }, [props.role, props.canManage, props.operatorName, props.draftUserId]);
 
   useEffect(() => { if (summaryPeriodId) summaryDialog.current?.focus(); }, [summaryPeriodId]);
   useEffect(() => { if (newPeriod) newPeriodDialog.current?.focus(); }, [newPeriod?.listingId]);
@@ -173,10 +190,10 @@ export function ListingObservationView(props: {
     () => new Map(data.listing_records.map((listing) => [listing.id, listing])),
     [data.listing_records]
   );
-  const reviewableRows = visibleRows.filter((row) => canReview(row, listingById.get(row.listing_record_id)));
-  const reviewableIds = reviewableRows.map((row) => row.id);
-  const visibleSelectedIds = visibleSelectedPeriodIds(selectedPeriods, reviewableRows);
-  const allReviewableSelected = reviewableIds.length > 0 && reviewableIds.every((id) => visibleSelectedIds.includes(id));
+  const editableRows = visibleRows.filter((row) => canEditObservationPeriod(row, listingById.get(row.listing_record_id)));
+  const pendingReviewIds = editableRows.filter((row) => row.status === "pending_review").map((row) => row.id);
+  const visibleSelectedIds = visibleSelectedPeriodIds(selectedPeriods, editableRows);
+  const allPendingReviewSelected = pendingReviewIds.length > 0 && pendingReviewIds.every((id) => visibleSelectedIds.includes(id));
   const summaryRow = data.period_rows.find((row) => row.id === summaryPeriodId) || null;
   const summaryListing = summaryRow ? listingById.get(summaryRow.listing_record_id) : undefined;
   const latestPeriodIds = useMemo(() => latestPeriodIdsByListing(data.period_rows), [data.period_rows]);
@@ -252,20 +269,24 @@ export function ListingObservationView(props: {
   }
 
   function addListingDraft(task: PendingListingTask) {
-    setListingDrafts((current) => ({
-      ...current,
-      [task.task_key]: [
+    setListingDrafts((current) => {
+      const rows = [
         ...(current[task.task_key] || []),
         { shop: "", item: "", listing_strategy: "", first_period_start: task.default_first_period_start }
-      ]
-    }));
+      ];
+      const storage = browserStorage();
+      if (storage) saveListingDrafts(storage, props.draftUserId, task.task_key, rows);
+      return { ...current, [task.task_key]: rows };
+    });
   }
 
   function updateListingDraft(taskKey: string, index: number, field: keyof ListingDraft, value: string) {
-    setListingDrafts((current) => ({
-      ...current,
-      [taskKey]: (current[taskKey] || []).map((row, rowIndex) => rowIndex === index ? { ...row, [field]: value } : row)
-    }));
+    setListingDrafts((current) => {
+      const rows = (current[taskKey] || []).map((row, rowIndex) => rowIndex === index ? { ...row, [field]: value } : row);
+      const storage = browserStorage();
+      if (storage) saveListingDrafts(storage, props.draftUserId, taskKey, rows);
+      return { ...current, [taskKey]: rows };
+    });
     setListingErrors((current) => ({
       ...current,
       [taskKey]: (current[taskKey] || []).map((error, rowIndex) => rowIndex === index ? { ...error, [field]: undefined } : error)
@@ -273,10 +294,12 @@ export function ListingObservationView(props: {
   }
 
   function removeListingDraft(taskKey: string, index: number) {
-    setListingDrafts((current) => ({
-      ...current,
-      [taskKey]: (current[taskKey] || []).filter((_, rowIndex) => rowIndex !== index)
-    }));
+    setListingDrafts((current) => {
+      const rows = (current[taskKey] || []).filter((_, rowIndex) => rowIndex !== index);
+      const storage = browserStorage();
+      if (storage) saveListingDrafts(storage, props.draftUserId, taskKey, rows);
+      return { ...current, [taskKey]: rows };
+    });
   }
 
   async function submitListingCorrection() {
@@ -330,9 +353,10 @@ export function ListingObservationView(props: {
 
   async function submitListings(task: PendingListingTask) {
     const rows = listingDrafts[task.task_key] || [];
+    const reuseListingIds = task.requires_confirmation ? task.reusable_listing_ids : [];
     const errors = validateListingDrafts(rows);
     setListingErrors((current) => ({ ...current, [task.task_key]: errors }));
-    if (!rows.length || errors.some((entry) => Object.keys(entry).length)) {
+    if ((!rows.length && !reuseListingIds.length) || errors.some((entry) => Object.keys(entry).length)) {
       props.onStatus(rows.length ? "请修正标红的刊登信息后再提交" : "请先新增一条刊登记录");
       return;
     }
@@ -345,9 +369,21 @@ export function ListingObservationView(props: {
           item: row.item.trim(),
           listing_strategy: row.listing_strategy.trim(),
           first_period_start: row.first_period_start
-        }))
+        })),
+        reuse_listing_ids: reuseListingIds
       });
-      setListingDrafts((current) => ({ ...current, [task.task_key]: [] }));
+      const storage = browserStorage();
+      if (storage) clearListingDrafts(storage, props.draftUserId, task.task_key);
+      setListingDrafts((current) => {
+        const next = { ...current };
+        delete next[task.task_key];
+        return next;
+      });
+      setListingErrors((current) => {
+        const next = { ...current };
+        delete next[task.task_key];
+        return next;
+      });
       props.onStatus(`${task.main_sku} 刊登记录已提交`);
       await loadWorkbench();
     } catch (error) {
@@ -367,7 +403,12 @@ export function ListingObservationView(props: {
   }
 
   function updateReview(periodId: string, patch: Partial<ObservationReviewDraft>) {
-    setReviewDrafts((current) => ({ ...current, [periodId]: { ...current[periodId], ...patch } }));
+    setReviewDrafts((current) => {
+      const draft = { ...current[periodId], ...patch };
+      const storage = browserStorage();
+      if (storage) saveObservationReviewDraft(storage, props.draftUserId, periodId, draft);
+      return { ...current, [periodId]: draft };
+    });
     setReviewErrors((current) => {
       const next = { ...current };
       delete next[periodId];
@@ -376,7 +417,7 @@ export function ListingObservationView(props: {
   }
 
   async function submitReviews() {
-    const rows = visibleRows.filter((row) => visibleSelectedIds.includes(row.id)).map((row) => reviewDrafts[row.id] || reviewDraft(row));
+    const rows = visibleRows.filter((row) => visibleSelectedIds.includes(row.id)).map((row) => reviewDrafts[row.id] || createObservationReviewDraft(row));
     if (!rows.length) {
       props.onStatus("请先勾选要提交的周期");
       return;
@@ -398,6 +439,18 @@ export function ListingObservationView(props: {
           optimization_action: row.optimization_action.trim(),
           four_week_summary: row.four_week_summary.trim() || null
         }))
+      });
+      const storage = browserStorage();
+      for (const row of rows) if (storage) clearObservationReviewDraft(storage, props.draftUserId, row.period_id);
+      setReviewDrafts((current) => {
+        const next = { ...current };
+        for (const row of rows) delete next[row.period_id];
+        return next;
+      });
+      setReviewErrors((current) => {
+        const next = { ...current };
+        for (const row of rows) delete next[row.period_id];
+        return next;
       });
       setSelectedPeriods([]);
       props.onStatus(`已提交 ${rows.length} 条周期复盘`);
@@ -562,10 +615,10 @@ export function ListingObservationView(props: {
                       <input
                         type="checkbox"
                         aria-label="选择当前页全部待复盘周期"
-                        checked={allReviewableSelected}
+                        checked={allPendingReviewSelected}
                         onChange={(event) => setSelectedPeriods((current) => event.target.checked
-                          ? unique([...current, ...reviewableIds])
-                          : current.filter((id) => !reviewableIds.includes(id)))}
+                          ? unique([...current, ...pendingReviewIds])
+                          : current.filter((id) => !pendingReviewIds.includes(id)))}
                       />
                     </th>
                     <th className="listing-sticky sticky-1">主 SKU</th>
@@ -630,9 +683,9 @@ export function ListingObservationView(props: {
                         </tr>
                       )}
                       {group.periodRows.map((row) => {
-                        const draft = reviewDrafts[row.id] || reviewDraft(row);
+                        const draft = reviewDrafts[row.id] || createObservationReviewDraft(row);
                         const listing = listingById.get(row.listing_record_id);
-                        const editable = canReview(row, listing);
+                        const editable = canEditObservationPeriod(row, listing);
                         const isLastPeriod = latestPeriodIds[row.listing_record_id] === row.id;
                         return (
                           <tr key={row.id}>
@@ -744,15 +797,15 @@ export function ListingObservationView(props: {
             <p>第 4 周的定位、优化操作和四周总结一起提交。</p>
             <textarea
               className={reviewErrors[summaryRow.id]?.four_week_summary ? "listing-error-input" : ""}
-              value={(reviewDrafts[summaryRow.id] || reviewDraft(summaryRow)).four_week_summary}
-              disabled={!canReview(summaryRow, summaryListing)}
+              value={(reviewDrafts[summaryRow.id] || createObservationReviewDraft(summaryRow)).four_week_summary}
+              disabled={!canEditObservationPeriod(summaryRow, summaryListing)}
               onChange={(event) => updateReview(summaryRow.id, { four_week_summary: event.target.value })}
               placeholder="总结首轮四周表现、主要问题和后续动作"
             />
             <FieldError message={reviewErrors[summaryRow.id]?.four_week_summary} />
             <div className="listing-dialog-actions">
               <button className="btn primary" type="button" onClick={closeSummary}>
-                {canReview(summaryRow, summaryListing) ? "保存填写" : "关闭"}
+                {canEditObservationPeriod(summaryRow, summaryListing) ? "保存填写" : "关闭"}
               </button>
             </div>
           </div>
@@ -842,6 +895,7 @@ export function ListingObservationView(props: {
 export function ListingObservationSummary(props: {
   mainSku: string;
   country?: string | null;
+  currentBusinessPeriod?: string | null;
   role: "operator" | "manager";
   operatorName: string;
   canManage: boolean;
@@ -868,45 +922,54 @@ export function ListingObservationSummary(props: {
     });
   }, [props.mainSku, props.country, props.role, props.operatorName, props.canManage]);
 
-  const summary = useMemo(() => productListingSummary(data, props.mainSku, props.country), [data, props.country, props.mainSku]);
-  const periods = useMemo(() => sortObservationRows(summary.periods), [summary.periods]);
+  const summaryGroups = useMemo(() => productListingSummaryByBusinessPeriod(
+    data,
+    props.mainSku,
+    props.country,
+    props.currentBusinessPeriod
+  ), [data, props.country, props.currentBusinessPeriod, props.mainSku]);
 
   if (loading) return <p className="muted detail-empty">正在加载刊登与观察记录...</p>;
   if (error) return <p className="muted detail-empty">{error}</p>;
-  if (!summary.listings.length) return <p className="muted detail-empty">暂无刊登与观察记录。</p>;
+  if (!summaryGroups.length) return <p className="muted detail-empty">暂无刊登与观察记录。</p>;
   return (
     <div className="listing-summary-readonly">
-      <div className="listing-summary-cards">
-        {summary.listings.map((listing) => (
-          <div className="listing-summary-card" key={listing.id}>
-            <b>{listing.shop} · {listing.item}</b>
-            <span>刊登策略：{listing.listing_strategy}</span>
-            <span>首周：{listing.first_period_start}</span>
-            <span>{listingStatusLabel(listing)}</span>
-          </div>
-        ))}
-      </div>
-      <div className="listing-table-scroll">
-        <table className="detail-table listing-summary-table">
-          <thead><tr><th>店铺 / Item</th><th>周次</th><th>业务周期</th><th>订单量</th><th>总收入</th><th>一次毛利额</th><th>一次毛利率</th><th>产品定位</th><th>优化操作</th><th>四周总结</th></tr></thead>
-          <tbody>
-            {periods.map((period) => (
-              <tr key={period.id}>
-                <td>{period.shop}<br /><b>{period.item}</b></td>
-                <td>第 {period.week_number} 周</td>
-                <td>{period.period_start} 至 {period.period_end}</td>
-                <td>{period.status === "pending_data" ? "-" : formatObservationMetric(period.order_count)}</td>
-                <td>{period.status === "pending_data" ? "-" : formatObservationMetric(period.total_revenue)}</td>
-                <td>{period.status === "pending_data" ? "-" : formatObservationMetric(period.gross_profit_amount)}</td>
-                <td>{period.status === "pending_data" ? "-" : formatPercent(period.gross_profit_rate)}</td>
-                <td>{period.product_positioning || "-"}</td>
-                <td>{period.optimization_action || "-"}</td>
-                <td>{period.four_week_summary || "-"}</td>
-              </tr>
+      {summaryGroups.map((group, index) => (
+        <details key={group.business_period || "未标记业务期"} open={index === 0}>
+          <summary>{group.business_period || "未标记业务期"} · {group.listings.length} 个 Item</summary>
+          <div className="listing-summary-cards">
+            {group.listings.map((listing) => (
+              <div className="listing-summary-card" key={listing.id}>
+                <b>{listing.shop} · {listing.item}</b>
+                <span>刊登策略：{listing.listing_strategy}</span>
+                <span>首周：{listing.first_period_start}</span>
+                <span>{listingStatusLabel(listing)}</span>
+              </div>
             ))}
-          </tbody>
-        </table>
-      </div>
+          </div>
+          <div className="listing-table-scroll">
+            <table className="detail-table listing-summary-table">
+              <thead><tr><th>店铺 / Item</th><th>周次</th><th>业务周期</th><th>订单量</th><th>总收入</th><th>一次毛利额</th><th>一次毛利率</th><th>产品定位</th><th>优化操作</th><th>四周总结</th></tr></thead>
+              <tbody>
+                {sortObservationRows(group.periods).map((period) => (
+                  <tr key={period.id}>
+                    <td>{period.shop}<br /><b>{period.item}</b></td>
+                    <td>第 {period.week_number} 周</td>
+                    <td>{period.period_start} 至 {period.period_end}</td>
+                    <td>{period.status === "pending_data" ? "-" : formatObservationMetric(period.order_count)}</td>
+                    <td>{period.status === "pending_data" ? "-" : formatObservationMetric(period.total_revenue)}</td>
+                    <td>{period.status === "pending_data" ? "-" : formatObservationMetric(period.gross_profit_amount)}</td>
+                    <td>{period.status === "pending_data" ? "-" : formatPercent(period.gross_profit_rate)}</td>
+                    <td>{period.product_positioning || "-"}</td>
+                    <td>{period.optimization_action || "-"}</td>
+                    <td>{period.four_week_summary || "-"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </details>
+      ))}
     </div>
   );
 }
@@ -933,7 +996,8 @@ function PendingListingTasks(props: {
       {props.tasks.map((task) => {
         const rows = props.drafts[task.task_key] || [];
         const errors = props.errors[task.task_key] || [];
-        const records = props.records.filter((record) => record.task_key === task.task_key);
+        const records = props.records;
+        const reuseCount = task.requires_confirmation ? task.reusable_listing_ids.length : 0;
         return (
           <section className="pending-listing-card" key={task.task_key}>
             <div className="pending-listing-head">
@@ -993,9 +1057,9 @@ function PendingListingTasks(props: {
               </div>
             ) : <div className="pending-listing-empty">点击“新增店铺 + Item”，填写店铺、Item、刊登策略和第一周起始周期。</div>}
             <div className="pending-listing-submit">
-              <span>同一主 SKU 可新增多条；任一行校验失败，整批都不会写入。</span>
-              <button className="btn primary" type="button" disabled={props.loading || !rows.length} onClick={() => props.onSubmit(task)}>
-                一键提交 {rows.length || ""} 条
+              <span>{reuseCount ? `将沿用 ${reuseCount} 个现有 Item；` : ""}同一主 SKU 可新增多条；任一行校验失败，整批都不会写入。</span>
+              <button className="btn primary" type="button" disabled={props.loading || (!rows.length && !reuseCount)} onClick={() => props.onSubmit(task)}>
+                {reuseCount ? `确认沿用现有 Item${rows.length ? ` + 新增 ${rows.length} 条` : ""}` : `一键提交 ${rows.length || ""} 条`}
               </button>
             </div>
           </section>
@@ -1005,33 +1069,21 @@ function PendingListingTasks(props: {
   );
 }
 
-function reviewDraft(row: ObservationPeriodRow): ObservationReviewDraft {
-  return {
-    period_id: row.id,
-    week_number: row.week_number,
-    product_positioning: row.product_positioning || "",
-    optimization_action: row.optimization_action || "",
-    four_week_summary: row.four_week_summary || ""
-  };
-}
-
-function canReview(row: ObservationPeriodRow, listing?: ListingRecord) {
-  return listing?.status === "active"
-    && row.status === "pending_review"
-    && row.tracking_status === "active";
-}
-
 function periodStatusLabel(row: ObservationPeriodRow, listing?: ListingRecord) {
   if (listing?.status === "voided") return "已作废";
-  if (row.tracking_status === "stopped") return "停止跟踪";
+  const stopped = listing?.tracking_status === "stopped" || row.tracking_status === "stopped";
+  if (stopped && row.status === "pending_review") return "停止跟踪 · 待复盘";
+  if (stopped) return "停止跟踪";
   if (row.status === "pending_data") return "观察中";
   if (row.status === "pending_review") return "待复盘";
   return "本周已复盘";
 }
 
 function periodStatusClass(row: ObservationPeriodRow, listing?: ListingRecord) {
-  if (listing?.status === "voided" || row.tracking_status === "stopped" || row.status === "pending_data") return "gray";
-  return row.status === "pending_review" ? "amber" : "green";
+  if (listing?.status === "voided" || row.status === "pending_data") return "gray";
+  if (row.status === "pending_review") return "amber";
+  if (listing?.tracking_status === "stopped" || row.tracking_status === "stopped") return "gray";
+  return "green";
 }
 
 function listingStatusLabel(record: ListingRecord) {
@@ -1047,6 +1099,14 @@ function FieldError({ message }: { message?: string }) {
 
 function unique(values: string[]) {
   return Array.from(new Set(values.filter(Boolean)));
+}
+
+function browserStorage() {
+  try {
+    return window.localStorage;
+  } catch {
+    return null;
+  }
 }
 
 function errorMessage(error: unknown, fallback: string) {

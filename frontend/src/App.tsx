@@ -1157,6 +1157,8 @@ function App() {
             )}
             {activeView === "listing" && (
               <ListingObservationView
+                key={authSession.user.id}
+                draftUserId={authSession.user.id}
                 role={activeRole}
                 operatorName={activeOperator}
                 canManage={canManage}
@@ -1976,6 +1978,7 @@ function ProductDetailView(props: {
                 <ListingObservationSummary
                   mainSku={group.main_sku}
                   country={activeChild.country || item.country}
+                  currentBusinessPeriod={activeChild.source_sheet || item.source_sheet}
                   role={props.activeRole}
                   operatorName={props.operatorName}
                   canManage={props.canManage}
