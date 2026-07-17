@@ -2245,6 +2245,70 @@ summary {
   text-overflow: ellipsis;
 }
 
+.reject-reason-picker {
+  position: relative;
+  min-width: 0;
+}
+
+.reject-reason-picker[open] {
+  z-index: 12;
+}
+
+.reject-reason-picker > summary {
+  min-height: 32px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 8px;
+  background: #fff;
+  cursor: pointer;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.reject-reason-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 20;
+  display: grid;
+  gap: 8px;
+  width: min(360px, calc(100vw - 48px));
+  max-height: 360px;
+  overflow-y: auto;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #fff;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.14);
+}
+
+.reject-reason-options {
+  display: grid;
+  gap: 4px;
+}
+
+.reject-reason-option {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  padding: 4px;
+}
+
+.reject-reason-option input {
+  width: 16px;
+  min-height: 16px;
+  margin-top: 2px;
+  padding: 0;
+}
+
+.reject-reason-custom {
+  display: grid;
+  gap: 4px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+
 .claim-editor.drawer .claim-editor-field {
   font-size: 13px;
 }

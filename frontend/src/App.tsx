@@ -47,7 +47,7 @@ import {
   setAuthToken,
   Task
 } from "./api";
-import { ClaimDraftState, claimSubmissionState, createClaimDraft, createClaimDraftFromLatest, parseClaimEvidenceImages, patchClaimDraftGroup } from "./claimDrafts";
+import { ClaimDraftState, claimSubmissionState, createClaimDraft, createClaimDraftFromLatest, formatRejectReason, parseClaimEvidenceImages, parseRejectReason, patchClaimDraftGroup, REJECT_REASON_OPTIONS } from "./claimDrafts";
 import { filterAssignmentItems, groupOperatorProfilesBySite, moveOperatorWithinSite, reorderOperatorWithinSite, sortOperatorProfiles } from "./assignmentFilters";
 import { competitorGroupForColumn, competitorGroupForLabel } from "./competitorGroups";
 import { ImportResults, recordImportResult } from "./importResults";
@@ -3435,7 +3435,7 @@ function ClaimDraftEditor(props: {
           不认领
         </button>
       </div>
-      <label className="claim-editor-field primary-field">
+      <div className="claim-editor-field primary-field">
         <span>{primaryLabel}</span>
         {draft.mode === "claim" ? (
           <input
@@ -3447,13 +3447,12 @@ function ClaimDraftEditor(props: {
             value={draft.claimDailySales}
           />
         ) : (
-          <input
-            onChange={(event) => props.onPatch({ rejectReason: event.target.value })}
-            placeholder="必填原因"
+          <RejectReasonPicker
+            onChange={(rejectReason) => props.onPatch({ rejectReason })}
             value={draft.rejectReason}
           />
         )}
-      </label>
+      </div>
       <label className="claim-editor-field conclusion-field">
         <span>调研结论</span>
         {props.compact ? (
@@ -3730,17 +3729,24 @@ function ClaimMatrixDraftEditor(props: {
           <XCircle size={14} />不认领
         </button>
       </div>
-      <label className="claim-editor-field">
+      <div className="claim-editor-field">
         <span>{props.draft.mode === "claim" ? "认领单销" : "不认领原因"}</span>
-        <input
-          min={props.draft.mode === "claim" ? "0" : undefined}
-          onChange={(event) => props.onPatch(props.draft.mode === "claim" ? { claimDailySales: event.target.value } : { rejectReason: event.target.value })}
-          placeholder={props.draft.mode === "claim" ? "单销" : "必填原因"}
-          step={props.draft.mode === "claim" ? "0.01" : undefined}
-          type={props.draft.mode === "claim" ? "number" : "text"}
-          value={props.draft.mode === "claim" ? props.draft.claimDailySales : props.draft.rejectReason}
-        />
-      </label>
+        {props.draft.mode === "claim" ? (
+          <input
+            min="0"
+            onChange={(event) => props.onPatch({ claimDailySales: event.target.value })}
+            placeholder="单销"
+            step="0.01"
+            type="number"
+            value={props.draft.claimDailySales}
+          />
+        ) : (
+          <RejectReasonPicker
+            onChange={(rejectReason) => props.onPatch({ rejectReason })}
+            value={props.draft.rejectReason}
+          />
+        )}
+      </div>
       <label className="claim-editor-field conclusion-field">
         <span>调研结论</span>
         <input
@@ -3794,6 +3800,44 @@ function reviewDraftFor(item?: Opportunity | null): ReviewDraft {
     reviewStatus: item?.current_status === "claim_rejected" ? "confirmed_not_claim" : "approved",
     reviewComment: ""
   };
+}
+
+function RejectReasonPicker(props: { value: string; onChange: (value: string) => void }) {
+  const parsed = parseRejectReason(props.value);
+  const summary = props.value || "请选择或填写原因";
+
+  return (
+    <details className="reject-reason-picker">
+      <summary title={props.value}>{parsed.selected.length ? `已选 ${parsed.selected.length} 项 · ${summary}` : summary}</summary>
+      <div className="reject-reason-menu">
+        <div className="reject-reason-options">
+          {REJECT_REASON_OPTIONS.map((option) => (
+            <label className="reject-reason-option" key={option}>
+              <input
+                checked={parsed.selected.includes(option)}
+                onChange={(event) => props.onChange(formatRejectReason(
+                  event.target.checked
+                    ? [...parsed.selected, option]
+                    : parsed.selected.filter((item) => item !== option),
+                  parsed.custom
+                ))}
+                type="checkbox"
+              />
+              <span>{option}</span>
+            </label>
+          ))}
+        </div>
+        <label className="reject-reason-custom">
+          <span>其他原因</span>
+          <input
+            onChange={(event) => props.onChange(formatRejectReason(parsed.selected, event.target.value))}
+            placeholder="其他原因"
+            value={parsed.custom}
+          />
+        </label>
+      </div>
+    </details>
+  );
 }
 
 function pasteClaimEvidence(

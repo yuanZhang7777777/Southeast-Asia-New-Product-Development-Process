@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
@@ -11,6 +12,19 @@ import {
   patchClaimDraftGroup,
   REJECT_REASON_OPTIONS
 } from "../src/claimDrafts.ts";
+
+const appSource = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
+
+test("运营列表和商品详情复用不认领原因选择器", () => {
+  assert.equal(appSource.match(/<RejectReasonPicker/g)?.length, 2);
+  const picker = appSource.slice(
+    appSource.indexOf("function RejectReasonPicker"),
+    appSource.indexOf("function pasteClaimEvidence")
+  );
+  assert.match(picker, /REJECT_REASON_OPTIONS\.map/);
+  assert.match(picker, /type="checkbox"/);
+  assert.match(picker, /placeholder="其他原因"/);
+});
 
 test("不认领原因提供确认的固定选项", () => {
   assert.deepEqual(REJECT_REASON_OPTIONS, [
