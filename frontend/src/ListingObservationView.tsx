@@ -324,7 +324,14 @@ export function ListingObservationView(props: {
     });
   }
 
+  function captureWorkbenchScope() {
+    const capturedScopeKey = workbenchScopeKey;
+    return () => workbenchScopeKeyRef.current === capturedScopeKey;
+  }
+
   async function submitListingCorrection() {
+    const isCurrentScope = captureWorkbenchScope();
+    if (!isCurrentScope()) return;
     if (!editingListing) return;
     const errors = editingListing.hasMetrics
       ? { ...(!editingListing.draft.listing_strategy.trim() && { listing_strategy: "请填写刊登策略" }) }
@@ -342,18 +349,22 @@ export function ListingObservationView(props: {
         if (draft.first_period_start !== editingListing.record.first_period_start) patch.first_period_start = draft.first_period_start;
       }
       await api.updateListing(editingListing.record.id, patch);
+      if (!isCurrentScope()) return;
       setEditingListing(null);
       restoreDialogFocus();
       props.onStatus(`${editingListing.record.item} 刊登信息已更新`);
       await loadWorkbench();
     } catch (error) {
+      if (!isCurrentScope()) return;
       props.onStatus(errorMessage(error, "刊登信息更新失败"));
     } finally {
-      setLoading(false);
+      if (isCurrentScope()) setLoading(false);
     }
   }
 
   async function submitVoidListing() {
+    const isCurrentScope = captureWorkbenchScope();
+    if (!isCurrentScope()) return;
     if (!voidingListing) return;
     if (!voidingListing.reason.trim()) {
       props.onStatus("请填写作废原因");
@@ -362,18 +373,22 @@ export function ListingObservationView(props: {
     setLoading(true);
     try {
       await api.updateListing(voidingListing.record.id, { status: "voided", void_reason: voidingListing.reason.trim() });
+      if (!isCurrentScope()) return;
       setVoidingListing(null);
       restoreDialogFocus();
       props.onStatus(`${voidingListing.record.item} 已作废并保留历史`);
       await loadWorkbench();
     } catch (error) {
+      if (!isCurrentScope()) return;
       props.onStatus(errorMessage(error, "刊登记录作废失败"));
     } finally {
-      setLoading(false);
+      if (isCurrentScope()) setLoading(false);
     }
   }
 
   async function submitListings(task: PendingListingTask) {
+    const isCurrentScope = captureWorkbenchScope();
+    if (!isCurrentScope()) return;
     const rows = listingDrafts[task.task_key] || [];
     const reuseListingIds = task.requires_confirmation ? task.reusable_listing_ids : [];
     const errors = validateListingDrafts(rows);
@@ -397,6 +412,7 @@ export function ListingObservationView(props: {
       const storage = browserStorage();
       submittedListingDraftKeys.current.add(task.task_key);
       if (storage) clearListingDrafts(storage, props.draftUserId, task.task_key);
+      if (!isCurrentScope()) return;
       setListingDrafts((current) => {
         const next = { ...current };
         delete next[task.task_key];
@@ -410,6 +426,7 @@ export function ListingObservationView(props: {
       props.onStatus(`${task.main_sku} 刊登记录已提交`);
       await loadWorkbench();
     } catch (error) {
+      if (!isCurrentScope()) return;
       const rowErrors = mapServerRowErrors(error);
       if (Object.keys(rowErrors).length) {
         setListingErrors((current) => ({
@@ -421,7 +438,7 @@ export function ListingObservationView(props: {
         props.onStatus(errorMessage(error, "刊登记录提交失败"));
       }
     } finally {
-      setLoading(false);
+      if (isCurrentScope()) setLoading(false);
     }
   }
 
@@ -441,6 +458,8 @@ export function ListingObservationView(props: {
   }
 
   async function submitReviews() {
+    const isCurrentScope = captureWorkbenchScope();
+    if (!isCurrentScope()) return;
     const rows = visibleRows.filter((row) => visibleSelectedIds.includes(row.id)).map((row) => reviewDrafts[row.id] || createObservationReviewDraft(row));
     if (!rows.length) {
       props.onStatus("请先勾选要提交的周期");
@@ -469,6 +488,7 @@ export function ListingObservationView(props: {
         submittedPeriodDraftKeys.current.add(row.period_id);
         if (storage) clearObservationReviewDraft(storage, props.draftUserId, row.period_id);
       }
+      if (!isCurrentScope()) return;
       setReviewDrafts((current) => {
         const next = { ...current };
         for (const row of rows) delete next[row.period_id];
@@ -483,6 +503,7 @@ export function ListingObservationView(props: {
       props.onStatus(`已提交 ${rows.length} 条周期复盘`);
       await loadWorkbench();
     } catch (error) {
+      if (!isCurrentScope()) return;
       const rowErrors = mapReviewServerRowErrors(error, rows);
       if (Object.keys(rowErrors).length) {
         setReviewErrors(rowErrors);
@@ -493,21 +514,25 @@ export function ListingObservationView(props: {
         props.onStatus(errorMessage(error, "周期复盘提交失败；本批次没有写入数据"));
       }
     } finally {
-      setLoading(false);
+      if (isCurrentScope()) setLoading(false);
     }
   }
 
   async function changeListingTracking(record: ListingRecord) {
+    const isCurrentScope = captureWorkbenchScope();
+    if (!isCurrentScope()) return;
     const next = record.tracking_status === "active" ? "stopped" : "active";
     setLoading(true);
     try {
       await api.updateListing(record.id, { tracking_status: next });
+      if (!isCurrentScope()) return;
       props.onStatus(next === "stopped" ? `${record.item} 已停止跟踪` : `${record.item} 已恢复跟踪`);
       await loadWorkbench();
     } catch (error) {
+      if (!isCurrentScope()) return;
       props.onStatus(errorMessage(error, "跟踪状态更新失败"));
     } finally {
-      setLoading(false);
+      if (isCurrentScope()) setLoading(false);
     }
   }
 
@@ -517,6 +542,8 @@ export function ListingObservationView(props: {
   }
 
   async function submitNewPeriod() {
+    const isCurrentScope = captureWorkbenchScope();
+    if (!isCurrentScope()) return;
     if (!newPeriod?.periodStart) {
       props.onStatus("请选择新增周期的开始日期");
       return;
@@ -524,13 +551,15 @@ export function ListingObservationView(props: {
     setLoading(true);
     try {
       await api.addListingPeriod(newPeriod.listingId, { period_start: newPeriod.periodStart });
+      if (!isCurrentScope()) return;
       closeNewPeriod();
       props.onStatus("后续周期已新增");
       await loadWorkbench();
     } catch (error) {
+      if (!isCurrentScope()) return;
       props.onStatus(errorMessage(error, "新增周期失败"));
     } finally {
-      setLoading(false);
+      if (isCurrentScope()) setLoading(false);
     }
   }
 

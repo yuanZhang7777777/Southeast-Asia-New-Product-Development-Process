@@ -659,6 +659,47 @@ test("工作台请求结果必须同时匹配最后请求和当前身份范围",
   assert.match(loadWorkbenchSource, /if \(!isCurrent\(\)\) return;/);
 });
 
+test("旧身份范围的异步提交完成后不得清空新范围可见状态", () => {
+  assert.match(
+    listingObservationViewSource,
+    /function captureWorkbenchScope\(\) \{[\s\S]*const capturedScopeKey = workbenchScopeKey;[\s\S]*return \(\) => workbenchScopeKeyRef\.current === capturedScopeKey;/
+  );
+
+  const functionSource = (name: string, nextMarker: string) => {
+    const start = listingObservationViewSource.indexOf(`async function ${name}`);
+    const end = listingObservationViewSource.indexOf(nextMarker, start);
+    assert.ok(start >= 0 && end > start, `${name} source should be present`);
+    return listingObservationViewSource.slice(start, end);
+  };
+  const mutations = [
+    functionSource("submitListingCorrection", "async function submitVoidListing"),
+    functionSource("submitVoidListing", "async function submitListings"),
+    functionSource("submitListings", "function updateReview"),
+    functionSource("submitReviews", "async function changeListingTracking"),
+    functionSource("changeListingTracking", "async function changeTracking"),
+    functionSource("submitNewPeriod", "  return (")
+  ];
+  for (const source of mutations) {
+    assert.match(source, /const isCurrentScope = captureWorkbenchScope\(\);/);
+    assert.match(source, /if \(!isCurrentScope\(\)\) return;/);
+    assert.match(source, /if \(isCurrentScope\(\)\) setLoading\(false\);/);
+  }
+
+  const listingSubmitSource = mutations[2];
+  const listingCleanup = listingSubmitSource.indexOf("clearListingDrafts");
+  const listingSuccessGuard = listingSubmitSource.indexOf("if (!isCurrentScope()) return;", listingCleanup);
+  assert.ok(listingCleanup >= 0 && listingSuccessGuard > listingCleanup);
+  assert.ok(listingSubmitSource.indexOf("setListingDrafts", listingSuccessGuard) > listingSuccessGuard);
+
+  const reviewSubmitSource = mutations[3];
+  const reviewCleanup = reviewSubmitSource.indexOf("clearObservationReviewDraft");
+  const reviewSuccessGuard = reviewSubmitSource.indexOf("if (!isCurrentScope()) return;", reviewCleanup);
+  assert.ok(reviewCleanup >= 0 && reviewSuccessGuard > reviewCleanup);
+  for (const marker of ["setReviewDrafts", "setSelectedPeriods([])", "props.onStatus", "await loadWorkbench()"]) {
+    assert.ok(reviewSubmitSource.indexOf(marker, reviewSuccessGuard) > reviewSuccessGuard, `${marker} should follow the scope guard`);
+  }
+});
+
 class MemoryStorage implements Storage {
   readonly values = new Map<string, string>();
   readonly throwing: Set<"get" | "set" | "remove">;
