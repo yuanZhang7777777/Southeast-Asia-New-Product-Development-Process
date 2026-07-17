@@ -1181,7 +1181,7 @@ def list_pending_listing_tasks(
             if listing.source_group_key != key
         ) if key in waiting_group_keys else []
         group["reusable_listing_ids"] = reusable_ids
-        group["requires_confirmation"] = bool(reusable_ids)
+        group["requires_confirmation"] = key in waiting_group_keys
     return sorted(groups.values(), key=lambda item: (item["business_period"] or "", item["main_sku"], item["salesperson_name"]))
 
 

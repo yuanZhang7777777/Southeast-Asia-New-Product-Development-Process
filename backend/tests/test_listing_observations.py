@@ -259,7 +259,7 @@ def test_reuse_and_new_rows_are_atomic_when_reused_listing_is_invalid(
         db.commit()
 
     later_task = listing_task_for_period(headers, "开发0710期")
-    assert later_task["requires_confirmation"] is False
+    assert later_task["requires_confirmation"] is True
     assert later_task["reusable_listing_ids"] == []
 
     response = client.post(
@@ -345,7 +345,7 @@ def test_cross_period_reuse_does_not_match_other_site_owner_or_main_sku(mismatch
     )
 
     later_task = listing_task_for_period(later_headers, "开发0710期")
-    assert later_task["requires_confirmation"] is False
+    assert later_task["requires_confirmation"] is True
     assert later_task["reusable_listing_ids"] == []
 
     response = client.post(
@@ -870,6 +870,45 @@ def test_shop_item_and_start_lock_after_metrics_but_strategy_remains_editable() 
             False,
         )
         assert updated.listing_strategy == "调整后的策略"
+
+
+def test_concurrent_item_conflict_commits_before_building_update_response(monkeypatch) -> None:
+    headers = login("销售A", "operator", "dt-a")
+    with SessionLocal() as db:
+        listing = seeded_listing("销售A", date(2026, 7, 16))
+        listing.item = "ITEM-A"
+        conflict = seeded_listing("销售A", date(2026, 8, 13))
+        conflict.item = "ITEM-B"
+        db.add_all([listing, conflict])
+        db.commit()
+        listing_id = listing.id
+
+    def force_concurrent_conflict(db, listing_id, *_args, **_kwargs):
+        listing = db.get(models.ListingRecord, listing_id)
+        listing.item = "ITEM-B"
+        return listing
+
+    source_context_calls = 0
+    original_source_context = services.listing_source_context
+
+    def tracked_source_context(*args, **kwargs):
+        nonlocal source_context_calls
+        source_context_calls += 1
+        return original_source_context(*args, **kwargs)
+
+    monkeypatch.setattr(services, "update_listing_record", force_concurrent_conflict)
+    monkeypatch.setattr(services, "listing_source_context", tracked_source_context)
+
+    response = client.patch(
+        f"/listing-workbench/listings/{listing_id}",
+        headers=headers,
+        json={"item": "ITEM-B"},
+    )
+
+    assert response.status_code == 409
+    assert source_context_calls == 0
+    with SessionLocal() as db:
+        assert db.get(models.ListingRecord, listing_id).item == "ITEM-A"
 
 
 def test_only_manager_can_void_a_listing() -> None:

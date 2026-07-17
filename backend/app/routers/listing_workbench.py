@@ -120,14 +120,13 @@ def update_listing(
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    source_context = services.listing_source_context(db, [listing])
-    result = services.listing_record_read(listing, source_context[listing.id])
     try:
         db.commit()
     except IntegrityError as exc:
         db.rollback()
         raise HTTPException(status_code=409, detail="item already exists") from exc
-    return result
+    source_context = services.listing_source_context(db, [listing])
+    return services.listing_record_read(listing, source_context[listing.id])
 
 
 @router.post("/listings/{listing_id}/periods", response_model=schemas.ObservationPeriodRead)
