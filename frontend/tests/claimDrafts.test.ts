@@ -1,7 +1,49 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { claimSubmissionState, createClaimDraft, createClaimDraftFromLatest, parseClaimEvidenceImages, patchClaimDraftGroup } from "../src/claimDrafts.ts";
+import {
+  claimSubmissionState,
+  createClaimDraft,
+  createClaimDraftFromLatest,
+  formatRejectReason,
+  parseClaimEvidenceImages,
+  parseRejectReason,
+  patchClaimDraftGroup,
+  REJECT_REASON_OPTIONS
+} from "../src/claimDrafts.ts";
+
+test("不认领原因提供确认的固定选项", () => {
+  assert.deepEqual(REJECT_REASON_OPTIONS, [
+    "稳定期利润率过低",
+    "产品生命周期过短",
+    "市场需求量过小",
+    "调研数据不真实",
+    "侵权/违规风险过高",
+    "产品需认证资质",
+    "抛货/重货/易碎品",
+    "系统已有同款",
+    "竞对销量差",
+    "之前卖过类似款无销量",
+    "市场竞对过多，优势不明显",
+    "系统类似款成本更低",
+    "近期销量下跌",
+    "属性价差超5倍",
+    "老链接垄断，同类型产品市场竞争大"
+  ]);
+});
+
+test("不认领原因按固定顺序合并多选和自定义内容", () => {
+  const parsed = parseRejectReason("产品生命周期过短；稳定期利润率过低；临时补充");
+  assert.deepEqual(parsed, {
+    selected: ["稳定期利润率过低", "产品生命周期过短"],
+    custom: "临时补充"
+  });
+  assert.equal(
+    formatRejectReason(["产品生命周期过短", "稳定期利润率过低"], "临时补充"),
+    "稳定期利润率过低；产品生命周期过短；临时补充"
+  );
+  assert.deepEqual(parseRejectReason("历史自由文本"), { selected: [], custom: "历史自由文本" });
+});
 
 test("历史认领图片从已提交 note 恢复", () => {
   assert.deepEqual(

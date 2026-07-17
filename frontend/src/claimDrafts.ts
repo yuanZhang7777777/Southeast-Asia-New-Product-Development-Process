@@ -25,6 +25,40 @@ export type ClaimEvidenceImage = {
 
 export type ClaimSubmissionState = "pending" | "dirty" | "submitted";
 
+export const REJECT_REASON_OPTIONS = [
+  "稳定期利润率过低",
+  "产品生命周期过短",
+  "市场需求量过小",
+  "调研数据不真实",
+  "侵权/违规风险过高",
+  "产品需认证资质",
+  "抛货/重货/易碎品",
+  "系统已有同款",
+  "竞对销量差",
+  "之前卖过类似款无销量",
+  "市场竞对过多，优势不明显",
+  "系统类似款成本更低",
+  "近期销量下跌",
+  "属性价差超5倍",
+  "老链接垄断，同类型产品市场竞争大"
+] as const;
+
+export function parseRejectReason(value: string) {
+  const parts = value.split("；").map((part) => part.trim()).filter(Boolean);
+  const options = new Set<string>(REJECT_REASON_OPTIONS);
+  return {
+    selected: REJECT_REASON_OPTIONS.filter((option) => parts.includes(option)),
+    custom: parts.filter((part) => !options.has(part)).join("；")
+  };
+}
+
+export function formatRejectReason(selected: readonly string[], custom: string) {
+  const selectedSet = new Set(selected);
+  return [...REJECT_REASON_OPTIONS.filter((option) => selectedSet.has(option)), custom.trim()]
+    .filter(Boolean)
+    .join("；");
+}
+
 export function createClaimDraft<TImage = unknown>(): ClaimDraftState<TImage> {
   return { mode: "claim", claimDailySales: "", rejectReason: "", researchConclusion: "", evidenceImages: [] };
 }
