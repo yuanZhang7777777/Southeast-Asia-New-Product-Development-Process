@@ -185,6 +185,127 @@ def test_existing_item_conflict_and_unauthorized_task_create_nothing() -> None:
         assert db.query(models.ListingRecord).count() == 1
 
 
+def test_later_business_period_reuses_active_items_and_links_new_claims_without_duplicates() -> None:
+    headers = login("销售A", "operator", "dt-a")
+    first_claim_ids = create_waiting_listing_group(
+        "销售A",
+        "MAIN-A",
+        business_period="开发0703期",
+        site="PH",
+        positionings=("稳定款", "稳定款"),
+    )
+    existing = create_listing(headers, "ITEM-OLD", business_period="开发0703期")
+    later_claim_ids = create_waiting_listing_group(
+        "销售A",
+        "MAIN-A",
+        business_period="开发0710期",
+        site="菲律宾",
+        positionings=("稳定款", "稳定款"),
+    )
+    later_task = listing_task_for_period(headers, "开发0710期")
+
+    assert later_task["requires_confirmation"] is True
+    assert later_task["reusable_listing_ids"] == [existing["id"]]
+
+    current = services.current_business_period_start(date.today()).isoformat()
+    response = client.post(
+        "/listing-workbench/listings/batch",
+        headers=headers,
+        json={
+            "task_key": later_task["task_key"],
+            "reuse_listing_ids": [existing["id"]],
+            "rows": [
+                {
+                    "shop": "Shop New",
+                    "item": "ITEM-NEW",
+                    "listing_strategy": "新增店铺策略",
+                    "first_period_start": current,
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    with SessionLocal() as db:
+        listings = db.query(models.ListingRecord).order_by(models.ListingRecord.item).all()
+        old_listing = db.get(models.ListingRecord, existing["id"])
+        later_claims = [db.get(models.SalesClaimForecast, claim_id) for claim_id in later_claim_ids]
+        assert [listing.item for listing in listings] == ["ITEM-NEW", "ITEM-OLD"]
+        assert db.query(models.ItemObservationPeriod).count() == 8
+        assert old_listing.source_claim_ids == first_claim_ids + later_claim_ids
+        assert {claim.downstream_status for claim in later_claims} == {"listing_observation"}
+
+
+@pytest.mark.parametrize(
+    ("listing_status", "tracking_status"),
+    [("voided", "stopped"), ("active", "stopped")],
+    ids=["voided", "stopped"],
+)
+def test_reuse_and_new_rows_are_atomic_when_reused_listing_is_invalid(
+    listing_status: str,
+    tracking_status: str,
+) -> None:
+    headers = login("销售A", "operator", "dt-a")
+    first_claim_ids = create_waiting_listing_group("销售A", "MAIN-A", business_period="开发0703期")
+    existing = create_listing(headers, "ITEM-OLD", business_period="开发0703期")
+    later_claim_ids = create_waiting_listing_group("销售A", "MAIN-A", business_period="开发0710期")
+    with SessionLocal() as db:
+        listing = db.get(models.ListingRecord, existing["id"])
+        listing.status = listing_status
+        listing.tracking_status = tracking_status
+        db.commit()
+
+    later_task = listing_task_for_period(headers, "开发0710期")
+    assert later_task["requires_confirmation"] is False
+    assert later_task["reusable_listing_ids"] == []
+
+    response = client.post(
+        "/listing-workbench/listings/batch",
+        headers=headers,
+        json={
+            "task_key": later_task["task_key"],
+            "reuse_listing_ids": [existing["id"]],
+            "rows": [
+                {
+                    "shop": "Shop New",
+                    "item": "ITEM-NEW",
+                    "listing_strategy": "不应落库",
+                    "first_period_start": services.current_business_period_start(date.today()).isoformat(),
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 400
+    with SessionLocal() as db:
+        listing = db.get(models.ListingRecord, existing["id"])
+        later_claims = [db.get(models.SalesClaimForecast, claim_id) for claim_id in later_claim_ids]
+        assert db.query(models.ListingRecord).count() == 1
+        assert db.query(models.ItemObservationPeriod).count() == 4
+        assert listing.source_claim_ids == first_claim_ids
+        assert {claim.downstream_status for claim in later_claims} == {"waiting_listing"}
+
+
+@pytest.mark.parametrize("mismatch", ["main_sku", "site", "owner"])
+def test_cross_period_reuse_does_not_match_other_site_owner_or_main_sku(mismatch: str) -> None:
+    owner_headers = login("销售A", "operator", "dt-a")
+    create_waiting_listing_group("销售A", "MAIN-A", business_period="开发0703期", site="PH")
+    create_listing(owner_headers, "ITEM-OLD", business_period="开发0703期")
+
+    later_owner = "销售B" if mismatch == "owner" else "销售A"
+    later_headers = login("销售B", "operator", "dt-b") if mismatch == "owner" else owner_headers
+    create_waiting_listing_group(
+        later_owner,
+        "MAIN-B" if mismatch == "main_sku" else "MAIN-A",
+        business_period="开发0710期",
+        site="TH" if mismatch == "site" else "菲律宾",
+    )
+
+    later_task = listing_task_for_period(later_headers, "开发0710期")
+    assert later_task["requires_confirmation"] is False
+    assert later_task["reusable_listing_ids"] == []
+
+
 def test_operator_scope_and_manager_owner_filter() -> None:
     operator_a = login("销售A", "operator", "dt-a")
     operator_b = login("销售B", "operator", "dt-b")
@@ -541,6 +662,118 @@ def test_summary_returns_read_only_listing_history_for_main_sku() -> None:
     assert len(body["period_rows"]) == 4
 
 
+def test_summary_exposes_source_business_periods_for_frontend_grouping() -> None:
+    headers = login("销售A", "operator", "dt-a")
+    create_waiting_listing_group("销售A", "MAIN-A", business_period="开发0703期")
+    listing = create_listing(headers, "ITEM-A", business_period="开发0703期")
+    later_claim_ids = create_waiting_listing_group("销售A", "MAIN-A", business_period="开发0710期")
+    with SessionLocal() as db:
+        saved = db.get(models.ListingRecord, listing["id"])
+        saved.source_claim_ids = list(saved.source_claim_ids) + later_claim_ids
+        for claim_id in later_claim_ids:
+            db.get(models.SalesClaimForecast, claim_id).downstream_status = "listing_observation"
+        db.commit()
+
+    response = client.get("/listing-workbench/summary", headers=headers, params={"main_sku": "MAIN-A"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body["listing_records"]) == 1
+    assert body["listing_records"][0]["business_period"] == "开发0703期"
+    assert body["listing_records"][0]["source_business_periods"] == ["开发0703期", "开发0710期"]
+    assert {row["business_period"] for row in body["period_rows"]} == {"开发0703期"}
+
+
+def test_workbench_returns_week_one_secondary_positioning_default_without_persisting_it() -> None:
+    headers = login("销售A", "operator", "dt-a")
+    create_waiting_listing_group(
+        "销售A",
+        "MAIN-A",
+        business_period="开发0703期",
+        positionings=("稳定款", "稳定款"),
+    )
+    listing = create_listing(headers, "ITEM-A", business_period="开发0703期")
+
+    row = observation_row(headers, listing["id"], 1)
+
+    assert row["product_positioning"] is None
+    assert row["default_product_positioning"] == "稳定款"
+    with SessionLocal() as db:
+        period = db.query(models.ItemObservationPeriod).filter_by(
+            listing_record_id=listing["id"], week_number=1
+        ).one()
+        assert period.product_positioning is None
+
+
+def test_later_week_defaults_to_latest_earlier_nonempty_positioning() -> None:
+    headers = login("销售A", "operator", "dt-a")
+    create_waiting_listing_group(
+        "销售A",
+        "MAIN-A",
+        business_period="开发0703期",
+        positionings=("稳定款", "稳定款"),
+    )
+    listing = create_listing(headers, "ITEM-A", business_period="开发0703期")
+    with SessionLocal() as db:
+        periods = db.query(models.ItemObservationPeriod).filter_by(
+            listing_record_id=listing["id"]
+        ).order_by(models.ItemObservationPeriod.week_number).all()
+        periods[0].product_positioning = "利润款"
+        periods[1].product_positioning = "引流款"
+        db.commit()
+
+    row = observation_row(headers, listing["id"], 3)
+
+    assert row["product_positioning"] is None
+    assert row["default_product_positioning"] == "引流款"
+    with SessionLocal() as db:
+        period = db.query(models.ItemObservationPeriod).filter_by(
+            listing_record_id=listing["id"], week_number=3
+        ).one()
+        assert period.product_positioning is None
+
+
+def test_later_week_falls_back_to_secondary_positioning_when_history_is_empty() -> None:
+    headers = login("销售A", "operator", "dt-a")
+    create_waiting_listing_group(
+        "销售A",
+        "MAIN-A",
+        business_period="开发0703期",
+        positionings=("利润款", "利润款"),
+    )
+    listing = create_listing(headers, "ITEM-A", business_period="开发0703期")
+
+    row = observation_row(headers, listing["id"], 3)
+
+    assert row["product_positioning"] is None
+    assert row["default_product_positioning"] == "利润款"
+    with SessionLocal() as db:
+        assert db.query(models.ItemObservationPeriod).filter_by(
+            listing_record_id=listing["id"], product_positioning=None
+        ).count() == 4
+
+
+def test_mixed_secondary_positions_do_not_choose_an_arbitrary_default() -> None:
+    headers = login("销售A", "operator", "dt-a")
+    create_waiting_listing_group(
+        "销售A",
+        "MAIN-A",
+        business_period="开发0703期",
+        positionings=("引流款", "利润款"),
+    )
+    listing = create_listing(headers, "ITEM-A", business_period="开发0703期")
+
+    row = observation_row(headers, listing["id"], 1)
+
+    assert row["product_positioning"] is None
+    assert row["default_product_positioning"] is None
+    with SessionLocal() as db:
+        period = db.query(models.ItemObservationPeriod).filter_by(
+            listing_record_id=listing["id"], week_number=1
+        ).one()
+        assert period.product_positioning is None
+
+
 def test_shop_item_and_start_lock_after_metrics_but_strategy_remains_editable() -> None:
     with SessionLocal() as db:
         listing = seeded_listing("销售A", date(2026, 7, 16))
@@ -838,7 +1071,14 @@ def login_with_distinct_account_name(account_name: str, operator_name: str, ding
     return {"Authorization": f"Bearer {response.json()['access_token']}"}
 
 
-def create_waiting_listing_group(owner: str, main_sku: str) -> list[str]:
+def create_waiting_listing_group(
+    owner: str,
+    main_sku: str,
+    *,
+    business_period: str = "开发0710期",
+    site: str = "PH",
+    positionings: tuple[str | None, str | None] = (None, None),
+) -> list[str]:
     with SessionLocal() as db:
         claim_ids = []
         for index in range(2):
@@ -847,9 +1087,9 @@ def create_waiting_listing_group(owner: str, main_sku: str) -> list[str]:
                 source_file="选品1.xlsx",
                 source_sheet="开发0710数据",
                 source_row=index + 1,
-                batch="开发0710期",
+                batch=business_period,
                 country="PH",
-                site="PH",
+                site=site,
                 main_sku=main_sku,
                 main_sku_name=f"{main_sku} 商品",
                 sub_sku=f"{main_sku}-SUB-{index + 1}",
@@ -861,6 +1101,7 @@ def create_waiting_listing_group(owner: str, main_sku: str) -> list[str]:
                 salesperson_name=owner,
                 claim_result="claim",
                 downstream_status="waiting_listing",
+                product_positioning=positionings[index],
             )
             db.add(claim)
             db.flush()
@@ -869,14 +1110,23 @@ def create_waiting_listing_group(owner: str, main_sku: str) -> list[str]:
     return claim_ids
 
 
-def create_listing(headers: dict[str, str], item: str) -> dict:
-    task_key = client.get("/listing-workbench", headers=headers).json()["pending_listing_tasks"][0]["task_key"]
+def listing_task_for_period(headers: dict[str, str], business_period: str) -> dict:
+    response = client.get("/listing-workbench", headers=headers)
+    assert response.status_code == 200
+    return next(
+        task for task in response.json()["pending_listing_tasks"] if task["business_period"] == business_period
+    )
+
+
+def create_listing(headers: dict[str, str], item: str, business_period: str | None = None) -> dict:
+    tasks = client.get("/listing-workbench", headers=headers).json()["pending_listing_tasks"]
+    task = next(task for task in tasks if task["business_period"] == business_period) if business_period else tasks[0]
     current = services.current_business_period_start(date.today()).isoformat()
     response = client.post(
         "/listing-workbench/listings/batch",
         headers=headers,
         json={
-            "task_key": task_key,
+            "task_key": task["task_key"],
             "rows": [
                 {"shop": "Shop A", "item": item, "listing_strategy": "策略A", "first_period_start": current}
             ],
@@ -884,6 +1134,16 @@ def create_listing(headers: dict[str, str], item: str) -> dict:
     )
     assert response.status_code == 200
     return response.json()[0]
+
+
+def observation_row(headers: dict[str, str], listing_id: str, week_number: int) -> dict:
+    response = client.get("/listing-workbench", headers=headers)
+    assert response.status_code == 200
+    return next(
+        row
+        for row in response.json()["period_rows"]
+        if row["listing_record_id"] == listing_id and row["week_number"] == week_number
+    )
 
 
 def seeded_listing(owner: str, first_period_start: date) -> models.ListingRecord:

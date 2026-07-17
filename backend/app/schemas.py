@@ -429,6 +429,8 @@ class PendingListingTaskRead(BaseModel):
     salesperson_name: str
     claim_record_ids: list[str]
     default_first_period_start: date
+    requires_confirmation: bool = False
+    reusable_listing_ids: list[str] = Field(default_factory=list)
 
 
 class ListingRecordRead(BaseModel):
@@ -443,6 +445,8 @@ class ListingRecordRead(BaseModel):
     item: str
     listing_strategy: str
     first_period_start: date
+    business_period: str | None = None
+    source_business_periods: list[str] = Field(default_factory=list)
     status: str
     tracking_status: str
     first_round_completed_at: datetime | None = None
@@ -460,6 +464,7 @@ class ObservationPeriodRead(BaseModel):
     week_number: int
     period_start: date
     period_end: date
+    business_period: str | None = None
     status: str
     tracking_status: str
     order_count: int | None = None
@@ -467,6 +472,7 @@ class ObservationPeriodRead(BaseModel):
     gross_profit_amount: float | None = None
     gross_profit_rate: float | None = None
     product_positioning: str | None = None
+    default_product_positioning: str | None = None
     optimization_action: str | None = None
     four_week_summary: str | None = None
     first_round_completed_at: datetime | None = None
@@ -487,7 +493,8 @@ class ListingBatchRow(BaseModel):
 
 class ListingBatchRequest(BaseModel):
     task_key: str
-    rows: list[ListingBatchRow] = Field(min_length=1)
+    rows: list[ListingBatchRow] = Field(default_factory=list)
+    reuse_listing_ids: list[str] = Field(default_factory=list)
 
 
 class ListingRecordUpdate(BaseModel):
