@@ -25,6 +25,8 @@ Do not infer current behavior from old plans or prototypes when they conflict wi
 
 Production database is `workflow_prod_20260715`; development database is `workflow_dev_20260715`. Databases, Redis, uploads, volumes, ports and environment variables are isolated. Never commit passwords, tokens, cookies, private keys or `.env` files.
 
+PLM arrival endpoint settings and credentials are stored separately in both server `.env` files. `PLM_SYNC_ENABLED` remains `false` in both environments; do not enable it or restart production without explicit approval.
+
 ## Verified Baseline
 
 - Branch: `lxc/integrated-workflow`.
