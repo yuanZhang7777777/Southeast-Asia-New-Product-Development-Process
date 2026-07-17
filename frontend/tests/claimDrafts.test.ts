@@ -14,6 +14,7 @@ import {
 } from "../src/claimDrafts.ts";
 
 const appSource = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
+const stylesSource = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");
 
 test("运营列表和商品详情复用不认领原因选择器", () => {
   assert.equal(appSource.match(/<RejectReasonPicker/g)?.length, 2);
@@ -21,9 +22,37 @@ test("运营列表和商品详情复用不认领原因选择器", () => {
     appSource.indexOf("function RejectReasonPicker"),
     appSource.indexOf("function pasteClaimEvidence")
   );
+  const menuStyles = stylesSource.slice(
+    stylesSource.indexOf(".reject-reason-menu {"),
+    stylesSource.indexOf(".reject-reason-options {")
+  );
   assert.match(picker, /REJECT_REASON_OPTIONS\.map/);
   assert.match(picker, /type="checkbox"/);
   assert.match(picker, /placeholder="其他原因"/);
+  assert.deepEqual(
+    {
+      claimDailySalesLabels: appSource.match(/aria-label="认领单销"/g)?.length ?? 0,
+      pickerSummaryLabel: /<summary[^>]*aria-label="不认领原因"/.test(picker),
+      menuPositionStatic: /position:\s*static/.test(menuStyles),
+      menuPositionAbsolute: /position:\s*absolute/.test(menuStyles),
+      menuOverlayOffsets: /(?:^|\n)\s*(?:top|left):/.test(menuStyles),
+      menuBoundedWidth: /width:\s*min\(360px,\s*100%\)/.test(menuStyles),
+      menuTopMargin: /margin-top:\s*4px/.test(menuStyles),
+      compactOpenSpan: stylesSource.includes(".claim-editor.compact > .claim-editor-field:has(.reject-reason-picker[open])"),
+      matrixOpenSpan: stylesSource.includes(".claim-matrix-editor > .claim-editor-field:has(.reject-reason-picker[open])")
+    },
+    {
+      claimDailySalesLabels: 2,
+      pickerSummaryLabel: true,
+      menuPositionStatic: true,
+      menuPositionAbsolute: false,
+      menuOverlayOffsets: false,
+      menuBoundedWidth: true,
+      menuTopMargin: true,
+      compactOpenSpan: true,
+      matrixOpenSpan: true
+    }
+  );
 });
 
 test("不认领原因提供确认的固定选项", () => {

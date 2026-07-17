@@ -3439,6 +3439,7 @@ function ClaimDraftEditor(props: {
         <span>{primaryLabel}</span>
         {draft.mode === "claim" ? (
           <input
+            aria-label="认领单销"
             min="0"
             onChange={(event) => props.onPatch({ claimDailySales: event.target.value })}
             placeholder="单销"
@@ -3733,6 +3734,7 @@ function ClaimMatrixDraftEditor(props: {
         <span>{props.draft.mode === "claim" ? "认领单销" : "不认领原因"}</span>
         {props.draft.mode === "claim" ? (
           <input
+            aria-label="认领单销"
             min="0"
             onChange={(event) => props.onPatch({ claimDailySales: event.target.value })}
             placeholder="单销"
@@ -3808,7 +3810,7 @@ function RejectReasonPicker(props: { value: string; onChange: (value: string) =>
 
   return (
     <details className="reject-reason-picker">
-      <summary title={props.value}>{parsed.selected.length ? `已选 ${parsed.selected.length} 项 · ${summary}` : summary}</summary>
+      <summary aria-label="不认领原因" title={props.value}>{parsed.selected.length ? `已选 ${parsed.selected.length} 项 · ${summary}` : summary}</summary>
       <div className="reject-reason-menu">
         <div className="reject-reason-options">
           {REJECT_REASON_OPTIONS.map((option) => (
