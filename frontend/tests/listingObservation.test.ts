@@ -79,7 +79,7 @@ function pendingTask(patch: Partial<PendingListingTask> = {}): PendingListingTas
     salesperson_name: "运营甲",
     claim_record_ids: ["claim-1"],
     default_first_period_start: "2026-07-23",
-    requires_confirmation: true,
+    requires_confirmation: false,
     reusable_listing_ids: [],
     ...patch
   };
@@ -137,7 +137,7 @@ function observationRow(patch: Partial<ObservationPeriodRow> = {}): ObservationP
 }
 
 test("单表工作台按 task_key 分组且已有作废记录也不再算待刊登", () => {
-  const pending = pendingTask({ task_key: "task-pending", main_sku: "SAME", country: "菲律宾" });
+  const pending = pendingTask({ task_key: "task-pending", main_sku: "SAME", country: "菲律宾", requires_confirmation: true });
   const listed = pendingTask({ task_key: "task-listed", main_sku: "SAME", country: "越南" });
   const listing = listingRecord({
     id: "listing-1",
@@ -467,19 +467,20 @@ test("待复盘业务筛选保留命中 Item 全部历史并允许高级周期�
   const groups = buildListingWorkbenchGroups(
     [pendingTask()],
     [
-      listingRecord({ id: "listing-review" }),
+      listingRecord({ id: "listing-review", tracking_status: "stopped" }),
       listingRecord({ id: "listing-without-review", item: "ITEM-2" })
     ],
     [
-      observationRow({ id: "completed", listing_record_id: "listing-review", week_number: 1, status: "completed" }),
-      observationRow({ id: "review", listing_record_id: "listing-review", week_number: 2, status: "pending_review" }),
-      observationRow({ id: "future", listing_record_id: "listing-review", week_number: 3, status: "pending_data" }),
+      observationRow({ id: "completed", listing_record_id: "listing-review", week_number: 1, status: "completed", tracking_status: "stopped" }),
+      observationRow({ id: "review", listing_record_id: "listing-review", week_number: 2, status: "pending_review", tracking_status: "stopped" }),
+      observationRow({ id: "future", listing_record_id: "listing-review", week_number: 3, status: "pending_data", tracking_status: "stopped" }),
       observationRow({ id: "other", listing_record_id: "listing-without-review", item: "ITEM-2", status: "completed" })
     ],
     "2026-07-23"
   );
 
   const pendingReview = filterListingWorkbenchGroups(groups, "pending_review");
+  assert.equal(pendingReview.length, 1);
   assert.deepEqual(pendingReview[0].listings.map((listing) => listing.id), ["listing-review"]);
   assert.deepEqual(pendingReview[0].periodRows.map((row) => row.id), ["completed", "review", "future"]);
   assert.deepEqual(filterObservationRows(pendingReview[0].periodRows, { status: "completed" }).map((row) => row.id), ["completed"]);
@@ -519,7 +520,12 @@ test("周期复盘草稿优先服务端保存值并回退后端默认定位", ()
 
 test("待确认业务期沿用旧 Item 且不生成原上下文重复组", () => {
   const groups = buildListingWorkbenchGroups(
-    [pendingTask({ task_key: "task-current", business_period: "开发0710期", reusable_listing_ids: ["listing-old"] })],
+    [pendingTask({
+      task_key: "task-current",
+      business_period: "开发0710期",
+      requires_confirmation: true,
+      reusable_listing_ids: ["listing-old"]
+    })],
     [listingRecord({
       id: "listing-old",
       task_key: "task-old",
@@ -555,16 +561,28 @@ test("商品详情按来源业务期分组且当前业务期排在最前", () =>
     source_business_periods: ["开发0703期", "开发0710期"]
   });
   const period = observationRow({ id: "period-shared", listing_record_id: listing.id, business_period: "开发0703期" });
+  const oldListing = listingRecord({
+    id: "listing-old-only",
+    business_period: "开发0703期",
+    source_business_periods: ["开发0703期"]
+  });
+  const oldPeriod = observationRow({ id: "period-old-only", listing_record_id: oldListing.id, business_period: "开发0703期" });
   const groups = desiredHelpers.productListingSummaryByBusinessPeriod(
-    { listing_records: [listing], period_rows: [period] },
+    { listing_records: [listing, oldListing], period_rows: [period, oldPeriod] },
     "SKU1",
     "菲律宾",
     "开发0710期"
   );
 
   assert.deepEqual(groups.map((group) => group.business_period), ["开发0710期", "开发0703期"]);
-  assert.deepEqual(groups.map((group) => group.listings.map((row) => row.id)), [["listing-shared"], ["listing-shared"]]);
-  assert.deepEqual(groups.map((group) => group.periods.map((row) => row.id)), [["period-shared"], ["period-shared"]]);
+  assert.deepEqual(groups.map((group) => group.listings.map((row) => row.id)), [
+    ["listing-shared"],
+    ["listing-shared", "listing-old-only"]
+  ]);
+  assert.deepEqual(groups.map((group) => group.periods.map((row) => row.id)), [
+    ["period-shared"],
+    ["period-shared", "period-old-only"]
+  ]);
 });
 
 class MemoryStorage implements Storage {
@@ -608,8 +626,10 @@ test("版本化本地草稿按登录用户、任务和周期隔离并保留主�
   desiredHelpers.saveListingDrafts(storage, "user-a", "task-a", listingDrafts);
   desiredHelpers.saveObservationReviewDraft(storage, "user-a", row.id, localReview);
 
-  assert.ok(storage.getItem("listing-observation:v1:user-a:listing:task-a"));
-  assert.ok(storage.getItem("listing-observation:v1:user-a:period:period-1"));
+  const listingKey = "listing-observation:v1:user-a:listing:task-a";
+  const periodKey = "listing-observation:v1:user-a:period:period-1";
+  assert.deepEqual(JSON.parse(storage.getItem(listingKey) || "null"), { version: 1, data: listingDrafts });
+  assert.deepEqual(JSON.parse(storage.getItem(periodKey) || "null"), { version: 1, data: localReview });
   assert.deepEqual(desiredHelpers.restoreListingDrafts(storage, "user-a", "task-a", listingFallback), listingDrafts);
   assert.deepEqual(desiredHelpers.restoreListingDrafts(storage, "user-a", "task-b", listingFallback), listingFallback);
   assert.deepEqual(desiredHelpers.restoreListingDrafts(storage, "user-b", "task-a", listingFallback), listingFallback);
@@ -619,6 +639,12 @@ test("版本化本地草稿按登录用户、任务和周期隔离并保留主�
     desiredHelpers.restoreObservationReviewDraft(storage, "user-a", observationRow({ id: "period-2" })),
     desiredHelpers.createObservationReviewDraft(observationRow({ id: "period-2" }))
   );
+  desiredHelpers.clearListingDrafts(storage, "user-a", "task-a");
+  desiredHelpers.clearObservationReviewDraft(storage, "user-a", row.id);
+  assert.equal(storage.getItem(listingKey), null);
+  assert.equal(storage.getItem(periodKey), null);
+  assert.deepEqual(desiredHelpers.restoreListingDrafts(storage, "user-a", "task-a", listingFallback), listingFallback);
+  assert.deepEqual(desiredHelpers.restoreObservationReviewDraft(storage, "user-a", row), desiredHelpers.createObservationReviewDraft(row));
 });
 
 test("损坏、版本不兼容或结构非法的草稿会删除并回退服务端数据", () => {
@@ -651,4 +677,14 @@ test("Storage 读写删除抛错都不阻塞页面", () => {
   assert.doesNotThrow(() => desiredHelpers.saveObservationReviewDraft(new MemoryStorage(["set"]), "user-a", row.id, review));
   assert.doesNotThrow(() => desiredHelpers.clearListingDrafts(new MemoryStorage(["remove"]), "user-a", "task-a"));
   assert.doesNotThrow(() => desiredHelpers.clearObservationReviewDraft(new MemoryStorage(["remove"]), "user-a", row.id));
+
+  const corruptStorage = new MemoryStorage(["remove"]);
+  corruptStorage.setItem("listing-observation:v1:user-a:listing:task-a", "{");
+  corruptStorage.setItem("listing-observation:v1:user-a:period:period-1", "{");
+  assert.doesNotThrow(() => {
+    assert.deepEqual(desiredHelpers.restoreListingDrafts(corruptStorage, "user-a", "task-a", listingFallback), listingFallback);
+  });
+  assert.doesNotThrow(() => {
+    assert.deepEqual(desiredHelpers.restoreObservationReviewDraft(corruptStorage, "user-a", row), review);
+  });
 });
