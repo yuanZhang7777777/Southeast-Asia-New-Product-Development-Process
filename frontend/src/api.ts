@@ -28,6 +28,7 @@ export type Opportunity = {
   latest_review_comment?: string | null;
   source_file?: string | null;
   source_sheet?: string | null;
+  batch?: string | null;
   source_row?: number | null;
   snapshot?: Record<string, unknown>;
   created_at: string;

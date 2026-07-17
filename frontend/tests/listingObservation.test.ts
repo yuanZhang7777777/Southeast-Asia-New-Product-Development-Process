@@ -45,26 +45,29 @@ type ListingObservationContract = {
     storage: Storage,
     userId: string,
     taskKey: string,
-    fallback: readonly ListingDraft[]
+    fallback: readonly ListingDraft[],
+    ignoreStored?: boolean
   ) => ListingDraft[];
   clearListingDrafts: (storage: Storage, userId: string, taskKey: string) => void;
   saveObservationReviewDraft: (storage: Storage, userId: string, periodId: string, draft: ObservationReviewDraft) => void;
   restoreObservationReviewDraft: (
     storage: Storage,
     userId: string,
-    row: ObservationPeriodRow
+    row: ObservationPeriodRow,
+    ignoreStored?: boolean
   ) => ObservationReviewDraft;
   clearObservationReviewDraft: (storage: Storage, userId: string, periodId: string) => void;
 };
 
 const desiredHelpers = listingObservation as unknown as ListingObservationContract;
 
+const apiSource = readFileSync(new URL("../src/api.ts", import.meta.url), "utf8");
+const appSource = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
 const listingObservationViewSource = readFileSync(new URL("../src/ListingObservationView.tsx", import.meta.url), "utf8");
 const listingStylesSource = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");
 
 test("只有普通运营会被登录身份锁定当前运营", () => {
-  const source = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
-  assert.match(source, /authSession\?\.operator_name && !canManage/);
+  assert.match(appSource, /authSession\?\.operator_name && !canManage/);
 });
 
 function pendingTask(patch: Partial<PendingListingTask> = {}): PendingListingTask {
@@ -543,6 +546,34 @@ test("待确认业务期沿用旧 Item 且不生成原上下文重复组", () =>
   assert.deepEqual(groups[0].periodRows.map((row) => row.id), ["period-old"]);
 });
 
+test("跨期待确认组在全部和待复盘可见层保留旧 Item 历史", () => {
+  const groups = buildListingWorkbenchGroups(
+    [pendingTask({
+      task_key: "task-current",
+      requires_confirmation: true,
+      reusable_listing_ids: ["listing-old"]
+    })],
+    [listingRecord({ id: "listing-old", task_key: "task-old" })],
+    [
+      observationRow({ id: "period-completed", listing_record_id: "listing-old", status: "completed" }),
+      observationRow({ id: "period-review", listing_record_id: "listing-old", week_number: 2, status: "pending_review" })
+    ],
+    "2026-07-23"
+  );
+
+  assert.deepEqual(filterListingWorkbenchGroups(groups, "all")[0].periodRows.map((row) => row.id), ["period-completed", "period-review"]);
+  assert.deepEqual(filterListingWorkbenchGroups(groups, "pending_review")[0].periodRows.map((row) => row.id), ["period-completed", "period-review"]);
+  assert.match(listingObservationViewSource, /if \(group\.pendingListing && !group\.periodRows\.length\)/);
+});
+
+test("商品详情优先使用机会业务批次并仅以源 sheet 兼容旧数据", () => {
+  assert.match(apiSource, /export type Opportunity = \{[\s\S]*?batch\?: string \| null;/);
+  assert.match(
+    appSource,
+    /currentBusinessPeriod=\{activeChild\.batch \|\| item\.batch \|\| activeChild\.source_sheet \|\| item\.source_sheet\}/
+  );
+});
+
 test("复用提交 payload 可同时包含新增行和旧 Listing", () => {
   const payload: ListingBatchPayload = {
     task_key: "task-current",
@@ -583,6 +614,49 @@ test("商品详情按来源业务期分组且当前业务期排在最前", () =>
     ["period-shared"],
     ["period-shared", "period-old-only"]
   ]);
+});
+
+test("商品详情来源期为空时回退创建业务期并保留未标记记录", () => {
+  const businessPeriodListing = listingRecord({
+    id: "listing-business-period",
+    business_period: "开发0703期",
+    source_business_periods: []
+  });
+  const unmarkedListing = listingRecord({
+    id: "listing-unmarked",
+    business_period: null,
+    source_business_periods: []
+  });
+  const periods = [
+    observationRow({ id: "period-business-period", listing_record_id: businessPeriodListing.id }),
+    observationRow({ id: "period-unmarked", listing_record_id: unmarkedListing.id })
+  ];
+  const groups = desiredHelpers.productListingSummaryByBusinessPeriod(
+    { listing_records: [unmarkedListing, businessPeriodListing], period_rows: periods },
+    "SKU1",
+    "菲律宾",
+    "开发0703期"
+  );
+
+  assert.deepEqual(groups.map((group) => group.business_period), ["开发0703期", null]);
+  assert.deepEqual(groups.map((group) => group.listings.map((listing) => listing.id)), [
+    ["listing-business-period"],
+    ["listing-unmarked"]
+  ]);
+  assert.deepEqual(groups.map((group) => group.periods.map((period) => period.id)), [
+    ["period-business-period"],
+    ["period-unmarked"]
+  ]);
+});
+
+test("工作台请求结果必须同时匹配最后请求和当前身份范围", () => {
+  const loadWorkbenchSource = listingObservationViewSource.match(/async function loadWorkbench\(\) \{[\s\S]*?\n  \}\n\n  useEffect/)?.[0] || "";
+  assert.match(listingObservationViewSource, /const workbenchScopeKey = JSON\.stringify\(/);
+  assert.match(listingObservationViewSource, /const workbenchScopeKeyRef = useRef\(workbenchScopeKey\);/);
+  assert.match(listingObservationViewSource, /workbenchScopeKeyRef\.current = workbenchScopeKey;/);
+  assert.match(loadWorkbenchSource, /if \(workbenchScopeKey !== workbenchScopeKeyRef\.current\) return;/);
+  assert.match(loadWorkbenchSource, /const isCurrent = \(\) => requestGate\.current\.isCurrent\(requestId\)[\s\S]*workbenchScopeKeyRef\.current === workbenchScopeKey;/);
+  assert.match(loadWorkbenchSource, /if \(!isCurrent\(\)\) return;/);
 });
 
 class MemoryStorage implements Storage {
@@ -687,4 +761,29 @@ test("Storage 读写删除抛错都不阻塞页面", () => {
   assert.doesNotThrow(() => {
     assert.deepEqual(desiredHelpers.restoreObservationReviewDraft(corruptStorage, "user-a", row), review);
   });
+});
+
+test("提交后即使 Storage 删除失败也用组件生命周期墓碑忽略旧草稿", () => {
+  const storage = new MemoryStorage(["remove"]);
+  const listingFallback = [{ shop: "", item: "", listing_strategy: "", first_period_start: "2026-07-23" }];
+  const staleListing = [{ shop: "旧店铺", item: "ITEM-OLD", listing_strategy: "旧策略", first_period_start: "2026-07-23" }];
+  const row = observationRow({ product_positioning: "利润款", optimization_action: "服务端新值" });
+  const staleReview = { ...desiredHelpers.createObservationReviewDraft(row), optimization_action: "本地旧值" };
+
+  desiredHelpers.saveListingDrafts(storage, "user-a", "task-a", staleListing);
+  desiredHelpers.saveObservationReviewDraft(storage, "user-a", row.id, staleReview);
+  desiredHelpers.clearListingDrafts(storage, "user-a", "task-a");
+  desiredHelpers.clearObservationReviewDraft(storage, "user-a", row.id);
+
+  assert.deepEqual(desiredHelpers.restoreListingDrafts(storage, "user-a", "task-a", listingFallback, true), listingFallback);
+  assert.deepEqual(
+    desiredHelpers.restoreObservationReviewDraft(storage, "user-a", row, true),
+    desiredHelpers.createObservationReviewDraft(row)
+  );
+  assert.match(listingObservationViewSource, /const submittedListingDraftKeys = useRef\(new Set<string>\(\)\);/);
+  assert.match(listingObservationViewSource, /const submittedPeriodDraftKeys = useRef\(new Set<string>\(\)\);/);
+  assert.match(listingObservationViewSource, /submittedListingDraftKeys\.current\.add\(task\.task_key\)/);
+  assert.match(listingObservationViewSource, /submittedPeriodDraftKeys\.current\.add\(row\.period_id\)/);
+  assert.match(listingObservationViewSource, /submittedListingDraftKeys\.current\.delete\(task\.task_key\)/);
+  assert.match(listingObservationViewSource, /submittedPeriodDraftKeys\.current\.delete\(periodId\)/);
 });

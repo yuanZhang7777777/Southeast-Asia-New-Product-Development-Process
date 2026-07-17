@@ -1978,7 +1978,7 @@ function ProductDetailView(props: {
                 <ListingObservationSummary
                   mainSku={group.main_sku}
                   country={activeChild.country || item.country}
-                  currentBusinessPeriod={activeChild.source_sheet || item.source_sheet}
+                  currentBusinessPeriod={activeChild.batch || item.batch || activeChild.source_sheet || item.source_sheet}
                   role={props.activeRole}
                   operatorName={props.operatorName}
                   canManage={props.canManage}

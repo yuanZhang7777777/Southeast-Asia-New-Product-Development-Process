@@ -83,7 +83,12 @@ export function ListingObservationView(props: {
   const [editingListing, setEditingListing] = useState<{ record: ListingRecord; draft: ListingDraft; hasMetrics: boolean } | null>(null);
   const [editErrors, setEditErrors] = useState<ListingDraftErrors>({});
   const [voidingListing, setVoidingListing] = useState<{ record: ListingRecord; reason: string } | null>(null);
+  const workbenchScopeKey = JSON.stringify([props.draftUserId, props.role, props.canManage, props.operatorName]);
+  const workbenchScopeKeyRef = useRef(workbenchScopeKey);
+  workbenchScopeKeyRef.current = workbenchScopeKey;
   const requestGate = useRef(createRequestGate());
+  const submittedListingDraftKeys = useRef(new Set<string>());
+  const submittedPeriodDraftKeys = useRef(new Set<string>());
   const workbenchRoot = useRef<HTMLDivElement | null>(null);
   const dialogReturnFocus = useRef<HTMLElement | null>(null);
   const summaryDialog = useRef<HTMLDivElement | null>(null);
@@ -92,7 +97,10 @@ export function ListingObservationView(props: {
   const voidDialog = useRef<HTMLDivElement | null>(null);
 
   async function loadWorkbench() {
+    if (workbenchScopeKey !== workbenchScopeKeyRef.current) return;
     const requestId = requestGate.current.start();
+    const isCurrent = () => requestGate.current.isCurrent(requestId)
+      && workbenchScopeKeyRef.current === workbenchScopeKey;
     const scope = resolveWorkbenchScope(props.role, props.canManage, props.operatorName);
     if (!scope) {
       setData(EMPTY_DATA);
@@ -106,7 +114,7 @@ export function ListingObservationView(props: {
         view: "all",
         ...scope
       });
-      if (!requestGate.current.isCurrent(requestId)) return;
+      if (!isCurrent()) return;
       const storage = browserStorage();
       const taskKeys = unique([
         ...response.pending_listing_tasks.map((task) => task.task_key),
@@ -116,16 +124,27 @@ export function ListingObservationView(props: {
       setSelectedPeriods([]);
       setListingDrafts(Object.fromEntries(taskKeys.map((taskKey) => [
         taskKey,
-        storage ? restoreListingDrafts(storage, props.draftUserId, taskKey, []) : []
+        storage ? restoreListingDrafts(
+          storage,
+          props.draftUserId,
+          taskKey,
+          [],
+          submittedListingDraftKeys.current.has(taskKey)
+        ) : []
       ])));
       setReviewDrafts(Object.fromEntries(response.period_rows.map((row) => [
         row.id,
-        storage ? restoreObservationReviewDraft(storage, props.draftUserId, row) : createObservationReviewDraft(row)
+        storage ? restoreObservationReviewDraft(
+          storage,
+          props.draftUserId,
+          row,
+          submittedPeriodDraftKeys.current.has(row.id)
+        ) : createObservationReviewDraft(row)
       ])));
     } catch (error) {
-      if (requestGate.current.isCurrent(requestId)) props.onStatus(errorMessage(error, "刊登与观察工作台加载失败"));
+      if (isCurrent()) props.onStatus(errorMessage(error, "刊登与观察工作台加载失败"));
     } finally {
-      if (requestGate.current.isCurrent(requestId)) setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
   }
 
@@ -168,7 +187,7 @@ export function ListingObservationView(props: {
       const commonMatches = (!effectiveFilters.country || group.context.country === effectiveFilters.country)
         && (!effectiveFilters.salesperson_name || group.context.salesperson_name === effectiveFilters.salesperson_name);
       if (!commonMatches) return [];
-      if (group.pendingListing) {
+      if (group.pendingListing && !group.periodRows.length) {
         return contextMatches && !hasPeriodFilters ? [{ ...group, periodRows: [] }] : [];
       }
       const visibleListingIds = new Set(periodRows.map((row) => row.listing_record_id));
@@ -269,6 +288,7 @@ export function ListingObservationView(props: {
   }
 
   function addListingDraft(task: PendingListingTask) {
+    submittedListingDraftKeys.current.delete(task.task_key);
     setListingDrafts((current) => {
       const rows = [
         ...(current[task.task_key] || []),
@@ -281,6 +301,7 @@ export function ListingObservationView(props: {
   }
 
   function updateListingDraft(taskKey: string, index: number, field: keyof ListingDraft, value: string) {
+    submittedListingDraftKeys.current.delete(taskKey);
     setListingDrafts((current) => {
       const rows = (current[taskKey] || []).map((row, rowIndex) => rowIndex === index ? { ...row, [field]: value } : row);
       const storage = browserStorage();
@@ -294,6 +315,7 @@ export function ListingObservationView(props: {
   }
 
   function removeListingDraft(taskKey: string, index: number) {
+    submittedListingDraftKeys.current.delete(taskKey);
     setListingDrafts((current) => {
       const rows = (current[taskKey] || []).filter((_, rowIndex) => rowIndex !== index);
       const storage = browserStorage();
@@ -373,6 +395,7 @@ export function ListingObservationView(props: {
         reuse_listing_ids: reuseListingIds
       });
       const storage = browserStorage();
+      submittedListingDraftKeys.current.add(task.task_key);
       if (storage) clearListingDrafts(storage, props.draftUserId, task.task_key);
       setListingDrafts((current) => {
         const next = { ...current };
@@ -403,6 +426,7 @@ export function ListingObservationView(props: {
   }
 
   function updateReview(periodId: string, patch: Partial<ObservationReviewDraft>) {
+    submittedPeriodDraftKeys.current.delete(periodId);
     setReviewDrafts((current) => {
       const draft = { ...current[periodId], ...patch };
       const storage = browserStorage();
@@ -441,7 +465,10 @@ export function ListingObservationView(props: {
         }))
       });
       const storage = browserStorage();
-      for (const row of rows) if (storage) clearObservationReviewDraft(storage, props.draftUserId, row.period_id);
+      for (const row of rows) {
+        submittedPeriodDraftKeys.current.add(row.period_id);
+        if (storage) clearObservationReviewDraft(storage, props.draftUserId, row.period_id);
+      }
       setReviewDrafts((current) => {
         const next = { ...current };
         for (const row of rows) delete next[row.period_id];

@@ -377,10 +377,14 @@ export function productListingSummaryByBusinessPeriod(
   currentBusinessPeriod?: string | null
 ) {
   const summary = productListingSummary(data, mainSku, country);
-  const businessPeriods = [...new Set(summary.listings.flatMap((listing) => listing.source_business_periods))]
+  const periodsFor = (listing: ListingRecord): Array<string | null> => {
+    const sourcePeriods = listing.source_business_periods.filter(Boolean);
+    return sourcePeriods.length ? sourcePeriods : [listing.business_period || null];
+  };
+  const businessPeriods = [...new Set(summary.listings.flatMap(periodsFor))]
     .sort((left, right) => Number(right === currentBusinessPeriod) - Number(left === currentBusinessPeriod));
   return businessPeriods.map((businessPeriod) => {
-    const listings = summary.listings.filter((listing) => listing.source_business_periods.includes(businessPeriod));
+    const listings = summary.listings.filter((listing) => periodsFor(listing).includes(businessPeriod));
     const listingIds = new Set(listings.map((listing) => listing.id));
     return {
       business_period: businessPeriod,
@@ -403,8 +407,10 @@ export function restoreListingDrafts(
   storage: Storage,
   userId: string,
   taskKey: string,
-  fallback: readonly ListingDraft[]
+  fallback: readonly ListingDraft[],
+  ignoreStored = false
 ): ListingDraft[] {
+  if (ignoreStored) return [...fallback];
   return restoreDraft(storage, listingDraftKey(userId, taskKey), isListingDrafts) || [...fallback];
 }
 
@@ -424,8 +430,10 @@ export function saveObservationReviewDraft(
 export function restoreObservationReviewDraft(
   storage: Storage,
   userId: string,
-  row: ObservationPeriodRow
+  row: ObservationPeriodRow,
+  ignoreStored = false
 ): ObservationReviewDraft {
+  if (ignoreStored) return createObservationReviewDraft(row);
   return restoreDraft(
     storage,
     observationReviewDraftKey(userId, row.id),
