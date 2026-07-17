@@ -1110,6 +1110,7 @@ def list_pending_listing_tasks(
     if owner:
         statement = statement.where(models.SalesClaimForecast.salesperson_name == owner)
     groups: dict[str, dict] = {}
+    waiting_group_keys: set[str] = set()
     default_start = current_business_period_start(today or datetime.now(EXCEL_TIMEZONE).date()) + timedelta(days=7)
     for claim, opportunity in db.execute(statement).all():
         key = listing_task_key(
@@ -1134,11 +1135,22 @@ def list_pending_listing_tasks(
                 "default_first_period_start": default_start,
             },
         )
+        waiting_group_keys.add(key)
         group["claim_record_ids"].append(claim.id)
     listing_statement = select(models.ListingRecord)
     if owner:
         listing_statement = listing_statement.where(models.ListingRecord.salesperson_name == owner)
-    for listing in db.scalars(listing_statement):
+    listings = list(db.scalars(listing_statement))
+    reusable_by_key: dict[tuple[str, str | None, str], list[models.ListingRecord]] = defaultdict(list)
+    for listing in listings:
+        if listing.status == "active" and listing.tracking_status == "active":
+            reusable_by_key[
+                (
+                    listing.main_sku,
+                    normalize_site_code(listing.site or listing.country),
+                    listing.salesperson_name,
+                )
+            ].append(listing)
         groups.setdefault(
             listing.source_group_key,
             {
@@ -1154,8 +1166,22 @@ def list_pending_listing_tasks(
                 "default_first_period_start": default_start,
             },
         )
-    for group in groups.values():
+    for key, group in groups.items():
         group["claim_record_ids"].sort()
+        reusable_ids = sorted(
+            listing.id
+            for listing in reusable_by_key.get(
+                (
+                    group["main_sku"],
+                    normalize_site_code(group["site"] or group["country"]),
+                    group["salesperson_name"],
+                ),
+                [],
+            )
+            if listing.source_group_key != key
+        ) if key in waiting_group_keys else []
+        group["reusable_listing_ids"] = reusable_ids
+        group["requires_confirmation"] = bool(reusable_ids)
     return sorted(groups.values(), key=lambda item: (item["business_period"] or "", item["main_sku"], item["salesperson_name"]))
 
 
@@ -1167,8 +1193,12 @@ def create_listing_batch(
     actor_user_id: str | None,
     actor_is_manager: bool,
     operator_name: str | None = None,
+    reuse_listing_ids: list[str] | None = None,
     today: date | None = None,
 ) -> list[models.ListingRecord]:
+    reuse_listing_ids = list(dict.fromkeys(reuse_listing_ids or []))
+    if not rows and not reuse_listing_ids:
+        raise RowValidationError([{"row_index": 0, "field": "rows", "message": "rows or reuse_listing_ids is required"}])
     task = next((item for item in list_pending_listing_tasks(db, today=today) if item["task_key"] == task_key), None)
     if task is None:
         existing_task = db.scalar(
@@ -1226,16 +1256,43 @@ def create_listing_batch(
             )
     existing_items = set(
         db.scalars(select(models.ListingRecord.item).where(models.ListingRecord.item.in_(item_rows))).all()
-    )
+    ) if item_rows else set()
     row_errors.extend(
         {"row_index": row_index, "field": "item", "message": "item already exists"}
         for item in existing_items
         for row_index in item_rows[item]
     )
-    if row_errors:
+    reusable = {
+        listing.id: listing
+        for listing in db.scalars(
+            select(models.ListingRecord).where(models.ListingRecord.id.in_(reuse_listing_ids))
+        )
+    } if reuse_listing_ids else {}
+    allowed_reuse_ids = set(task.get("reusable_listing_ids", []))
+    reuse_errors = [
+        {
+            "row_index": index,
+            "field": "reuse_listing_ids",
+            "message": "listing is not reusable for this task",
+        }
+        for index, listing_id in enumerate(reuse_listing_ids)
+        if listing_id not in reusable
+        or listing_id not in allowed_reuse_ids
+        or reusable[listing_id].status != "active"
+        or reusable[listing_id].tracking_status != "active"
+        or reusable[listing_id].main_sku != task["main_sku"]
+        or normalize_site_code(reusable[listing_id].site or reusable[listing_id].country)
+        != normalize_site_code(task["site"] or task["country"])
+        or reusable[listing_id].salesperson_name != task["salesperson_name"]
+    ]
+    if row_errors or reuse_errors:
         row_errors.sort(key=lambda error: (error["row_index"], ("shop", "item", "listing_strategy", "first_period_start").index(error["field"])))
         conflict = any("duplicated" in error["message"] or "already exists" in error["message"] for error in row_errors)
-        raise RowValidationError(row_errors, 409 if conflict else 400)
+        raise RowValidationError([*row_errors, *reuse_errors], 409 if conflict else 400)
+
+    claims = list(
+        db.scalars(select(models.SalesClaimForecast).where(models.SalesClaimForecast.id.in_(task["claim_record_ids"])))
+    )
 
     created: list[models.ListingRecord] = []
     for values in cleaned:
@@ -1280,9 +1337,12 @@ def create_listing_batch(
             actor_user_id,
         )
         created.append(record)
-    claims = list(
-        db.scalars(select(models.SalesClaimForecast).where(models.SalesClaimForecast.id.in_(task["claim_record_ids"])))
-    )
+    reused = [reusable[listing_id] for listing_id in reuse_listing_ids]
+    for listing in reused:
+        listing.source_claim_ids = list(dict.fromkeys([
+            *(listing.source_claim_ids or []),
+            *task["claim_record_ids"],
+        ]))
     for claim in claims:
         claim.downstream_status = CLAIM_LISTING_OBSERVATION
     try:
@@ -1296,10 +1356,73 @@ def create_listing_batch(
             ],
             409,
         ) from exc
-    return created
+    return [*reused, *created]
 
 
-def listing_record_read(item: models.ListingRecord) -> dict:
+def listing_source_context(
+    db: Session,
+    listings: list[models.ListingRecord],
+) -> dict[str, dict]:
+    claim_to_listing_ids: dict[str, list[str]] = defaultdict(list)
+    for listing in listings:
+        for claim_id in listing.source_claim_ids or []:
+            claim_to_listing_ids[claim_id].append(listing.id)
+    periods_by_listing: dict[str, set[str]] = defaultdict(set)
+    positions_by_listing: dict[str, set[str]] = defaultdict(set)
+    if claim_to_listing_ids:
+        rows = db.execute(
+            select(
+                models.SalesClaimForecast.id,
+                models.SalesClaimForecast.product_positioning,
+                models.NewProductOpportunity.batch,
+            )
+            .join(
+                models.NewProductOpportunity,
+                models.NewProductOpportunity.id == models.SalesClaimForecast.opportunity_id,
+            )
+            .where(models.SalesClaimForecast.id.in_(claim_to_listing_ids))
+        ).all()
+        for claim_id, product_positioning, business_period in rows:
+            for listing_id in claim_to_listing_ids[claim_id]:
+                if value := _clean_text(business_period):
+                    periods_by_listing[listing_id].add(value)
+                if value := _clean_text(product_positioning):
+                    positions_by_listing[listing_id].add(value)
+    return {
+        listing.id: {
+            "source_business_periods": sorted(periods_by_listing[listing.id]),
+            "secondary_positioning": next(iter(positions_by_listing[listing.id]))
+            if len(positions_by_listing[listing.id]) == 1
+            else None,
+        }
+        for listing in listings
+    }
+
+
+def observation_positioning_defaults(
+    db: Session,
+    listing_ids: list[str],
+    source_context: dict[str, dict],
+) -> dict[str, str | None]:
+    periods_by_listing: dict[str, list[models.ItemObservationPeriod]] = defaultdict(list)
+    if listing_ids:
+        for period in db.scalars(
+            select(models.ItemObservationPeriod).where(
+                models.ItemObservationPeriod.listing_record_id.in_(listing_ids)
+            )
+        ):
+            periods_by_listing[period.listing_record_id].append(period)
+    defaults: dict[str, str | None] = {}
+    for listing_id, periods in periods_by_listing.items():
+        latest_positioning = None
+        for period in sorted(periods, key=lambda item: (item.period_start, item.week_number)):
+            defaults[period.id] = latest_positioning or source_context.get(listing_id, {}).get("secondary_positioning")
+            latest_positioning = _clean_text(period.product_positioning) or latest_positioning
+    return defaults
+
+
+def listing_record_read(item: models.ListingRecord, source_context: dict | None = None) -> dict:
+    source_context = source_context or {}
     return {
         "id": item.id,
         "task_key": item.source_group_key,
@@ -1312,13 +1435,19 @@ def listing_record_read(item: models.ListingRecord) -> dict:
         "item": item.item,
         "listing_strategy": item.listing_strategy,
         "first_period_start": item.first_period_start,
+        "business_period": item.business_period,
+        "source_business_periods": source_context.get("source_business_periods", []),
         "status": item.status,
         "tracking_status": item.tracking_status,
         "first_round_completed_at": item.initial_observation_completed_at,
     }
 
 
-def observation_period_read(period: models.ItemObservationPeriod, listing: models.ListingRecord) -> dict:
+def observation_period_read(
+    period: models.ItemObservationPeriod,
+    listing: models.ListingRecord,
+    default_product_positioning: str | None = None,
+) -> dict:
     rate = None
     if period.total_revenue not in {None, 0} and period.gross_profit_amount is not None:
         rate = period.gross_profit_amount / period.total_revenue
@@ -1334,6 +1463,7 @@ def observation_period_read(period: models.ItemObservationPeriod, listing: model
         "week_number": period.week_number,
         "period_start": period.period_start,
         "period_end": period.period_end,
+        "business_period": listing.business_period,
         "status": period.status,
         "tracking_status": listing.tracking_status,
         "order_count": period.order_count,
@@ -1341,6 +1471,7 @@ def observation_period_read(period: models.ItemObservationPeriod, listing: model
         "gross_profit_amount": period.gross_profit_amount,
         "gross_profit_rate": rate,
         "product_positioning": period.product_positioning,
+        "default_product_positioning": default_product_positioning,
         "optimization_action": period.optimization_action,
         "four_week_summary": period.four_week_summary,
         "first_round_completed_at": listing.initial_observation_completed_at,
@@ -1415,10 +1546,19 @@ def list_listing_workbench(
         periods = []
     elif view != "all" and view not in {"pending_data", "pending_review", "first_round_completed"}:
         raise ValueError("invalid workbench view")
+    source_context = listing_source_context(db, listings)
+    positioning_defaults = observation_positioning_defaults(db, [item.id for item in listings], source_context)
     return {
         "pending_listing_tasks": pending if view in {"all", "pending_listing"} else [],
-        "listing_records": [listing_record_read(item) for item in listings],
-        "period_rows": [observation_period_read(period, listing_by_id[period.listing_record_id]) for period in periods],
+        "listing_records": [listing_record_read(item, source_context[item.id]) for item in listings],
+        "period_rows": [
+            observation_period_read(
+                period,
+                listing_by_id[period.listing_record_id],
+                positioning_defaults.get(period.id),
+            )
+            for period in periods
+        ],
     }
 
 

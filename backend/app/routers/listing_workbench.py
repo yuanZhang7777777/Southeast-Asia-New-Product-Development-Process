@@ -83,6 +83,7 @@ def create_listings_batch(
             actor_user_id,
             manager_access(auth),
             auth.operator_name if auth else None,
+            reuse_listing_ids=payload.reuse_listing_ids,
         )
     except services.RowValidationError as exc:
         raise HTTPException(status_code=exc.status_code, detail={"row_errors": exc.row_errors}) from exc
@@ -90,8 +91,10 @@ def create_listings_batch(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
+    source_context = services.listing_source_context(db, records)
+    result = [services.listing_record_read(item, source_context[item.id]) for item in records]
     db.commit()
-    return [services.listing_record_read(item) for item in records]
+    return result
 
 
 @router.patch("/listings/{listing_id}", response_model=schemas.ListingRecordRead)
@@ -117,12 +120,14 @@ def update_listing(
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    source_context = services.listing_source_context(db, [listing])
+    result = services.listing_record_read(listing, source_context[listing.id])
     try:
         db.commit()
     except IntegrityError as exc:
         db.rollback()
         raise HTTPException(status_code=409, detail="item already exists") from exc
-    return services.listing_record_read(listing)
+    return result
 
 
 @router.post("/listings/{listing_id}/periods", response_model=schemas.ObservationPeriodRead)
@@ -149,8 +154,12 @@ def create_listing_period(
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    listing = period.listing_record
+    source_context = services.listing_source_context(db, [listing])
+    defaults = services.observation_positioning_defaults(db, [listing.id], source_context)
+    result = services.observation_period_read(period, listing, defaults.get(period.id))
     db.commit()
-    return services.observation_period_read(period, period.listing_record)
+    return result
 
 
 @router.post("/periods/review-batch", response_model=list[schemas.ObservationPeriodRead])
@@ -174,5 +183,9 @@ def review_periods_batch(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
+    listings = list({listing.id: listing for _, listing in periods}.values())
+    source_context = services.listing_source_context(db, listings)
+    defaults = services.observation_positioning_defaults(db, [listing.id for listing in listings], source_context)
+    result = [services.observation_period_read(period, listing, defaults.get(period.id)) for period, listing in periods]
     db.commit()
-    return [services.observation_period_read(period, listing) for period, listing in periods]
+    return result
