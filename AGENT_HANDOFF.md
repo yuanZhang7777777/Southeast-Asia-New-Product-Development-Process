@@ -1,6 +1,6 @@
 # Agent Handoff
 
-> Updated: 2026-07-16 Asia/Shanghai
+> Updated: 2026-07-17 Asia/Shanghai
 
 ## Current Mode
 
@@ -11,8 +11,8 @@ Implementation has completed backend US1-US5, the frontend MVP, secondary resear
 ## Implementation Status
 
 - Completed: project setup, PostgreSQL/SQLite guard, Alembic migrations, two feedback workbook importers, personnel config import, one-click assignment, claim/not-claim submission metadata, supervisor review, stocking export, central traceability export, product dashboard, source upload, operator profile config UI, inline operator claim UI, local demo data script, secondary-research five-position routing, the single-table listing/observation workbench, and the minimal DingTalk new-product todo card sender.
-- Current verification: backend test baseline is 200 passed; frontend `npm test` passed 41 tests and `npm run build` passed on 2026-07-16.
-- Development deployment: commit `fe91069` is deployed at `http://139.224.2.166:18081`. Only the frontend container was recreated; API, PostgreSQL, Redis, and reverse-proxy container IDs remained unchanged. The health endpoint returned `environment=development`.
+- Current verification: backend test baseline is 219 passed; frontend `npm test` passed 56 tests and `npm run build` passed on 2026-07-17. Final independent review found no remaining Critical/Important issue.
+- Development deployment: commit `83c6460` is deployed at `http://139.224.2.166:18081`. API/worker/scheduler/frontend/reverse-proxy were updated; PostgreSQL and Redis kept their existing containers. Internal and public health checks returned `environment=development`, and Alembic is at `a8d4e6f7b901 (head)`.
 
 ## Latest Business Ground Truth
 
@@ -191,7 +191,7 @@ The generic `SKU 商品池` remains out of first-version scope unless explicitly
 
 ## Back-Stage Implementation and Confirmed Rules
 
-As of 2026-07-16, secondary-research five-position routing and the listing/observation workbench are implemented on the development branch. The real Group 8 weekly Item API/credentials are not yet available; use the internal `apply_week_metrics(...)` boundary and do not invent an external connector.
+As of 2026-07-17, secondary-research five-position routing and the confirmed listing/observation workbench gaps are implemented and deployed to the isolated development environment. The real Group 8 weekly Item API/credentials are not yet available; use the internal `apply_week_metrics(...)` boundary and do not invent an external connector.
 
 - 到货承接: source is PLM `真仓库存明细数据-普通商品-汇总数据` downloaded through the PLM interface / download center, not browser automation by default. Daily pull target is around 08:00, pulling the previous Asia/Shanghai calendar day. Tested 2026-07-02: login, download-center listing, and direct xlsx download succeeded. First pass monitors arrival time only; source fields include `子SKU`, `主SKU`, `海外仓`, `国家`, `预计到港时间`, `最后一次入库时间`, `首次上架时间`, `海外仓可发`, `真仓库存`.
 - PLM credentials are saved locally at `C:\Users\86173\.codex\secrets\Hengzhe-New-Product-Workflow\plm.credentials.json`; this file is outside the repo and should be read at runtime to log in for fresh tokens. Do not copy credentials into docs, code, commits, or work logs.
@@ -272,15 +272,14 @@ Do **not** ask again whether first version is export-only. It is already confirm
 第一版正式冻结为：只导入、分配、认领/不认领、主管复核、导出；不做在线表自动写回入口。
 ```
 
-As of 2026-07-17, the listing/observation business scope is sufficient and frozen. Do not invent more edge cases; ask only questions that block implementation, then fix the confirmed gaps in `docs/02-功能实现状态.md`.
+As of 2026-07-17, the listing/observation business scope is sufficient and frozen, and the confirmed implementation gaps are closed on development commit `83c6460`. Do not invent more edge cases; ask only questions that block business UAT or real weekly Item integration.
 
 If the user asks "接下来做什么", continue from `docs/20-项目推进总控.md` and `docs/02-功能实现状态.md`:
 
-1. Implement and test the already-confirmed listing/observation gaps recorded in `docs/02-功能实现状态.md`.
-2. Verify the isolated development deployment and the user-facing listing/observation workflow.
-3. Collect the real weekly Item API endpoint, authentication method, and an unfiltered aggregate response sample.
-4. Add the scheduler/adapter behind the existing `apply_week_metrics(...)` boundary and verify missing-data retry behavior.
-5. Keep production changes separate and schedule them outside user working time.
+1. Have operators and managers complete the user-facing listing/observation UAT on the isolated development environment.
+2. Collect the real weekly Item API endpoint, authentication method, and an unfiltered aggregate response sample.
+3. Add the scheduler/adapter behind the existing `apply_week_metrics(...)` boundary and verify missing-data retry behavior.
+4. Keep production changes separate and schedule them outside user working time.
 
 Only return to `docs/15` for later-stage open questions such as PLM 到货、二次调研、刊登、监控、四周总结, not for the frozen first-version export-only boundary.
 
