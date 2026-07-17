@@ -187,7 +187,7 @@ def test_existing_item_conflict_and_unauthorized_task_create_nothing() -> None:
 
 def test_later_business_period_reuses_active_items_and_links_new_claims_without_duplicates() -> None:
     headers = login("销售A", "operator", "dt-a")
-    first_claim_ids = create_waiting_listing_group(
+    create_waiting_listing_group(
         "销售A",
         "MAIN-A",
         business_period="开发0703期",
@@ -195,6 +195,7 @@ def test_later_business_period_reuses_active_items_and_links_new_claims_without_
         positionings=("稳定款", "稳定款"),
     )
     existing = create_listing(headers, "ITEM-OLD", business_period="开发0703期")
+    original_source_claim_ids = listing_source_claim_ids(existing["id"])
     later_claim_ids = create_waiting_listing_group(
         "销售A",
         "MAIN-A",
@@ -232,7 +233,8 @@ def test_later_business_period_reuses_active_items_and_links_new_claims_without_
         later_claims = [db.get(models.SalesClaimForecast, claim_id) for claim_id in later_claim_ids]
         assert [listing.item for listing in listings] == ["ITEM-NEW", "ITEM-OLD"]
         assert db.query(models.ItemObservationPeriod).count() == 8
-        assert old_listing.source_claim_ids == first_claim_ids + later_claim_ids
+        assert old_listing.source_claim_ids[: len(original_source_claim_ids)] == original_source_claim_ids
+        assert set(old_listing.source_claim_ids[len(original_source_claim_ids) :]) == set(later_claim_ids)
         assert {claim.downstream_status for claim in later_claims} == {"listing_observation"}
 
 
@@ -246,8 +248,9 @@ def test_reuse_and_new_rows_are_atomic_when_reused_listing_is_invalid(
     tracking_status: str,
 ) -> None:
     headers = login("销售A", "operator", "dt-a")
-    first_claim_ids = create_waiting_listing_group("销售A", "MAIN-A", business_period="开发0703期")
+    create_waiting_listing_group("销售A", "MAIN-A", business_period="开发0703期")
     existing = create_listing(headers, "ITEM-OLD", business_period="开发0703期")
+    original_source_claim_ids = listing_source_claim_ids(existing["id"])
     later_claim_ids = create_waiting_listing_group("销售A", "MAIN-A", business_period="开发0710期")
     with SessionLocal() as db:
         listing = db.get(models.ListingRecord, existing["id"])
@@ -282,19 +285,59 @@ def test_reuse_and_new_rows_are_atomic_when_reused_listing_is_invalid(
         later_claims = [db.get(models.SalesClaimForecast, claim_id) for claim_id in later_claim_ids]
         assert db.query(models.ListingRecord).count() == 1
         assert db.query(models.ItemObservationPeriod).count() == 4
-        assert listing.source_claim_ids == first_claim_ids
+        assert listing.source_claim_ids == original_source_claim_ids
+        assert {claim.downstream_status for claim in later_claims} == {"waiting_listing"}
+
+
+def test_valid_reuse_and_invalid_new_row_are_atomic() -> None:
+    headers = login("销售A", "operator", "dt-a")
+    create_waiting_listing_group("销售A", "MAIN-A", business_period="开发0703期")
+    existing = create_listing(headers, "ITEM-OLD", business_period="开发0703期")
+    original_source_claim_ids = listing_source_claim_ids(existing["id"])
+    later_claim_ids = create_waiting_listing_group(
+        "销售A", "MAIN-A", business_period="开发0710期", site="菲律宾"
+    )
+    later_task = listing_task_for_period(headers, "开发0710期")
+
+    response = client.post(
+        "/listing-workbench/listings/batch",
+        headers=headers,
+        json={
+            "task_key": later_task["task_key"],
+            "reuse_listing_ids": [existing["id"]],
+            "rows": [
+                {
+                    "shop": "Shop New",
+                    "item": "ITEM-NEW",
+                    "listing_strategy": "",
+                    "first_period_start": services.current_business_period_start(date.today()).isoformat(),
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 400
+    with SessionLocal() as db:
+        listing = db.get(models.ListingRecord, existing["id"])
+        later_claims = [db.get(models.SalesClaimForecast, claim_id) for claim_id in later_claim_ids]
+        assert db.query(models.ListingRecord).count() == 1
+        assert db.query(models.ItemObservationPeriod).count() == 4
+        assert listing.source_claim_ids == original_source_claim_ids
         assert {claim.downstream_status for claim in later_claims} == {"waiting_listing"}
 
 
 @pytest.mark.parametrize("mismatch", ["main_sku", "site", "owner"])
 def test_cross_period_reuse_does_not_match_other_site_owner_or_main_sku(mismatch: str) -> None:
     owner_headers = login("销售A", "operator", "dt-a")
-    create_waiting_listing_group("销售A", "MAIN-A", business_period="开发0703期", site="PH")
-    create_listing(owner_headers, "ITEM-OLD", business_period="开发0703期")
+    create_waiting_listing_group(
+        "销售A", "MAIN-A", business_period="开发0703期", site="PH"
+    )
+    existing = create_listing(owner_headers, "ITEM-OLD", business_period="开发0703期")
+    original_source_claim_ids = listing_source_claim_ids(existing["id"])
 
     later_owner = "销售B" if mismatch == "owner" else "销售A"
     later_headers = login("销售B", "operator", "dt-b") if mismatch == "owner" else owner_headers
-    create_waiting_listing_group(
+    later_claim_ids = create_waiting_listing_group(
         later_owner,
         "MAIN-B" if mismatch == "main_sku" else "MAIN-A",
         business_period="开发0710期",
@@ -304,6 +347,32 @@ def test_cross_period_reuse_does_not_match_other_site_owner_or_main_sku(mismatch
     later_task = listing_task_for_period(later_headers, "开发0710期")
     assert later_task["requires_confirmation"] is False
     assert later_task["reusable_listing_ids"] == []
+
+    response = client.post(
+        "/listing-workbench/listings/batch",
+        headers=later_headers,
+        json={
+            "task_key": later_task["task_key"],
+            "reuse_listing_ids": [existing["id"]],
+            "rows": [
+                {
+                    "shop": "Shop New",
+                    "item": "ITEM-NEW",
+                    "listing_strategy": "不应落库",
+                    "first_period_start": services.current_business_period_start(date.today()).isoformat(),
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 400
+    with SessionLocal() as db:
+        listing = db.get(models.ListingRecord, existing["id"])
+        later_claims = [db.get(models.SalesClaimForecast, claim_id) for claim_id in later_claim_ids]
+        assert db.query(models.ListingRecord).count() == 1
+        assert db.query(models.ItemObservationPeriod).count() == 4
+        assert listing.source_claim_ids == original_source_claim_ids
+        assert {claim.downstream_status for claim in later_claims} == {"waiting_listing"}
 
 
 def test_operator_scope_and_manager_owner_filter() -> None:
@@ -669,7 +738,7 @@ def test_summary_exposes_source_business_periods_for_frontend_grouping() -> None
     later_claim_ids = create_waiting_listing_group("销售A", "MAIN-A", business_period="开发0710期")
     with SessionLocal() as db:
         saved = db.get(models.ListingRecord, listing["id"])
-        saved.source_claim_ids = list(saved.source_claim_ids) + later_claim_ids
+        saved.source_claim_ids = list(reversed(list(saved.source_claim_ids) + later_claim_ids))
         for claim_id in later_claim_ids:
             db.get(models.SalesClaimForecast, claim_id).downstream_status = "listing_observation"
         db.commit()
@@ -1144,6 +1213,11 @@ def observation_row(headers: dict[str, str], listing_id: str, week_number: int) 
         for row in response.json()["period_rows"]
         if row["listing_record_id"] == listing_id and row["week_number"] == week_number
     )
+
+
+def listing_source_claim_ids(listing_id: str) -> list[str]:
+    with SessionLocal() as db:
+        return list(db.get(models.ListingRecord, listing_id).source_claim_ids)
 
 
 def seeded_listing(owner: str, first_period_start: date) -> models.ListingRecord:
