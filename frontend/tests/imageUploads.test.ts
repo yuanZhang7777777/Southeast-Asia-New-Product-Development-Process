@@ -132,3 +132,13 @@ test("operator evidence updates use current drafts and surface upload failures",
   assert.match(app, /function pasteClaimEvidence[\s\S]*?\.catch\(showUploadError\)/);
   assert.match(picker, /props\.onFiles\(files\)\.catch\(showUploadError\)/);
 });
+
+test("secondary research only lets the latest queued save set final status", () => {
+  const saveDraft = secondary.slice(secondary.indexOf("async function saveDraft"), secondary.indexOf("async function uploadImages"));
+
+  assert.match(secondary, /const saveRevision = useRef<Record<string, number>>\(\{\}\)/);
+  assert.match(saveDraft, /const revision = \(saveRevision\.current\[item\.claim_record_id\] \?\? 0\) \+ 1/);
+  assert.match(saveDraft, /saveRevision\.current\[item\.claim_record_id\] = revision/);
+  assert.match(saveDraft, /if \(saveRevision\.current\[item\.claim_record_id\] === revision\) \{[\s\S]*?"已保存"/);
+  assert.match(saveDraft, /catch \(error\) \{[\s\S]*?if \(saveRevision\.current\[item\.claim_record_id\] === revision\) \{[\s\S]*?"保存失败"/);
+});

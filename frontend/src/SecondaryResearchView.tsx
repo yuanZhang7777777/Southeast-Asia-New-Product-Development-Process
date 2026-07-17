@@ -55,6 +55,7 @@ export function SecondaryResearchView(props: {
   const [drafts, setDrafts] = useState<DraftMap>({});
   const draftsRef = useRef<DraftMap>({});
   const saveQueue = useRef(createKeyedSaveQueue()).current;
+  const saveRevision = useRef<Record<string, number>>({});
   const [saveState, setSaveState] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
   const periods = useMemo(
@@ -118,13 +119,19 @@ export function SecondaryResearchView(props: {
 
   async function saveDraft(item: SecondaryResearchItem, draft = drafts[item.claim_record_id]) {
     if (!props.editable || !draft) return;
+    const revision = (saveRevision.current[item.claim_record_id] ?? 0) + 1;
+    saveRevision.current[item.claim_record_id] = revision;
     setSaveState((current) => ({ ...current, [item.claim_record_id]: "保存中" }));
     try {
       await saveQueue(item.claim_record_id, () => api.updateSecondaryResearch(item.claim_record_id, props.salespersonName, draftPayload(draft)));
-      setSaveState((current) => ({ ...current, [item.claim_record_id]: "已保存" }));
+      if (saveRevision.current[item.claim_record_id] === revision) {
+        setSaveState((current) => ({ ...current, [item.claim_record_id]: "已保存" }));
+      }
     } catch (error) {
-      setSaveState((current) => ({ ...current, [item.claim_record_id]: "保存失败" }));
-      props.onStatus(error instanceof Error ? error.message : `${item.sub_sku} 草稿保存失败`);
+      if (saveRevision.current[item.claim_record_id] === revision) {
+        setSaveState((current) => ({ ...current, [item.claim_record_id]: "保存失败" }));
+        props.onStatus(error instanceof Error ? error.message : `${item.sub_sku} 草稿保存失败`);
+      }
       throw error;
     }
   }
