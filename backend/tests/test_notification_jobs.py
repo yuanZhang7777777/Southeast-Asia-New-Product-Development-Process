@@ -5,6 +5,8 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+import pytest
+
 os.environ["DATABASE_URL"] = f"sqlite:///{Path(__file__).with_name('test_workflow.db')}"
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -94,6 +96,89 @@ def test_arrival_daily_cards_group_by_date_and_salesperson_and_dedupe() -> None:
         assert db.query(models.NotificationLog).count() == 1
 
 
+def test_arrival_daily_cards_send_every_salesperson_group_to_test_receiver() -> None:
+    settings = Settings(
+        dingtalk_card_autosend_enabled=True,
+        dingtalk_card_test_receiver_name="刘学城",
+        platform_base_url="https://np.example",
+    )
+    sender = FakeSender()
+    with SessionLocal() as db:
+        db.add_all(
+            [
+                models.RoleMapping(name="销售A", role="operator", dingtalk_user_id="dt-sales-a", enabled=True),
+                models.RoleMapping(name="销售B", role="sales", dingtalk_user_id="dt-sales-b", enabled=True),
+                models.RoleMapping(name="刘学城", role="super_admin", dingtalk_user_id="dt-liu", enabled=True),
+            ]
+        )
+        batch = models.PlmArrivalBatch(
+            arrival_date="2026-07-12",
+            source_hash="hash-test-receiver",
+            bloc_name="集团八部",
+            row_count=2,
+        )
+        db.add(batch)
+        db.flush()
+        db.add_all(
+            [
+                models.PlmArrivalItem(
+                    batch_id=batch.id,
+                    arrival_type="new_arrival",
+                    salesperson_name="销售A",
+                    main_sku="MAIN-A",
+                    sub_sku="SUB-A",
+                ),
+                models.PlmArrivalItem(
+                    batch_id=batch.id,
+                    arrival_type="restock",
+                    salesperson_name="销售B",
+                    main_sku="MAIN-B",
+                    sub_sku="SUB-B",
+                ),
+            ]
+        )
+        db.flush()
+
+        logs = send_arrival_daily_cards(db, settings, sender, "2026-07-12")
+
+        assert len(logs) == 2
+        assert {card.salesperson_name for card in sender.arrival_cards} == {"销售A", "销售B"}
+        assert {card.receiver_dingtalk_user_id for card in sender.arrival_cards} == {"dt-liu"}
+
+
+def test_arrival_daily_cards_do_not_fall_back_when_test_receiver_is_missing() -> None:
+    settings = Settings(
+        dingtalk_card_autosend_enabled=True,
+        dingtalk_card_test_receiver_name="刘学城",
+    )
+    sender = FakeSender()
+    with SessionLocal() as db:
+        db.add(models.RoleMapping(name="销售A", role="operator", dingtalk_user_id="dt-sales-a", enabled=True))
+        batch = models.PlmArrivalBatch(
+            arrival_date="2026-07-12",
+            source_hash="hash-missing-test-receiver",
+            bloc_name="集团八部",
+            row_count=1,
+        )
+        db.add(batch)
+        db.flush()
+        db.add(
+            models.PlmArrivalItem(
+                batch_id=batch.id,
+                arrival_type="new_arrival",
+                salesperson_name="销售A",
+                main_sku="MAIN-A",
+                sub_sku="SUB-A",
+            )
+        )
+        db.flush()
+
+        with pytest.raises(RuntimeError, match="test receiver"):
+            send_arrival_daily_cards(db, settings, sender, "2026-07-12")
+
+        assert sender.arrival_cards == []
+
+
 def test_arrival_daily_cards_log_skip_when_salesperson_has_no_dingtalk_user_id() -> None:
     settings = Settings(dingtalk_card_autosend_enabled=True)
     sender = FakeSender()
@@ -178,6 +263,48 @@ def test_elimination_daily_summary_sends_unnotified_rows_to_managers_and_marks_d
         assert all(card.left_label == "淘汰款" and card.left_count == 1 for card in sender.arrival_cards)
         assert all("2026-W29 | PH | MAIN-E | SUB-E | 销售A | 淘汰商品 | 销量趋势变差" in card.sku_markdown for card in sender.arrival_cards)
         assert db.query(models.NotificationLog).filter_by(message_title="淘汰款已汇总").count() == 1
+
+
+def test_elimination_daily_summary_sends_once_to_test_receiver_instead_of_managers() -> None:
+    settings = Settings(
+        dingtalk_card_autosend_enabled=True,
+        dingtalk_card_test_receiver_name="刘学城",
+        platform_base_url="https://np.example",
+    )
+    sender = FakeSender()
+    with SessionLocal() as db:
+        db.add_all(
+            [
+                models.RoleMapping(name="经理A", role="manager", dingtalk_user_id="dt-manager-a", enabled=True),
+                models.RoleMapping(name="管理员", role="super_admin", dingtalk_user_id="dt-admin", enabled=True),
+                models.RoleMapping(name="刘学城", role="super_admin", dingtalk_user_id="dt-liu", enabled=True),
+            ]
+        )
+        db.add(
+            models.NewProductOpportunity(
+                id="op-test-receiver",
+                source_type="test",
+                main_sku="MAIN-E",
+                sub_sku="SUB-E",
+            )
+        )
+        db.add(
+            models.SalesClaimForecast(
+                id="claim-test-receiver",
+                opportunity_id="op-test-receiver",
+                salesperson_name="销售A",
+                product_positioning="淘汰款",
+                secondary_research_submitted_at=models.now_utc(),
+            )
+        )
+        db.flush()
+
+        logs = send_daily_elimination_summary(db, settings, sender, "2026-07-13")
+
+        assert len(logs) == 1
+        assert len(sender.arrival_cards) == 1
+        assert sender.arrival_cards[0].receiver_dingtalk_user_id == "dt-liu"
+        assert sender.arrival_cards[0].salesperson_name == "刘学城"
 
 
 def test_elimination_daily_summary_sends_each_observation_transition_once() -> None:

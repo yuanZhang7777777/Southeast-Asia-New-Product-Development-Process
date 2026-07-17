@@ -15,6 +15,7 @@ from app.plm_download import BEIJING
 
 
 MANAGER_ROLES = ("manager", "super_admin")
+TEST_RECEIVER_ROLES = ("operator", "sales", "supervisor", "manager", "super_admin")
 ELIMINATION_POSITIONING = "淘汰款"
 ELIMINATION_CARD_TITLE = "淘汰款提醒"
 ELIMINATION_MARKED_TITLE = "淘汰款已汇总"
@@ -49,9 +50,11 @@ def send_arrival_daily_cards(
     if not settings.dingtalk_card_autosend_enabled:
         return []
     logs: list[models.NotificationLog] = []
-    for group in _arrival_groups(db, arrival_date):
+    groups = _arrival_groups(db, arrival_date)
+    test_mapping = _test_receiver_mapping(db, settings) if groups else None
+    for group in groups:
         dedupe_key = f"dingtalk_card:arrival:{group.arrival_date}:{group.salesperson_name}"
-        mapping = services.dingtalk_mapping_for_name(db, group.salesperson_name, ("operator", "sales"))
+        mapping = test_mapping or services.dingtalk_mapping_for_name(db, group.salesperson_name, ("operator", "sales"))
         if mapping is None or not mapping.dingtalk_user_id:
             logs.append(services.skipped_dingtalk_notification(db, dedupe_key, group.salesperson_name, "skipped_no_receiver"))
             continue
@@ -308,7 +311,7 @@ def _send_manager_arrival_template_cards(
     count = len(rows)
     markdown = _elimination_markdown(rows)
     summary_text = f"{summary_date} 有 {count} 个淘汰款待外部处理"
-    for mapping in _manager_mappings(db):
+    for mapping in _manager_mappings(db, settings):
         dedupe_key = f"dingtalk_card:elimination:{claim_digest}:{mapping.name}"
         if not mapping.dingtalk_user_id:
             logs.append(services.skipped_dingtalk_notification(db, dedupe_key, mapping.name, "skipped_no_receiver"))
@@ -356,7 +359,7 @@ def _send_manager_todo_cards(
     right_count: int,
 ) -> list[models.NotificationLog]:
     logs: list[models.NotificationLog] = []
-    for mapping in _manager_mappings(db):
+    for mapping in _manager_mappings(db, settings):
         dedupe_key = f"dingtalk_card:supervisor:{business_key}:{mapping.name}"
         if not mapping.dingtalk_user_id:
             logs.append(services.skipped_dingtalk_notification(db, dedupe_key, mapping.name, "skipped_no_receiver"))
@@ -376,7 +379,10 @@ def _send_manager_todo_cards(
     return logs
 
 
-def _manager_mappings(db: Session) -> list[models.RoleMapping]:
+def _manager_mappings(db: Session, settings: Settings) -> list[models.RoleMapping]:
+    test_mapping = _test_receiver_mapping(db, settings)
+    if test_mapping is not None:
+        return [test_mapping]
     return list(
         db.scalars(
             select(models.RoleMapping)
@@ -384,3 +390,21 @@ def _manager_mappings(db: Session) -> list[models.RoleMapping]:
             .order_by(models.RoleMapping.role, models.RoleMapping.name)
         )
     )
+
+
+def _test_receiver_mapping(db: Session, settings: Settings) -> models.RoleMapping | None:
+    receiver_name = settings.dingtalk_card_test_receiver_name.strip()
+    if not receiver_name:
+        return None
+    mappings = list(
+        db.scalars(
+            select(models.RoleMapping).where(
+                models.RoleMapping.enabled.is_(True),
+                models.RoleMapping.name == receiver_name,
+                models.RoleMapping.role.in_(TEST_RECEIVER_ROLES),
+            )
+        )
+    )
+    if len(mappings) != 1 or not mappings[0].dingtalk_user_id:
+        raise RuntimeError("DingTalk test receiver is not configured uniquely")
+    return mappings[0]
