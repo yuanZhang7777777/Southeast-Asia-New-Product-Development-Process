@@ -18,66 +18,68 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    op.add_column("sales_claim_forecast", sa.Column("inventory_available", sa.Boolean(), nullable=True))
-    op.add_column("sales_claim_forecast", sa.Column("needs_stocking", sa.Boolean(), nullable=True))
-    op.add_column(
-        "sales_claim_forecast",
-        sa.Column("stocking_decision_updated_at", sa.DateTime(timezone=True), nullable=True),
-    )
+    with op.batch_alter_table("sales_claim_forecast", recreate="auto") as batch_op:
+        batch_op.add_column(sa.Column("inventory_available", sa.Boolean(), nullable=True))
+        batch_op.add_column(sa.Column("needs_stocking", sa.Boolean(), nullable=True))
+        batch_op.add_column(
+            sa.Column("stocking_decision_updated_at", sa.DateTime(timezone=True), nullable=True)
+        )
 
-    op.add_column("stocking_request", sa.Column("claim_record_id", sa.String(length=36), nullable=True))
-    op.add_column("stocking_request", sa.Column("application_date", sa.Date(), nullable=True))
-    op.add_column("stocking_request", sa.Column("submitted_at", sa.DateTime(timezone=True), nullable=True))
-    op.add_column("stocking_request", sa.Column("unit_volume_source", sa.String(length=255), nullable=True))
-    op.create_foreign_key(
-        "fk_stocking_request_claim_record",
-        "stocking_request",
-        "sales_claim_forecast",
-        ["claim_record_id"],
-        ["id"],
-    )
-    op.create_index(
-        "ix_stocking_request_claim_record_id",
-        "stocking_request",
-        ["claim_record_id"],
-        unique=True,
-    )
+    with op.batch_alter_table("stocking_request", recreate="auto") as batch_op:
+        batch_op.add_column(sa.Column("claim_record_id", sa.String(length=36), nullable=True))
+        batch_op.add_column(sa.Column("application_date", sa.Date(), nullable=True))
+        batch_op.add_column(sa.Column("submitted_at", sa.DateTime(timezone=True), nullable=True))
+        batch_op.add_column(sa.Column("unit_volume_source", sa.String(length=255), nullable=True))
+        batch_op.create_foreign_key(
+            "fk_stocking_request_claim_record",
+            "sales_claim_forecast",
+            ["claim_record_id"],
+            ["id"],
+        )
+        batch_op.create_index(
+            "ix_stocking_request_claim_record_id",
+            ["claim_record_id"],
+            unique=True,
+        )
 
-    op.add_column("export_row", sa.Column("stocking_request_id", sa.String(length=36), nullable=True))
-    op.add_column("export_row", sa.Column("application_date", sa.Date(), nullable=True))
-    op.add_column("export_row", sa.Column("stocking_type", sa.String(length=64), nullable=True))
-    op.add_column("export_row", sa.Column("cost_price", sa.Float(), nullable=True))
-    op.add_column("export_row", sa.Column("unit_volume", sa.Float(), nullable=True))
-    op.add_column("export_row", sa.Column("amount", sa.Float(), nullable=True))
-    op.add_column("export_row", sa.Column("volume", sa.Float(), nullable=True))
-    op.add_column("export_row", sa.Column("replenishment_reason", sa.Text(), nullable=True))
-    op.create_foreign_key(
-        "fk_export_row_stocking_request",
-        "export_row",
-        "stocking_request",
-        ["stocking_request_id"],
-        ["id"],
-    )
+    with op.batch_alter_table("export_row", recreate="auto") as batch_op:
+        batch_op.add_column(sa.Column("stocking_request_id", sa.String(length=36), nullable=True))
+        batch_op.add_column(sa.Column("application_date", sa.Date(), nullable=True))
+        batch_op.add_column(sa.Column("stocking_type", sa.String(length=64), nullable=True))
+        batch_op.add_column(sa.Column("cost_price", sa.Float(), nullable=True))
+        batch_op.add_column(sa.Column("unit_volume", sa.Float(), nullable=True))
+        batch_op.add_column(sa.Column("amount", sa.Float(), nullable=True))
+        batch_op.add_column(sa.Column("volume", sa.Float(), nullable=True))
+        batch_op.add_column(sa.Column("replenishment_reason", sa.Text(), nullable=True))
+        batch_op.create_foreign_key(
+            "fk_export_row_stocking_request",
+            "stocking_request",
+            ["stocking_request_id"],
+            ["id"],
+        )
 
 
 def downgrade() -> None:
-    op.drop_constraint("fk_export_row_stocking_request", "export_row", type_="foreignkey")
-    op.drop_column("export_row", "replenishment_reason")
-    op.drop_column("export_row", "volume")
-    op.drop_column("export_row", "amount")
-    op.drop_column("export_row", "unit_volume")
-    op.drop_column("export_row", "cost_price")
-    op.drop_column("export_row", "stocking_type")
-    op.drop_column("export_row", "application_date")
-    op.drop_column("export_row", "stocking_request_id")
+    with op.batch_alter_table("export_row", recreate="auto") as batch_op:
+        batch_op.drop_constraint("fk_export_row_stocking_request", type_="foreignkey")
+        batch_op.drop_column("replenishment_reason")
+        batch_op.drop_column("volume")
+        batch_op.drop_column("amount")
+        batch_op.drop_column("unit_volume")
+        batch_op.drop_column("cost_price")
+        batch_op.drop_column("stocking_type")
+        batch_op.drop_column("application_date")
+        batch_op.drop_column("stocking_request_id")
 
-    op.drop_index("ix_stocking_request_claim_record_id", table_name="stocking_request")
-    op.drop_constraint("fk_stocking_request_claim_record", "stocking_request", type_="foreignkey")
-    op.drop_column("stocking_request", "unit_volume_source")
-    op.drop_column("stocking_request", "submitted_at")
-    op.drop_column("stocking_request", "application_date")
-    op.drop_column("stocking_request", "claim_record_id")
+    with op.batch_alter_table("stocking_request", recreate="auto") as batch_op:
+        batch_op.drop_index("ix_stocking_request_claim_record_id")
+        batch_op.drop_constraint("fk_stocking_request_claim_record", type_="foreignkey")
+        batch_op.drop_column("unit_volume_source")
+        batch_op.drop_column("submitted_at")
+        batch_op.drop_column("application_date")
+        batch_op.drop_column("claim_record_id")
 
-    op.drop_column("sales_claim_forecast", "stocking_decision_updated_at")
-    op.drop_column("sales_claim_forecast", "needs_stocking")
-    op.drop_column("sales_claim_forecast", "inventory_available")
+    with op.batch_alter_table("sales_claim_forecast", recreate="auto") as batch_op:
+        batch_op.drop_column("stocking_decision_updated_at")
+        batch_op.drop_column("needs_stocking")
+        batch_op.drop_column("inventory_available")

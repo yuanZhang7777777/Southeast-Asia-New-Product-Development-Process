@@ -41,7 +41,7 @@ def test_stocking_export_persists_export_batch_and_rows() -> None:
     assert opportunity_status == "waiting_arrival"
 
 
-def test_available_export_filters_by_source_sheet_and_allows_repeat_download() -> None:
+def test_available_export_filters_by_source_sheet_without_repeating_transitioned_rows() -> None:
     first_id, first_claim_id = prepare_approved_claim(source_sheet="开发0623期", source_row=1, sub_sku="SUB-W27")
     second_id, second_claim_id = prepare_approved_claim(source_sheet="开发0630期", source_row=2, sub_sku="SUB-W28")
 
@@ -50,17 +50,13 @@ def test_available_export_filters_by_source_sheet_and_allows_repeat_download() -
     assert response.status_code == 200
     list_response = client.get("/stocking/available-list?source_sheet=开发0623期")
     assert list_response.status_code == 200
-    assert [(item["opportunity_id"], item["claim_record_id"]) for item in list_response.json()] == [(first_id, first_claim_id)]
+    assert list_response.json() == []
 
     repeat_response = client.get("/stocking/available-list/export?source_sheet=开发0623期")
     assert repeat_response.status_code == 200
     with SessionLocal() as db:
         exported = db.query(models.ExportRow).all()
-    assert [(row.opportunity_id, row.claim_record_id) for row in exported] == [
-        (first_id, first_claim_id),
-        (first_id, first_claim_id),
-    ]
-    assert len({row.export_batch_id for row in exported}) == 2
+    assert [(row.opportunity_id, row.claim_record_id) for row in exported] == [(first_id, first_claim_id)]
 
     other_period = client.get("/stocking/available-list?source_sheet=开发0630期")
     assert other_period.status_code == 200
@@ -117,5 +113,6 @@ def prepare_approved_claim(
                 review_status="approved",
             ),
         )
+        claim.downstream_status = "waiting_export"
         db.commit()
         return opportunity.id, claim.id

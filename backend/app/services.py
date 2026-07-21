@@ -2483,6 +2483,7 @@ def list_available_stocking_items(
         models.SalesClaimForecast.claim_daily_sales.is_not(None),
         models.SalesClaimForecast.claim_daily_sales > 0,
         models.SalesClaimForecast.source_column == "platform",
+        models.SalesClaimForecast.downstream_status == CLAIM_WAITING_EXPORT,
     ]
     if business_period:
         filters.append(models.NewProductOpportunity.batch == business_period)

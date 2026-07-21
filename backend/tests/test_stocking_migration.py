@@ -5,10 +5,13 @@ from pathlib import Path
 os.environ["DATABASE_URL"] = f"sqlite:///{Path(__file__).with_name('test_workflow.db')}"
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from alembic import command  # noqa: E402
 from alembic.config import Config  # noqa: E402
 from alembic.script import ScriptDirectory  # noqa: E402
+from sqlalchemy import create_engine, inspect, text  # noqa: E402
 
 from app import models  # noqa: E402, F401
+from app.config import get_settings  # noqa: E402
 from app.db import Base  # noqa: E402
 
 
@@ -63,3 +66,69 @@ def test_stocking_workflow_migration_is_the_single_head() -> None:
 
     assert script.get_heads() == ["c9d1e2f3a456"]
     assert script.get_revision("c9d1e2f3a456").down_revision == "a8d4e6f7b901"
+
+
+def test_sqlite_upgrade_from_previous_head_preserves_legacy_rows(tmp_path: Path, monkeypatch) -> None:
+    database_url = f"sqlite:///{tmp_path / 'stocking_migration.db'}"
+    monkeypatch.setenv("DATABASE_URL", database_url)
+    get_settings.cache_clear()
+    config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
+    config.set_main_option("script_location", str(Path(__file__).resolve().parents[1] / "alembic"))
+    engine = create_engine(database_url)
+    try:
+        command.upgrade(config, "a8d4e6f7b901")
+        now = "2026-07-21 00:00:00"
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    """INSERT INTO new_product_opportunity
+                    (id, source_type, main_sku, sub_sku, current_status, snapshot, created_at, updated_at)
+                    VALUES ('opportunity-legacy', 'manual', 'MAIN-LEGACY', 'SUB-LEGACY', 'ready_for_stocking', '{}', :now, :now)"""
+                ),
+                {"now": now},
+            )
+            connection.execute(
+                text(
+                    """INSERT INTO stocking_request
+                    (id, opportunity_id, request_type, quantity, status, created_at, updated_at)
+                    VALUES ('request-legacy', 'opportunity-legacy', 'initial', 30, 'draft', :now, :now)"""
+                ),
+                {"now": now},
+            )
+            connection.execute(
+                text(
+                    """INSERT INTO export_batch
+                    (id, exported_at, file_name, scope, row_count, status, created_at, updated_at)
+                    VALUES ('batch-legacy', :now, 'legacy.xlsx', 'stocking_available', 1, 'completed', :now, :now)"""
+                ),
+                {"now": now},
+            )
+            connection.execute(
+                text(
+                    """INSERT INTO export_row
+                    (id, export_batch_id, opportunity_id, main_sku, sub_sku, claim_daily_sales,
+                     stocking_quantity, created_at, updated_at)
+                    VALUES ('row-legacy', 'batch-legacy', 'opportunity-legacy', 'MAIN-LEGACY',
+                            'SUB-LEGACY', 1, 30, :now, :now)"""
+                ),
+                {"now": now},
+            )
+
+        command.upgrade(config, "head")
+
+        table_names = set(inspect(engine).get_table_names())
+        assert {"stocking_request", "export_row"} <= table_names
+        with engine.connect() as connection:
+            request = connection.execute(
+                text("SELECT id, claim_record_id FROM stocking_request WHERE id = 'request-legacy'")
+            ).one()
+            export_row = connection.execute(
+                text("SELECT id, stocking_request_id FROM export_row WHERE id = 'row-legacy'")
+            ).one()
+            revision = connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
+        assert request == ("request-legacy", None)
+        assert export_row == ("row-legacy", None)
+        assert revision == "c9d1e2f3a456"
+    finally:
+        engine.dispose()
+        get_settings.cache_clear()

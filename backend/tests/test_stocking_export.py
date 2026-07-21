@@ -95,7 +95,7 @@ def test_multiple_approved_claims_for_one_child_sku_export_as_multiple_rows() ->
     ]
 
 
-def test_stocking_export_repeats_current_rows_without_regressing_later_status() -> None:
+def test_stocking_export_excludes_rows_after_later_status() -> None:
     opportunity_id = prepare_approved_claims([("销售A", 2.5)])
 
     first = client.get("/stocking/available-list/export?business_period=BATCH-EXPORT")
@@ -111,7 +111,8 @@ def test_stocking_export_repeats_current_rows_without_regressing_later_status() 
     second = client.get("/stocking/available-list/export?business_period=BATCH-EXPORT")
     assert second.status_code == 200
     workbook = load_workbook(BytesIO(second.content), data_only=True)
-    assert workbook["PH"].max_row == 2
+    assert workbook.sheetnames == ["备货申请表"]
+    assert workbook["备货申请表"].max_row == 1
 
     with SessionLocal() as db:
         claim = db.query(models.SalesClaimForecast).filter_by(opportunity_id=opportunity_id).one()
@@ -123,7 +124,7 @@ def test_stocking_export_repeats_current_rows_without_regressing_later_status() 
         ).all()
         assert claim.downstream_status == "waiting_secondary_research"
         assert opportunity.current_status == "已确认不认领"
-        assert len(rows) == 2
+        assert len(rows) == 1
         assert len(transition_audits) == 1
 
 
@@ -150,6 +151,7 @@ def test_legacy_null_review_only_applies_to_claims_existing_when_reviewed() -> N
             claim_result="claim",
             claim_daily_sales=1,
             source_column="platform",
+            downstream_status="waiting_export",
             created_at=reviewed_at - timedelta(minutes=1),
         )
         later_claim = models.SalesClaimForecast(
@@ -184,7 +186,7 @@ def test_legacy_null_review_only_applies_to_claims_existing_when_reviewed() -> N
     ]
 
 
-def test_repeat_export_includes_newly_approved_rows_in_the_same_period() -> None:
+def test_repeat_export_only_includes_new_waiting_export_rows() -> None:
     prepare_approved_claims([("销售A", 1)], main_sku="MAIN-FIRST", sub_sku="SUB-FIRST", source_row=1)
     first = client.get("/stocking/available-list/export?business_period=BATCH-EXPORT")
     assert first.status_code == 200
@@ -193,10 +195,8 @@ def test_repeat_export_includes_newly_approved_rows_in_the_same_period() -> None
     second = client.get("/stocking/available-list/export?business_period=BATCH-EXPORT")
 
     workbook = load_workbook(BytesIO(second.content), data_only=True)
-    assert {workbook["PH"][f"F{row}"].value for row in range(2, workbook["PH"].max_row + 1)} == {
-        "MAIN-FIRST",
-        "MAIN-LATER",
-    }
+    assert {workbook["PH"][f"F{row}"].value for row in range(2, workbook["PH"].max_row + 1)} == {"MAIN-LATER"}
+
 
 
 def test_repeatable_exports_still_exclude_disabled_opportunities() -> None:
@@ -264,5 +264,7 @@ def prepare_approved_claims(
                 review_comment="通过",
             ),
         )
+        for claim in db.query(models.SalesClaimForecast).filter_by(opportunity_id=opportunity.id):
+            claim.downstream_status = "waiting_export"
         db.commit()
         return opportunity.id

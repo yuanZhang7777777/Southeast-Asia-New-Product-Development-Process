@@ -1,6 +1,6 @@
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, Query, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -96,18 +96,11 @@ def period_file_name(prefix: str, source_sheet: str | None, import_batch_id: str
 
 @router.post("/requests", response_model=schemas.MessageResponse)
 def create_stocking_request(payload: schemas.StockingRequestCreate, db: Session = Depends(get_db)) -> schemas.MessageResponse:
-    quantity = services.stocking_quantity(payload.daily_sales)
-    item = models.StockingRequest(
-        opportunity_id=payload.opportunity_id,
-        salesperson_name=payload.salesperson_name,
-        daily_sales=payload.daily_sales,
-        quantity=quantity,
-        country=payload.country,
-        warehouse=payload.warehouse,
-        reason=payload.reason,
-        status="draft",
-    )
-    db.add(item)
-    services.audit(db, "stocking.request_created", "stocking_request", item.id, payload.model_dump(), payload.salesperson_name)
+    claim = db.get(models.SalesClaimForecast, payload.claim_record_id)
+    if claim is None:
+        raise HTTPException(status_code=404, detail="claim record not found")
+    if claim.opportunity_id != payload.opportunity_id:
+        raise HTTPException(status_code=400, detail="claim record does not belong to opportunity")
+    item = services.create_stocking_draft_for_claim(db, claim.id, payload.salesperson_name)
     db.commit()
     return schemas.MessageResponse(message="stocking draft created", id=item.id)

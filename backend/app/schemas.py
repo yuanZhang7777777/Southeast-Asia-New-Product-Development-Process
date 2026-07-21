@@ -287,6 +287,7 @@ class BulkReviewCreate(BaseModel):
 
 class StockingRequestCreate(BaseModel):
     opportunity_id: str
+    claim_record_id: str
     salesperson_name: str | None = None
     daily_sales: float
     country: str | None = None

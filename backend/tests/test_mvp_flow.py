@@ -271,9 +271,7 @@ def test_mvp_flow_and_notification_dedupe() -> None:
 
     available_response = client.get("/stocking/available-list")
     assert available_response.status_code == 200
-    available_items = available_response.json()
-    assert available_items[0]["claim_daily_sales"] == 2
-    assert available_items[0]["quantity"] == 60
+    assert available_response.json() == []
 
     export_response = client.get("/stocking/available-list/export")
     assert export_response.status_code == 200
@@ -364,6 +362,11 @@ def test_selection1_import_is_idempotent_and_exportable(tmp_path: Path) -> None:
     assert len(stocking_requests) == 1
     assert stocking_requests[0]["claim_record_id"] == claim_response.json()["id"]
     assert stocking_requests[0]["quantity"] == 90
+
+    with SessionLocal() as db:
+        claim = db.get(models.SalesClaimForecast, claim_response.json()["id"])
+        claim.downstream_status = "waiting_export"
+        db.commit()
 
     export_path = tmp_path / "available.xlsx"
     export_response = client.get("/stocking/available-list/export")

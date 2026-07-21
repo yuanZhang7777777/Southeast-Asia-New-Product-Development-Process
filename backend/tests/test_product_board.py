@@ -108,6 +108,7 @@ def test_product_board_operator_auth_forces_current_owner() -> None:
 def test_product_board_filters_status_arrival_site_query_and_export_moves_claim_status() -> None:
     owner_a_claim, owner_b_claim = prepare_approved_group(site="PH")
     set_claim_status(owner_a_claim, "waiting_secondary_research", datetime(2026, 7, 10, tzinfo=timezone.utc))
+    set_claim_status(owner_b_claim, "waiting_export")
 
     filtered = client.get(
         "/product-board",
