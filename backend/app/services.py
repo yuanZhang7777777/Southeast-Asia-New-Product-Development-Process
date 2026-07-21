@@ -2619,7 +2619,7 @@ def record_export_batch(
             )
         )
         claim = db.get(models.SalesClaimForecast, item.claim_record_id)
-        if claim and claim.downstream_status in (None, CLAIM_WAITING_EXPORT, CLAIM_WAITING_STOCKING_REQUEST):
+        if claim and claim.downstream_status in (None, CLAIM_WAITING_EXPORT):
             claim.downstream_status = CLAIM_WAITING_ARRIVAL
     for opportunity, claim in extra_rows:
         db.add(

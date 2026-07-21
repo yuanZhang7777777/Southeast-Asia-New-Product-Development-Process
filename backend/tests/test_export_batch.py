@@ -41,6 +41,45 @@ def test_stocking_export_persists_export_batch_and_rows() -> None:
     assert opportunity_status == "waiting_arrival"
 
 
+def test_record_export_batch_does_not_advance_unsubmitted_stocking_draft() -> None:
+    with SessionLocal() as db:
+        opportunity = models.NewProductOpportunity(
+            source_type="manual",
+            main_sku="MAIN-DRAFT",
+            sub_sku="SUB-DRAFT",
+            current_status="ready_for_stocking",
+        )
+        db.add(opportunity)
+        db.flush()
+        claim = models.SalesClaimForecast(
+            opportunity_id=opportunity.id,
+            salesperson_name="Sales A",
+            claim_result="claim",
+            claim_daily_sales=1,
+            source_column="platform",
+            downstream_status="waiting_stocking_request",
+        )
+        db.add(claim)
+        db.flush()
+        item = schemas.AvailableStockingItem(
+            opportunity_id=opportunity.id,
+            claim_record_id=claim.id,
+            time=models.now_utc(),
+            selection_source="manual",
+            salesperson_name=claim.salesperson_name,
+            main_sku=opportunity.main_sku,
+            sub_sku=opportunity.sub_sku,
+            site="PH",
+            claim_daily_sales=1,
+            quantity=30,
+        )
+
+        services.record_export_batch(db, [item], "draft.xlsx", "stocking_available")
+        db.flush()
+
+        assert claim.downstream_status == "waiting_stocking_request"
+
+
 def test_available_export_filters_by_source_sheet_without_repeating_transitioned_rows() -> None:
     first_id, first_claim_id = prepare_approved_claim(source_sheet="开发0623期", source_row=1, sub_sku="SUB-W27")
     second_id, second_claim_id = prepare_approved_claim(source_sheet="开发0630期", source_row=2, sub_sku="SUB-W28")
