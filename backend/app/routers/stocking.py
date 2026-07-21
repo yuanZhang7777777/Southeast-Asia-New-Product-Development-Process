@@ -96,7 +96,7 @@ def period_file_name(prefix: str, source_sheet: str | None, import_batch_id: str
 
 @router.post("/requests", response_model=schemas.MessageResponse)
 def create_stocking_request(payload: schemas.StockingRequestCreate, db: Session = Depends(get_db)) -> schemas.MessageResponse:
-    quantity = int(round(payload.daily_sales * 30))
+    quantity = services.stocking_quantity(payload.daily_sales)
     item = models.StockingRequest(
         opportunity_id=payload.opportunity_id,
         salesperson_name=payload.salesperson_name,

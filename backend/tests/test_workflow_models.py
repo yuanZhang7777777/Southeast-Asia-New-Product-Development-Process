@@ -9,6 +9,7 @@ from app import models, schemas  # noqa: E402
 from app.db import Base, SessionLocal, engine  # noqa: E402
 from alembic.config import Config  # noqa: E402
 from alembic.script import ScriptDirectory  # noqa: E402
+from app import workflow_status  # noqa: E402
 
 
 def setup_function() -> None:
@@ -128,4 +129,9 @@ def test_listing_observation_migration_is_the_single_head() -> None:
     config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
     config.set_main_option("script_location", str(Path(__file__).resolve().parents[1] / "alembic"))
 
-    assert ScriptDirectory.from_config(config).get_current_head() == "a8d4e6f7b901"
+    assert ScriptDirectory.from_config(config).get_current_head() == "c9d1e2f3a456"
+
+
+def test_stocking_claim_statuses_are_explicit() -> None:
+    assert workflow_status.CLAIM_WAITING_STOCKING_REQUEST == "waiting_stocking_request"
+    assert workflow_status.CLAIM_STOCKING_PAUSED == "stocking_paused"

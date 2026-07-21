@@ -263,7 +263,11 @@ def test_mvp_flow_and_notification_dedupe() -> None:
 
     stocking_response = client.get("/stocking/requests")
     assert stocking_response.status_code == 200
-    assert stocking_response.json() == []
+    stocking_requests = stocking_response.json()
+    assert len(stocking_requests) == 1
+    assert stocking_requests[0]["claim_record_id"] == claim_response.json()["id"]
+    assert stocking_requests[0]["quantity"] == 60
+    assert stocking_requests[0]["status"] == "draft"
 
     available_response = client.get("/stocking/available-list")
     assert available_response.status_code == 200
@@ -356,7 +360,10 @@ def test_selection1_import_is_idempotent_and_exportable(tmp_path: Path) -> None:
         },
     )
     assert review_response.status_code == 200
-    assert client.get("/stocking/requests").json() == []
+    stocking_requests = client.get("/stocking/requests").json()
+    assert len(stocking_requests) == 1
+    assert stocking_requests[0]["claim_record_id"] == claim_response.json()["id"]
+    assert stocking_requests[0]["quantity"] == 90
 
     export_path = tmp_path / "available.xlsx"
     export_response = client.get("/stocking/available-list/export")

@@ -297,6 +297,10 @@ class StockingRequestCreate(BaseModel):
 class StockingRequestRead(BaseModel):
     id: str
     opportunity_id: str
+    claim_record_id: str | None
+    application_date: date | None
+    submitted_at: datetime | None
+    unit_volume_source: str | None
     salesperson_name: str | None
     main_sku: str | None
     sub_sku: str | None

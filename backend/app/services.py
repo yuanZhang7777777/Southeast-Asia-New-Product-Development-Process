@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 from copy import deepcopy
 from collections import defaultdict
 from io import BytesIO
@@ -31,6 +32,7 @@ from app.workflow_status import (
     CLAIM_WAITING_EXPORT,
     CLAIM_WAITING_LISTING,
     CLAIM_WAITING_SECONDARY_RESEARCH,
+    CLAIM_WAITING_STOCKING_REQUEST,
     OPPORTUNITY_ASSIGNED,
     OPPORTUNITY_CLAIM_REJECTED,
     OPPORTUNITY_CLAIM_SUBMITTED,
@@ -960,7 +962,8 @@ def submit_review(
         create_returned_claim_task(db, payload.opportunity_id, reviewer_name)
     if payload.review_status == REVIEW_APPROVED:
         for reviewed_claim in reviewed_claims:
-            reviewed_claim.downstream_status = CLAIM_WAITING_EXPORT
+            create_stocking_draft_for_claim(db, reviewed_claim.id, reviewer_name)
+            reviewed_claim.downstream_status = CLAIM_WAITING_STOCKING_REQUEST
         audit(db, "opportunity.ready_for_stocking", "new_product_opportunity", payload.opportunity_id, {}, reviewer_name, actor_user_id)
     for record in records:
         audit(
@@ -2388,7 +2391,7 @@ def responsibility_visible_status(
     if claim and claim.downstream_status:
         return claim.downstream_status
     if claim and claim.claim_result == CLAIM_RESULT_CLAIM and review and review.review_status == REVIEW_APPROVED:
-        return CLAIM_WAITING_EXPORT
+        return CLAIM_WAITING_STOCKING_REQUEST
     return opportunity.current_status
 
 
@@ -2399,7 +2402,62 @@ def _date_in_range(value: datetime | None, start: date | None, end: date | None)
     return (start is None or current >= start) and (end is None or current <= end)
 
 
-def create_stocking_draft_from_claim(db: Session, opportunity_id: str, actor_name: str | None = None) -> models.StockingRequest | None:
+def stocking_quantity(daily_sales: float) -> int:
+    return math.ceil(daily_sales * 30)
+
+
+def stocking_totals(cost_price: float, unit_volume: float, quantity: int) -> tuple[float, float]:
+    return cost_price * quantity, unit_volume * quantity
+
+
+def create_stocking_draft_for_claim(
+    db: Session,
+    claim_record_id: str,
+    actor_name: str | None = None,
+) -> models.StockingRequest:
+    existing = db.scalar(
+        select(models.StockingRequest).where(models.StockingRequest.claim_record_id == claim_record_id)
+    )
+    if existing:
+        return existing
+    claim = db.get(models.SalesClaimForecast, claim_record_id)
+    if claim is None:
+        raise LookupError("claim record not found")
+    opportunity = db.get(models.NewProductOpportunity, claim.opportunity_id)
+    if opportunity is None:
+        raise LookupError("opportunity not found")
+    if claim.claim_daily_sales is None:
+        raise ValueError("claim_daily_sales is required")
+    quantity = stocking_quantity(claim.claim_daily_sales)
+    cost_price = number_value(central_field_value(opportunity, "商品成本-含税（元）"))
+    unit_volume = number_value(central_field_value(opportunity, "包装后体积"))
+    request = models.StockingRequest(
+        opportunity_id=opportunity.id,
+        claim_record_id=claim.id,
+        application_date=datetime.now(EXCEL_TIMEZONE).date(),
+        salesperson_name=claim.salesperson_name,
+        main_sku=opportunity.main_sku,
+        sub_sku=opportunity.sub_sku,
+        cost_price=cost_price,
+        unit_volume=unit_volume,
+        daily_sales=claim.claim_daily_sales,
+        quantity=quantity,
+        country=opportunity.country,
+        amount=cost_price * quantity if cost_price is not None else None,
+        volume=unit_volume * quantity if unit_volume is not None else None,
+        status="draft",
+    )
+    db.add(request)
+    db.flush()
+    audit(db, "stocking.draft_created", "stocking_request", request.id, {"quantity": quantity}, actor_name)
+    return request
+
+
+def create_stocking_draft_from_claim(
+    db: Session,
+    opportunity_id: str,
+    actor_name: str | None = None,
+) -> models.StockingRequest | None:
     claim = db.scalar(
         select(models.SalesClaimForecast)
         .where(
@@ -2408,23 +2466,9 @@ def create_stocking_draft_from_claim(db: Session, opportunity_id: str, actor_nam
         )
         .order_by(models.SalesClaimForecast.created_at.desc())
     )
-    opportunity = db.get(models.NewProductOpportunity, opportunity_id)
-    if not claim or not claim.claim_daily_sales or not opportunity:
+    if claim is None or claim.claim_daily_sales is None:
         return None
-    quantity = int(round(claim.claim_daily_sales * 30))
-    request = models.StockingRequest(
-        opportunity_id=opportunity_id,
-        salesperson_name=claim.salesperson_name,
-        main_sku=opportunity.main_sku,
-        sub_sku=opportunity.sub_sku,
-        daily_sales=claim.claim_daily_sales,
-        quantity=quantity,
-        country=opportunity.country,
-        status="draft",
-    )
-    db.add(request)
-    audit(db, "stocking.draft_created", "stocking_request", request.id, {"quantity": quantity}, actor_name)
-    return request
+    return create_stocking_draft_for_claim(db, claim.id, actor_name)
 
 
 def list_available_stocking_items(
@@ -2462,7 +2506,7 @@ def list_available_stocking_items(
         review = latest_review_for_claim(db, opportunity.id, claim)
         if review is None or review.review_status != REVIEW_APPROVED:
             continue
-        quantity = int(round(claim.claim_daily_sales * 30))
+        quantity = stocking_quantity(claim.claim_daily_sales)
         cost_price = number_value(central_field_value(opportunity, "商品成本-含税（元）"))
         unit_volume = number_value(central_field_value(opportunity, "包装后体积"))
         items.append(
@@ -2574,7 +2618,7 @@ def record_export_batch(
             )
         )
         claim = db.get(models.SalesClaimForecast, item.claim_record_id)
-        if claim and claim.downstream_status in (None, CLAIM_WAITING_EXPORT):
+        if claim and claim.downstream_status in (None, CLAIM_WAITING_EXPORT, CLAIM_WAITING_STOCKING_REQUEST):
             claim.downstream_status = CLAIM_WAITING_ARRIVAL
     for opportunity, claim in extra_rows:
         db.add(
