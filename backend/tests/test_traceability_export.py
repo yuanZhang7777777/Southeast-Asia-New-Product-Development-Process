@@ -136,6 +136,7 @@ def test_traceability_export_does_not_treat_selection2_column_letters_as_central
                 review_status="approved",
             ),
         )
+        submit_latest_stocking_request(db, opportunity.id)
         db.commit()
 
     response = client.get("/stocking/traceability/export")
@@ -206,6 +207,7 @@ def test_traceability_export_preserves_selection1_duplicate_headers_by_column(tm
                 review_status="approved",
             ),
         )
+        submit_latest_stocking_request(db, opportunity.id)
         db.commit()
 
     response = client.get("/stocking/traceability/export")
@@ -519,9 +521,16 @@ def prepare_approved_claim(
                 review_status="approved",
             ),
         )
+        submit_latest_stocking_request(db, opportunity.id)
         db.commit()
         return opportunity.id
 
+
+def submit_latest_stocking_request(db, opportunity_id: str) -> None:
+    claim = db.query(models.SalesClaimForecast).filter_by(opportunity_id=opportunity_id, claim_result="claim").one()
+    request = db.query(models.StockingRequest).filter_by(claim_record_id=claim.id).one()
+    request.status = "submitted"
+    claim.downstream_status = "waiting_export"
 
 def prepare_reject_claim(
     source_sheet: str,

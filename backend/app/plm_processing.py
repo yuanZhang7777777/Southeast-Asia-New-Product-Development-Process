@@ -5,15 +5,14 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import and_, select
 from sqlalchemy.orm import Session
 
 from app import models, services
 from app.plm_arrivals import parse_plm_arrival_preview
 from app.site_codes import normalize_site_code
-from app.workflow_status import CLAIM_RESULT_CLAIM, CLAIM_WAITING_ARRIVAL, CLAIM_WAITING_EXPORT, REVIEW_APPROVED
+from app.workflow_status import CLAIM_RESULT_CLAIM, CLAIM_WAITING_ARRIVAL
 
-READY_FOR_ARRIVAL = {CLAIM_WAITING_ARRIVAL, CLAIM_WAITING_EXPORT}
 BEIJING_TZ = timezone(timedelta(hours=8))
 
 
@@ -121,12 +120,23 @@ def _exact_claim_matches(
     rows = db.execute(
         select(models.SalesClaimForecast, models.NewProductOpportunity)
         .join(models.NewProductOpportunity, models.NewProductOpportunity.id == models.SalesClaimForecast.opportunity_id)
-        .join(models.ReviewRecord, models.ReviewRecord.claim_record_id == models.SalesClaimForecast.id)
+        .join(models.ExportRow, models.ExportRow.claim_record_id == models.SalesClaimForecast.id)
+        .join(models.ExportBatch, models.ExportBatch.id == models.ExportRow.export_batch_id)
+        .join(
+            models.StockingRequest,
+            and_(
+                models.StockingRequest.id == models.ExportRow.stocking_request_id,
+                models.StockingRequest.claim_record_id == models.SalesClaimForecast.id,
+                models.StockingRequest.opportunity_id == models.NewProductOpportunity.id,
+            ),
+        )
         .where(
             models.SalesClaimForecast.claim_result == CLAIM_RESULT_CLAIM,
             models.SalesClaimForecast.source_column == "platform",
-            models.SalesClaimForecast.downstream_status.in_(READY_FOR_ARRIVAL),
-            models.ReviewRecord.review_status == REVIEW_APPROVED,
+            models.SalesClaimForecast.downstream_status == CLAIM_WAITING_ARRIVAL,
+            models.ExportRow.opportunity_id == models.NewProductOpportunity.id,
+            models.ExportBatch.scope == "stocking_available",
+            models.StockingRequest.status == "exported",
         )
         .order_by(models.SalesClaimForecast.created_at)
     ).all()

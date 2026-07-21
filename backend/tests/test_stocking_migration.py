@@ -26,6 +26,7 @@ def test_stocking_workflow_columns_are_migration_safe() -> None:
         "stocking_request_id",
         "application_date",
         "stocking_type",
+        "selection_source",
         "cost_price",
         "unit_volume",
         "amount",
@@ -45,6 +46,7 @@ def test_stocking_workflow_columns_are_migration_safe() -> None:
             export_row.c.stocking_request_id,
             export_row.c.application_date,
             export_row.c.stocking_type,
+            export_row.c.selection_source,
             export_row.c.cost_price,
             export_row.c.unit_volume,
             export_row.c.amount,
@@ -64,8 +66,8 @@ def test_stocking_workflow_migration_is_the_single_head() -> None:
     config.set_main_option("script_location", str(Path(__file__).resolve().parents[1] / "alembic"))
     script = ScriptDirectory.from_config(config)
 
-    assert script.get_heads() == ["c9d1e2f3a456"]
-    assert script.get_revision("c9d1e2f3a456").down_revision == "a8d4e6f7b901"
+    assert script.get_heads() == ["d0e2f3a4b567"]
+    assert script.get_revision("d0e2f3a4b567").down_revision == "c9d1e2f3a456"
 
 
 def test_sqlite_upgrade_from_previous_head_preserves_legacy_rows(tmp_path: Path, monkeypatch) -> None:
@@ -123,12 +125,12 @@ def test_sqlite_upgrade_from_previous_head_preserves_legacy_rows(tmp_path: Path,
                 text("SELECT id, claim_record_id FROM stocking_request WHERE id = 'request-legacy'")
             ).one()
             export_row = connection.execute(
-                text("SELECT id, stocking_request_id FROM export_row WHERE id = 'row-legacy'")
+                text("SELECT id, stocking_request_id, selection_source FROM export_row WHERE id = 'row-legacy'")
             ).one()
             revision = connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
         assert request == ("request-legacy", None)
-        assert export_row == ("row-legacy", None)
-        assert revision == "c9d1e2f3a456"
+        assert export_row == ("row-legacy", None, None)
+        assert revision == "d0e2f3a4b567"
     finally:
         engine.dispose()
         get_settings.cache_clear()

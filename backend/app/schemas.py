@@ -399,12 +399,31 @@ class OperatorStockingItemRead(BaseModel):
     downstream_status: str
     request: StockingRequestRead | None = None
 
+
+class StockingExportSelection(BaseModel):
+    request_ids: list[str] = Field(min_length=1, max_length=500)
+
+    model_config = {"extra": "forbid"}
+
+    @field_validator("request_ids")
+    @classmethod
+    def unique_request_ids(cls, value: list[str]) -> list[str]:
+        normalized = [request_id.strip() for request_id in value]
+        if any(not request_id for request_id in normalized):
+            raise ValueError("request_ids must not contain empty values")
+        if len(set(normalized)) != len(normalized):
+            raise ValueError("request_ids must not contain duplicates")
+        return normalized
+
+
 class AvailableStockingItem(BaseModel):
     opportunity_id: str
+    request_id: str
     claim_record_id: str
     business_period: str | None = None
     operation_status: str = "未操作"
-    time: datetime
+    time: datetime | None = None
+    application_date: date | None = None
     stocking_type: str = "首次备货"
     selection_source: str
     salesperson_name: str | None
@@ -418,10 +437,12 @@ class AvailableStockingItem(BaseModel):
     cost_price: float | None = None
     unit_volume: float | None = None
     amount: float | None = None
+    volume: float | None = None
     replenishment_reason: str | None = None
     needs_launch_email: str | None = None
     launch_email_status: str | None = None
     review_status: str | None = None
+    status: str
 
 
 class ExportPeriodSummary(BaseModel):

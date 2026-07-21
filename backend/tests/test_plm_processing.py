@@ -1,6 +1,6 @@
 import os
 import sys
-from datetime import timezone
+from datetime import date, timezone
 from pathlib import Path
 
 os.environ["DATABASE_URL"] = f"sqlite:///{Path(__file__).with_name('test_plm_processing.db')}"
@@ -38,14 +38,8 @@ def test_plm_processing_persists_all_rows_and_dry_run_does_not_open_secondary_re
         opportunity, claim = make_claim(" sub-a ", "PH", SALES_A, "waiting_arrival")
         db.add_all([opportunity, claim])
         db.flush()
-        db.add(
-            models.ReviewRecord(
-                opportunity_id=opportunity.id,
-                claim_record_id=claim.id,
-                reviewer_name="\u4e3b\u7ba1",
-                review_status="approved",
-            )
-        )
+        add_stocking_export(db, opportunity, claim)
+
         db.commit()
 
         result = process_plm_arrival_workbook(
@@ -100,17 +94,11 @@ def test_plm_processing_automation_uses_utc_arrival_time_and_dedupes_source_hash
     monkeypatch.setattr(plm_processing.services, "open_secondary_research", capture_open_secondary_research)
 
     with SessionLocal() as db:
-        opportunity, claim = make_claim("SUB-A", "PH", SALES_A, "waiting_export")
+        opportunity, claim = make_claim("SUB-A", "PH", SALES_A, "waiting_arrival")
         db.add_all([opportunity, claim])
         db.flush()
-        db.add(
-            models.ReviewRecord(
-                opportunity_id=opportunity.id,
-                claim_record_id=claim.id,
-                reviewer_name="\u4e3b\u7ba1",
-                review_status="approved",
-            )
-        )
+        add_stocking_export(db, opportunity, claim)
+
         db.commit()
 
         first = process_plm_arrival_workbook(
@@ -153,14 +141,8 @@ def test_plm_processing_exact_match_ignores_non_platform_claim(tmp_path: Path) -
         opportunity, claim = make_claim("SUB-A", "PH", SALES_A, "waiting_arrival", source_column="CC:CH")
         db.add_all([opportunity, claim])
         db.flush()
-        db.add(
-            models.ReviewRecord(
-                opportunity_id=opportunity.id,
-                claim_record_id=claim.id,
-                reviewer_name="\u4e3b\u7ba1",
-                review_status="approved",
-            )
-        )
+        add_stocking_export(db, opportunity, claim)
+
         db.commit()
 
         result = process_plm_arrival_workbook(
@@ -184,17 +166,11 @@ def test_plm_processing_automation_processes_same_exact_match_across_periods(tmp
     with SessionLocal() as db:
         claims = []
         for period in ["2026-W28", "2026-W29"]:
-            opportunity, claim = make_claim("SUB-A", "PH", SALES_A, "waiting_export", business_period=period)
+            opportunity, claim = make_claim("SUB-A", "PH", SALES_A, "waiting_arrival", business_period=period)
             db.add_all([opportunity, claim])
             db.flush()
-            db.add(
-                models.ReviewRecord(
-                    opportunity_id=opportunity.id,
-                    claim_record_id=claim.id,
-                    reviewer_name="\u4e3b\u7ba1",
-                    review_status="approved",
-                )
-            )
+            add_stocking_export(db, opportunity, claim)
+
             claims.append(claim)
         db.commit()
 
@@ -273,3 +249,67 @@ def make_claim(
         downstream_status=downstream_status,
     )
     return opportunity, claim
+
+
+def add_stocking_export(db, opportunity, claim) -> None:
+    request = models.StockingRequest(
+        opportunity_id=opportunity.id, claim_record_id=claim.id, application_date=date(2026, 7, 17),
+        request_type="initial", salesperson_name=claim.salesperson_name, main_sku=opportunity.main_sku,
+        sub_sku=opportunity.sub_sku, daily_sales=1, quantity=30, status="exported",
+    )
+    db.add(request)
+    db.flush()
+    batch = models.ExportBatch(file_name="stocking.xlsx", scope="stocking_available", row_count=1)
+    db.add(batch)
+    db.flush()
+    db.add(models.ExportRow(
+        export_batch_id=batch.id, opportunity_id=opportunity.id, claim_record_id=claim.id,
+        stocking_request_id=request.id, salesperson_name=claim.salesperson_name,
+        main_sku=opportunity.main_sku, sub_sku=opportunity.sub_sku,
+        claim_daily_sales=1, stocking_quantity=30, country=opportunity.country,
+    ))
+
+def test_plm_matches_only_waiting_arrival_with_real_stocking_request_export_and_no_review() -> None:
+    row = {"sub_sku": "SUB-A", "country": "PH", "salesperson_name": SALES_A}
+    with SessionLocal() as db:
+        waiting_export = add_export_candidate(db, "waiting_export", "stocking_available")
+        no_export_row = add_export_candidate(db, "waiting_arrival", None)
+        traceability_only = add_export_candidate(db, "waiting_arrival", "traceability")
+        sales_self = add_export_candidate(db, "waiting_arrival", "stocking_available", source_type="sales_self_selection")
+        db.commit()
+
+        matches = plm_processing._exact_claim_matches(db, row)
+
+        assert [claim.id for claim, _ in matches] == [sales_self.id]
+        assert waiting_export.id not in {claim.id for claim, _ in matches}
+        assert no_export_row.id not in {claim.id for claim, _ in matches}
+        assert traceability_only.id not in {claim.id for claim, _ in matches}
+        assert db.query(models.ReviewRecord).count() == 0
+
+
+def add_export_candidate(
+    db, downstream_status: str, scope: str | None, *, source_type: str = "selection1_developer_claim_feedback",
+) -> models.SalesClaimForecast:
+    opportunity, claim = make_claim("SUB-A", "PH", SALES_A, downstream_status)
+    opportunity.id = models.new_id()
+    opportunity.source_type = source_type
+    claim.opportunity_id = opportunity.id
+    db.add_all([opportunity, claim])
+    db.flush()
+    request = models.StockingRequest(
+        opportunity_id=opportunity.id, claim_record_id=claim.id, application_date=date(2026, 7, 17),
+        request_type="initial", salesperson_name=SALES_A, main_sku=opportunity.main_sku,
+        sub_sku=opportunity.sub_sku, daily_sales=1, quantity=30, status="exported",
+    )
+    db.add(request)
+    db.flush()
+    if scope:
+        batch = models.ExportBatch(file_name=f"{scope}.xlsx", scope=scope, row_count=1)
+        db.add(batch)
+        db.flush()
+        db.add(models.ExportRow(
+            export_batch_id=batch.id, opportunity_id=opportunity.id, claim_record_id=claim.id,
+            stocking_request_id=request.id, salesperson_name=SALES_A, main_sku=opportunity.main_sku,
+            sub_sku=opportunity.sub_sku, claim_daily_sales=1, stocking_quantity=30, country="PH",
+        ))
+    return claim

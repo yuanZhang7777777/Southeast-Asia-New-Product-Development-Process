@@ -274,8 +274,7 @@ def test_mvp_flow_and_notification_dedupe() -> None:
     assert available_response.json() == []
 
     export_response = client.get("/stocking/available-list/export")
-    assert export_response.status_code == 200
-    assert export_response.headers["content-type"] == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    assert export_response.status_code == 405
 
     first_notice = client.post(
         "/notifications/test",
@@ -365,18 +364,26 @@ def test_selection1_import_is_idempotent_and_exportable(tmp_path: Path) -> None:
 
     with SessionLocal() as db:
         claim = db.get(models.SalesClaimForecast, claim_response.json()["id"])
+        request = db.query(models.StockingRequest).filter_by(claim_record_id=claim.id).one()
+        request.status = "submitted"
         claim.downstream_status = "waiting_export"
+        db.add(models.RoleMapping(name="主管A", role="manager", dingtalk_user_id="dt-manager", enabled=True))
         db.commit()
+    login = client.post("/auth/dingtalk/login", json={"dingtalk_user_id": "dt-manager", "name": "主管A"})
 
     export_path = tmp_path / "available.xlsx"
-    export_response = client.get("/stocking/available-list/export")
+    export_response = client.post(
+        "/stocking/available-list/export",
+        headers={"Authorization": f"Bearer {login.json()['access_token']}"},
+        json={"request_ids": [stocking_requests[0]["id"]]},
+    )
     export_path.write_bytes(export_response.content)
     exported = load_workbook(export_path, data_only=True)
     sheet = exported[exported.sheetnames[0]]
     headers = [cell.value for cell in sheet[1]]
     assert headers == [
         "操作状态",
-        "时间",
+        "申请日期",
         "备货类型",
         "选品数据源",
         "销售员",

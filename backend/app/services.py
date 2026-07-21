@@ -43,7 +43,6 @@ from app.workflow_status import (
     OPPORTUNITY_PENDING_ASSIGNMENT,
     OPPORTUNITY_READY_FOR_STOCKING,
     OPPORTUNITY_RETURNED_FOR_SUPPLEMENT,
-    OPPORTUNITY_WAITING_ARRIVAL,
     REVIEW_APPROVED,
     REVIEW_CONFIRMED_NOT_CLAIM,
     REVIEW_PENDING,
@@ -2831,6 +2830,45 @@ def create_stocking_draft_from_claim(
     return create_stocking_draft_for_claim(db, claim.id, actor_name)
 
 
+def _stocking_source_label(opportunity: models.NewProductOpportunity) -> str:
+    return {
+        "selection1_developer_claim_feedback": "选品1",
+        "selection2_caigen_claim_feedback": "选品2/财根",
+        SALES_SELF_SELECTION: "销售自选",
+    }.get(opportunity.source_type, opportunity.source_type)
+
+
+def _available_stocking_item(
+    opportunity: models.NewProductOpportunity,
+    claim: models.SalesClaimForecast,
+    request: models.StockingRequest,
+) -> schemas.AvailableStockingItem:
+    return schemas.AvailableStockingItem(
+        opportunity_id=opportunity.id,
+        request_id=request.id,
+        claim_record_id=claim.id,
+        business_period=opportunity.batch,
+        time=request.submitted_at,
+        application_date=request.application_date,
+        stocking_type="补货" if request.request_type == "replenishment" else "首次备货",
+        selection_source=_stocking_source_label(opportunity),
+        salesperson_name=request.salesperson_name,
+        main_sku=request.main_sku or "",
+        sub_sku=request.sub_sku or "",
+        site=opportunity.site,
+        claim_daily_sales=request.daily_sales or 0,
+        quantity=request.quantity,
+        stocking_country=request.country,
+        warehouse=request.warehouse,
+        cost_price=request.cost_price,
+        unit_volume=request.unit_volume,
+        amount=request.amount,
+        volume=request.volume,
+        replenishment_reason=request.reason,
+        status=request.status,
+    )
+
+
 def list_available_stocking_items(
     db: Session,
     source_sheet: str | None = None,
@@ -2839,9 +2877,9 @@ def list_available_stocking_items(
 ) -> list[schemas.AvailableStockingItem]:
     filters = [
         models.NewProductOpportunity.current_status != OPPORTUNITY_DISABLED,
+        models.StockingRequest.status == "submitted",
+        models.StockingRequest.opportunity_id == models.NewProductOpportunity.id,
         models.SalesClaimForecast.claim_result == CLAIM_RESULT_CLAIM,
-        models.SalesClaimForecast.claim_daily_sales.is_not(None),
-        models.SalesClaimForecast.claim_daily_sales > 0,
         models.SalesClaimForecast.source_column == "platform",
         models.SalesClaimForecast.downstream_status == CLAIM_WAITING_EXPORT,
     ]
@@ -2851,98 +2889,87 @@ def list_available_stocking_items(
         filters.append(or_(models.NewProductOpportunity.batch == source_sheet, models.NewProductOpportunity.source_sheet == source_sheet))
     if import_batch_id:
         filters.append(models.NewProductOpportunity.import_batch_id == import_batch_id)
-    rows = list(
-        db.execute(
-            select(models.NewProductOpportunity, models.SalesClaimForecast)
-            .join(
-                models.SalesClaimForecast,
-                models.SalesClaimForecast.opportunity_id == models.NewProductOpportunity.id,
-            )
-            .where(*filters)
-            .order_by(models.NewProductOpportunity.updated_at.desc(), models.SalesClaimForecast.created_at.asc())
-        )
-    )
-    items: list[schemas.AvailableStockingItem] = []
-    for opportunity, claim in rows:
-        review = latest_review_for_claim(db, opportunity.id, claim)
-        if review is None or review.review_status != REVIEW_APPROVED:
-            continue
-        quantity = stocking_quantity(claim.claim_daily_sales)
-        cost_price = number_value(central_field_value(opportunity, "商品成本-含税（元）"))
-        unit_volume = number_value(central_field_value(opportunity, "包装后体积"))
-        items.append(
-            schemas.AvailableStockingItem(
-                opportunity_id=opportunity.id,
-                claim_record_id=claim.id,
-                business_period=opportunity.batch,
-                time=review.created_at if review else datetime.now(timezone.utc),
-                selection_source=selection_source_label(opportunity),
-                salesperson_name=claim.salesperson_name or claim_prefill_salesperson(opportunity),
-                main_sku=opportunity.main_sku,
-                sub_sku=opportunity.sub_sku,
-                site=opportunity.site,
-                claim_daily_sales=claim.claim_daily_sales,
-                quantity=quantity,
-                stocking_country=opportunity.country,
-                cost_price=cost_price,
-                unit_volume=unit_volume,
-                amount=cost_price * quantity if cost_price is not None else None,
-                review_status=review.review_status if review else None,
-            )
-        )
+    rows = db.execute(
+        select(models.NewProductOpportunity, models.SalesClaimForecast, models.StockingRequest)
+        .join(models.SalesClaimForecast, models.SalesClaimForecast.opportunity_id == models.NewProductOpportunity.id)
+        .join(models.StockingRequest, models.StockingRequest.claim_record_id == models.SalesClaimForecast.id)
+        .where(*filters)
+        .order_by(models.NewProductOpportunity.updated_at.desc(), models.StockingRequest.id)
+    ).all()
+    return [_available_stocking_item(opportunity, claim, request) for opportunity, claim, request in rows]
+
+
+def lock_selected_stocking_items(
+    db: Session,
+    request_ids: list[str],
+) -> list[schemas.AvailableStockingItem]:
+    requests = list(db.scalars(
+        select(models.StockingRequest)
+        .where(models.StockingRequest.id.in_(request_ids))
+        .order_by(models.StockingRequest.id)
+        .with_for_update()
+    ))
+    if len(requests) != len(request_ids):
+        raise LookupError("stocking request not found")
+    request_by_id = {request.id: request for request in requests}
+
+    claim_ids = [request.claim_record_id for request in requests if request.claim_record_id]
+    claims = list(db.scalars(
+        select(models.SalesClaimForecast)
+        .where(models.SalesClaimForecast.id.in_(claim_ids))
+        .order_by(models.SalesClaimForecast.id)
+        .with_for_update()
+    ))
+    claim_by_id = {claim.id: claim for claim in claims}
+
+    opportunity_ids = sorted({request.opportunity_id for request in requests})
+    opportunities = list(db.scalars(
+        select(models.NewProductOpportunity)
+        .where(models.NewProductOpportunity.id.in_(opportunity_ids))
+        .order_by(models.NewProductOpportunity.id)
+        .with_for_update()
+    ))
+    opportunity_by_id = {opportunity.id: opportunity for opportunity in opportunities}
+
+    items = []
+    for request_id in request_ids:
+        request = request_by_id[request_id]
+        claim = claim_by_id.get(request.claim_record_id or "")
+        opportunity = opportunity_by_id.get(request.opportunity_id)
+        if request.status != "submitted" or claim is None or claim.downstream_status != CLAIM_WAITING_EXPORT:
+            raise RuntimeError("stocking request is not available for export")
+        if (
+            opportunity is None
+            or opportunity.current_status == OPPORTUNITY_DISABLED
+            or claim.claim_result != CLAIM_RESULT_CLAIM
+            or claim.source_column != "platform"
+            or claim.opportunity_id != request.opportunity_id
+        ):
+            raise RuntimeError("stocking request is not available for export")
+        items.append(_available_stocking_item(opportunity, claim, request))
     return items
 
 
-def build_available_stocking_workbook(items: list[schemas.AvailableStockingItem], exported_at: datetime | None = None) -> bytes:
+def build_available_stocking_workbook(items: list[schemas.AvailableStockingItem]) -> bytes:
     headers = [
-        "操作状态",
-        "时间",
-        "备货类型",
-        "选品数据源",
-        "销售员",
-        "主SKU",
-        "子sku",
-        "成本价",
-        "单个体积",
-        "备货单销",
-        "备货数量",
-        "备货国家",
-        "备货仓库",
-        "货值",
-        "体积",
-        "补货原因",
+        "操作状态", "申请日期", "备货类型", "选品数据源", "销售员", "主SKU", "子sku", "成本价",
+        "单个体积", "备货单销", "备货数量", "备货国家", "备货仓库", "货值", "体积", "补货原因",
     ]
     workbook = Workbook()
     workbook.remove(workbook.active)
-    row_time = exported_at or datetime.now(timezone.utc)
     for sheet_name, sheet_items in export_sheet_groups(items, "备货申请表"):
         worksheet = workbook.create_sheet(title=sheet_name)
         worksheet.append(headers)
         for item in sheet_items:
-            volume = item.unit_volume * item.quantity if item.unit_volume is not None else None
-            worksheet.append(
-                [
-                    None,
-                    excel_value(row_time),
-                    item.stocking_type,
-                    item.selection_source,
-                    item.salesperson_name,
-                    item.main_sku,
-                    item.sub_sku,
-                    item.cost_price,
-                    item.unit_volume,
-                    item.claim_daily_sales,
-                    item.quantity,
-                    item.stocking_country,
-                    item.warehouse,
-                    item.amount,
-                    volume,
-                    item.replenishment_reason,
-                ]
-            )
+            worksheet.append([
+                None, item.application_date, item.stocking_type, item.selection_source,
+                item.salesperson_name, item.main_sku, item.sub_sku, item.cost_price,
+                item.unit_volume, item.claim_daily_sales, item.quantity, item.stocking_country,
+                item.warehouse, item.amount, item.volume, item.replenishment_reason,
+            ])
         style_worksheet(worksheet, max_width=32, fill="D9EAF7")
         for cell in worksheet["B"][1:]:
-            cell.number_format = "yyyy-mm-dd hh:mm"
+            cell.number_format = "yyyy-mm-dd"
 
     buffer = BytesIO()
     workbook.save(buffer)
@@ -2964,51 +2991,47 @@ def record_export_batch(
     db.add(batch)
     db.flush()
     for item in items:
-        db.add(
-            models.ExportRow(
-                export_batch_id=batch.id,
-                opportunity_id=item.opportunity_id,
-                claim_record_id=item.claim_record_id,
-                salesperson_name=item.salesperson_name,
-                main_sku=item.main_sku,
-                sub_sku=item.sub_sku,
-                claim_daily_sales=item.claim_daily_sales,
-                stocking_quantity=item.quantity,
-                country=item.stocking_country,
-                warehouse=item.warehouse,
-            )
-        )
-        claim = db.get(models.SalesClaimForecast, item.claim_record_id)
-        if claim and claim.downstream_status in (None, CLAIM_WAITING_EXPORT):
-            claim.downstream_status = CLAIM_WAITING_ARRIVAL
+        db.add(models.ExportRow(
+            export_batch_id=batch.id,
+            opportunity_id=item.opportunity_id,
+            claim_record_id=item.claim_record_id,
+            stocking_request_id=item.request_id,
+            application_date=item.application_date,
+            stocking_type="replenishment" if item.stocking_type == "补货" else "initial",
+            selection_source=item.selection_source if scope == "stocking_available" else None,
+            cost_price=item.cost_price,
+            unit_volume=item.unit_volume,
+            amount=item.amount,
+            volume=item.volume,
+            replenishment_reason=item.replenishment_reason,
+            salesperson_name=item.salesperson_name,
+            main_sku=item.main_sku,
+            sub_sku=item.sub_sku,
+            claim_daily_sales=item.claim_daily_sales,
+            stocking_quantity=item.quantity,
+            country=item.stocking_country,
+            warehouse=item.warehouse,
+        ))
+        if scope == "stocking_available":
+            request = db.get(models.StockingRequest, item.request_id)
+            claim = db.get(models.SalesClaimForecast, item.claim_record_id)
+            if request and request.status == "submitted" and claim and claim.downstream_status == CLAIM_WAITING_EXPORT:
+                request.status = "exported"
+                claim.downstream_status = CLAIM_WAITING_ARRIVAL
     for opportunity, claim in extra_rows:
-        db.add(
-            models.ExportRow(
-                export_batch_id=batch.id,
-                opportunity_id=opportunity.id,
-                claim_record_id=claim.id,
-                salesperson_name=claim.salesperson_name,
-                main_sku=opportunity.main_sku,
-                sub_sku=opportunity.sub_sku,
-                claim_daily_sales=claim.claim_daily_sales or 0,
-                stocking_quantity=0,
-                country=opportunity.country,
-                warehouse=None,
-            )
-        )
-    if scope == "stocking_available":
-        for opportunity_id in {item.opportunity_id for item in items}:
-            opportunity = db.get(models.NewProductOpportunity, opportunity_id)
-            if opportunity and opportunity.current_status == OPPORTUNITY_READY_FOR_STOCKING:
-                opportunity.current_status = OPPORTUNITY_WAITING_ARRIVAL
-                audit(
-                    db,
-                    "opportunity.waiting_arrival",
-                    "new_product_opportunity",
-                    opportunity_id,
-                    {"export_batch_id": batch.id},
-                    exported_by,
-                )
+        db.add(models.ExportRow(
+            export_batch_id=batch.id,
+            opportunity_id=opportunity.id,
+            claim_record_id=claim.id,
+            salesperson_name=claim.salesperson_name,
+            main_sku=opportunity.main_sku,
+            sub_sku=opportunity.sub_sku,
+            claim_daily_sales=claim.claim_daily_sales or 0,
+            stocking_quantity=0,
+            country=opportunity.country,
+            warehouse=None,
+        ))
+
     audit(db, "export.created", "export_batch", batch.id, {"scope": scope, "row_count": row_count}, exported_by)
     return batch
 

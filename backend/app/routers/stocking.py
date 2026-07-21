@@ -39,19 +39,37 @@ def list_available_stocking_items(
     return services.list_available_stocking_items(db, source_sheet=source_sheet, business_period=business_period, import_batch_id=import_batch_id)
 
 
-@router.get("/available-list/export")
+@router.post("/available-list/export")
 def export_available_stocking_items(
-    source_sheet: str | None = Query(None),
-    business_period: str | None = Query(None),
-    import_batch_id: str | None = Query(None),
+    payload: schemas.StockingExportSelection,
     db: Session = Depends(get_db),
-    _auth: AuthContext | None = Depends(require_roles("manager")),
+    auth: AuthContext | None = Depends(require_roles("manager")),
 ) -> Response:
-    items = services.list_available_stocking_items(db, source_sheet=source_sheet, business_period=business_period, import_batch_id=import_batch_id)
-    file_name = period_file_name("海外仓备货申请表", business_period or source_sheet, import_batch_id)
-    batch = services.record_export_batch(db, items, file_name=file_name, scope="stocking_available")
-    content = services.build_available_stocking_workbook(items, exported_at=batch.exported_at)
-    db.commit()
+    if auth is None:
+        raise HTTPException(status_code=401, detail="manager authentication required")
+    file_name = "海外仓备货申请表.xlsx"
+    try:
+        items = services.lock_selected_stocking_items(db, payload.request_ids)
+    except (LookupError, PermissionError, ValueError, RuntimeError) as exc:
+        db.rollback()
+        _raise_service_error(exc)
+    try:
+        content = services.build_available_stocking_workbook(items)
+    except Exception:
+        db.rollback()
+        raise
+    try:
+        services.record_export_batch(
+            db,
+            items,
+            file_name=file_name,
+            scope="stocking_available",
+            exported_by=auth.user.name,
+        )
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
     filename = quote(file_name)
     return Response(
         content=content,

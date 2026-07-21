@@ -120,7 +120,13 @@ def test_product_board_filters_status_arrival_site_query_and_export_moves_claim_
             "query": "SUB-A",
         },
     )
-    export = client.get("/stocking/available-list/export")
+    manager_token = login("Manager", "manager")
+    request_ids = [row["request_id"] for row in client.get("/stocking/available-list").json()]
+    export = client.post(
+        "/stocking/available-list/export",
+        headers={"Authorization": f"Bearer {manager_token}"},
+        json={"request_ids": request_ids},
+    )
     after_export = client.get("/product-board?owner=Owner B")
 
     assert filtered.status_code == 200
@@ -217,6 +223,9 @@ def set_claim_status(claim_id: str, status: str, arrived_at: datetime | None = N
         claim = db.get(models.SalesClaimForecast, claim_id)
         claim.downstream_status = status
         claim.arrival_detected_at = arrived_at
+        if status == "waiting_export":
+            request = db.query(models.StockingRequest).filter_by(claim_record_id=claim.id).one()
+            request.status = "submitted"
         db.commit()
 
 

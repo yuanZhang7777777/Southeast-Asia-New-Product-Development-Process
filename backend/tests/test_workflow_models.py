@@ -129,7 +129,7 @@ def test_listing_observation_migration_is_the_single_head() -> None:
     config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
     config.set_main_option("script_location", str(Path(__file__).resolve().parents[1] / "alembic"))
 
-    assert ScriptDirectory.from_config(config).get_current_head() == "c9d1e2f3a456"
+    assert ScriptDirectory.from_config(config).get_current_head() == "d0e2f3a4b567"
 
 
 def test_stocking_claim_statuses_are_explicit() -> None:

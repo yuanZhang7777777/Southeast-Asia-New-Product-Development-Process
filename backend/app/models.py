@@ -294,6 +294,7 @@ class ExportRow(TimestampMixin, Base):
     stocking_request_id: Mapped[str | None] = mapped_column(ForeignKey("stocking_request.id"))
     application_date: Mapped[date | None] = mapped_column(Date)
     stocking_type: Mapped[str | None] = mapped_column(String(64))
+    selection_source: Mapped[str | None] = mapped_column(String(128))
     cost_price: Mapped[float | None] = mapped_column(Float)
     unit_volume: Mapped[float | None] = mapped_column(Float)
     amount: Mapped[float | None] = mapped_column(Float)

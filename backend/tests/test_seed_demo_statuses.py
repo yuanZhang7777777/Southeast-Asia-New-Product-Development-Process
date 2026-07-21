@@ -19,6 +19,16 @@ def test_demo_seed_creates_exportable_ready_for_stocking_rows() -> None:
     seed_demo_statuses.main()
 
     with SessionLocal() as db:
+        requests = (
+            db.query(models.StockingRequest)
+            .join(models.NewProductOpportunity, models.NewProductOpportunity.id == models.StockingRequest.opportunity_id)
+            .filter(models.NewProductOpportunity.main_sku.in_(["DEMO-READY", "DEMO-MIXED"]))
+            .all()
+        )
+        for request in requests:
+            request.status = "submitted"
+            db.get(models.SalesClaimForecast, request.claim_record_id).downstream_status = "waiting_export"
+        db.flush()
         rows = services.list_available_stocking_items(db)
 
     assert {(row.main_sku, row.sub_sku, row.salesperson_name, row.quantity) for row in rows} >= {
