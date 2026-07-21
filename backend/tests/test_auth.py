@@ -485,3 +485,43 @@ def test_stocking_routes_apply_operator_and_manager_roles_per_endpoint() -> None
     assert manager_denied.status_code == 403
     assert manager_periods.status_code == 200
     assert operator_denied.status_code == 403
+
+
+def test_legacy_stocking_create_uses_authenticated_manager_as_actor() -> None:
+    with SessionLocal() as db:
+        db.add(models.RoleMapping(name="Manager A", role="manager", dingtalk_user_id="dt-stock-actor", enabled=True))
+        opportunity = models.NewProductOpportunity(
+            source_type="test",
+            main_sku="MAIN-STOCK-ACTOR",
+            sub_sku="SUB-STOCK-ACTOR",
+        )
+        db.add(opportunity)
+        db.flush()
+        claim = models.SalesClaimForecast(
+            opportunity_id=opportunity.id,
+            salesperson_name="Operator A",
+            claim_result="claim",
+            claim_daily_sales=1,
+            source_column="platform",
+        )
+        db.add(claim)
+        db.commit()
+        opportunity_id = opportunity.id
+        claim_id = claim.id
+    token = client.post("/auth/dingtalk/login", json={"dingtalk_user_id": "dt-stock-actor"}).json()["access_token"]
+
+    response = client.post(
+        "/stocking/requests",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "opportunity_id": opportunity_id,
+            "claim_record_id": claim_id,
+            "salesperson_name": "Spoofed Actor",
+            "daily_sales": 1,
+        },
+    )
+
+    assert response.status_code == 200
+    with SessionLocal() as db:
+        audit = db.query(models.AuditLog).filter_by(action="stocking.draft_created").one()
+    assert audit.actor_name == "Manager A"

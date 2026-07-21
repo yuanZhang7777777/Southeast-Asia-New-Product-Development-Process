@@ -2561,7 +2561,6 @@ def update_stocking_request(
     _recalculate_stocking_request(request)
     if before_status == "submitted" and payload.model_fields_set:
         request.status = "draft"
-        request.submitted_at = None
         claim.downstream_status = CLAIM_WAITING_STOCKING_REQUEST
     audit(
         db,
@@ -2595,6 +2594,11 @@ def submit_stocking_request(
     request, claim = _owned_stocking_request(db, request_id, operator_name, lock=True)
     if request.status == "exported":
         raise RuntimeError("exported stocking request is read-only")
+    opportunity = db.get(models.NewProductOpportunity, claim.opportunity_id)
+    if opportunity is None:
+        raise LookupError("opportunity not found")
+    if opportunity.source_type == SALES_SELF_SELECTION and claim.needs_stocking is not True:
+        raise RuntimeError("sales self selection does not need stocking")
     errors = []
     if request.request_type not in {"initial", "replenishment"}:
         errors.append("request_type")
@@ -2636,6 +2640,11 @@ def update_stocking_decision(
     payload: schemas.StockingDecisionUpdate,
     actor_user_id: str | None = None,
 ) -> schemas.OperatorStockingItemRead:
+    request = db.scalar(
+        select(models.StockingRequest)
+        .where(models.StockingRequest.claim_record_id == claim_record_id)
+        .with_for_update()
+    )
     claim = db.scalar(
         select(models.SalesClaimForecast)
         .where(models.SalesClaimForecast.id == claim_record_id)
@@ -2650,13 +2659,10 @@ def update_stocking_decision(
         raise LookupError("opportunity not found")
     if opportunity.source_type != SALES_SELF_SELECTION:
         raise ValueError("stocking decisions are only available for sales self selections")
-    request = db.scalar(
-        select(models.StockingRequest)
-        .where(models.StockingRequest.claim_record_id == claim.id)
-        .with_for_update()
-    )
-    if request is not None and request.status in {"submitted", "exported"}:
-        raise RuntimeError(f"{request.status} stocking request decision is read-only")
+    if request is not None and (
+        request.status in {"submitted", "exported"} or request.submitted_at is not None
+    ):
+        raise RuntimeError("submitted stocking request decision is read-only")
     claim.inventory_available = payload.inventory_available
     claim.needs_stocking = payload.needs_stocking
     claim.stocking_decision_updated_at = datetime.now(timezone.utc)

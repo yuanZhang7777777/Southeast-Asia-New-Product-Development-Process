@@ -305,7 +305,7 @@ class StockingRequestUpdate(BaseModel):
     warehouse: str | None = None
     reason: str | None = None
 
-    model_config = {"extra": "forbid"}
+    model_config = {"extra": "forbid", "allow_inf_nan": False}
 
     @field_validator("request_type")
     @classmethod

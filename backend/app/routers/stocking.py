@@ -108,14 +108,14 @@ def period_file_name(prefix: str, source_sheet: str | None, import_batch_id: str
 def create_stocking_request(
     payload: schemas.StockingRequestCreate,
     db: Session = Depends(get_db),
-    _auth: AuthContext | None = Depends(require_roles("manager")),
+    auth: AuthContext | None = Depends(require_roles("manager")),
 ) -> schemas.MessageResponse:
     claim = db.get(models.SalesClaimForecast, payload.claim_record_id)
     if claim is None:
         raise HTTPException(status_code=404, detail="claim record not found")
     if claim.opportunity_id != payload.opportunity_id:
         raise HTTPException(status_code=400, detail="claim record does not belong to opportunity")
-    item = services.create_stocking_draft_for_claim(db, claim.id, payload.salesperson_name)
+    item = services.create_stocking_draft_for_claim(db, claim.id, auth.user.name if auth else payload.salesperson_name)
     db.commit()
     return schemas.MessageResponse(message="stocking draft created", id=item.id)
 

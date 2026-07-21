@@ -7,6 +7,7 @@ os.environ["DATABASE_URL"] = f"sqlite:///{Path(__file__).with_name('test_workflo
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from fastapi.testclient import TestClient  # noqa: E402
+from sqlalchemy import event  # noqa: E402
 
 from app import models, schemas, services  # noqa: E402
 from app.auth import default_password_for_name  # noqa: E402
@@ -280,6 +281,11 @@ def test_operator_can_save_incomplete_draft_submit_complete_values_and_edit_unti
         headers={"Authorization": f"Bearer {token}"},
         json={"daily_sales": 3},
     )
+    denied_after_edit = client.post(
+        f"/stocking/decisions/{submitted.json()['claim_record_id']}",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"inventory_available": False, "needs_stocking": False},
+    )
 
     assert incomplete.status_code == 200
     assert invalid_submit.status_code == 400
@@ -292,11 +298,13 @@ def test_operator_can_save_incomplete_draft_submit_complete_values_and_edit_unti
     assert denied_withdrawal.status_code == 409
     assert edited.status_code == 200
     assert edited.json()["status"] == "draft"
+    assert denied_after_edit.status_code == 409
     with SessionLocal() as db:
         request = db.get(models.StockingRequest, request_id)
         claim = db.get(models.SalesClaimForecast, request.claim_record_id)
         claim_status = claim.downstream_status
-        assert request.submitted_at is None
+        assert request.submitted_at is not None
+        assert claim.needs_stocking is True
         request.status = "exported"
         audit_details = [item.detail for item in db.query(models.AuditLog).filter_by(action="stocking.request_updated")]
         db.commit()
@@ -366,6 +374,103 @@ def test_replenishment_requires_reason_and_requests_are_owner_isolated() -> None
     assert null_type_update.status_code == 422
     assert "request_type" in null_type_update.text
 
+
+def test_sales_self_preserved_draft_cannot_submit_after_no_stocking_decision() -> None:
+    token = login_operator("Operator A")
+    request_id = create_self_stocking_request(token)
+    updated = client.put(
+        f"/stocking/requests/{request_id}",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "application_date": "2026-07-21",
+            "request_type": "initial",
+            "cost_price": 1,
+            "unit_volume": 0.001,
+            "daily_sales": 1,
+            "country": "PH",
+        },
+    )
+    claim_id = updated.json()["claim_record_id"]
+
+    decision = client.post(
+        f"/stocking/decisions/{claim_id}",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"inventory_available": False, "needs_stocking": False},
+    )
+    submit = client.post(
+        f"/stocking/requests/{request_id}/submit",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert decision.status_code == 200
+    assert submit.status_code == 409
+    with SessionLocal() as db:
+        request = db.get(models.StockingRequest, request_id)
+        claim = db.get(models.SalesClaimForecast, claim_id)
+        assert request.status == "draft"
+        assert request.submitted_at is None
+        assert claim.needs_stocking is False
+        assert claim.downstream_status == "stocking_paused"
+
+
+def test_stocking_update_rejects_non_finite_numbers_without_persisting() -> None:
+    token = login_operator("Operator A")
+    request_id = create_self_stocking_request(token)
+
+    for value in (float("nan"), float("inf"), float("-inf")):
+        try:
+            schemas.StockingRequestUpdate(cost_price=value)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("non-finite stocking value was accepted")
+
+    responses = [
+        client.put(
+            f"/stocking/requests/{request_id}",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+            },
+            content=f'{{"cost_price": "{literal}"}}',
+        )
+        for literal in ("NaN", "Infinity", "-Infinity")
+    ]
+
+    assert [response.status_code for response in responses] == [422, 422, 422]
+    with SessionLocal() as db:
+        request = db.get(models.StockingRequest, request_id)
+        assert request.cost_price is None
+        assert request.amount is None
+
+
+def test_stocking_decision_queries_request_before_claim_for_lock_order() -> None:
+    token = login_operator("Operator A")
+    request_id = create_self_stocking_request(token)
+    with SessionLocal() as db:
+        request = db.get(models.StockingRequest, request_id)
+        claim_id = request.claim_record_id
+
+    statements: list[str] = []
+
+    def record_statement(_conn, _cursor, statement, _parameters, _context, _executemany) -> None:
+        statements.append(statement.lower())
+
+    event.listen(engine, "before_cursor_execute", record_statement)
+    try:
+        with SessionLocal() as db:
+            services.update_stocking_decision(
+                db,
+                claim_id,
+                "Operator A",
+                schemas.StockingDecisionUpdate(inventory_available=False, needs_stocking=True),
+            )
+    finally:
+        event.remove(engine, "before_cursor_execute", record_statement)
+
+    request_query = next(index for index, statement in enumerate(statements) if "from stocking_request" in statement)
+    claim_query = next(index for index, statement in enumerate(statements) if "from sales_claim_forecast" in statement)
+    assert request_query < claim_query
 
 def test_decision_can_resume_paused_claim_and_volume_preview_uses_erp_resolver(monkeypatch) -> None:
     token = login_operator("Operator A")
