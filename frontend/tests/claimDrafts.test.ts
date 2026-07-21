@@ -30,6 +30,7 @@ test("运营列表和商品详情复用不认领原因选择器", () => {
   assert.match(picker, /showModal\(\)/);
   assert.match(picker, /setDraftValue\(props\.value\)/);
   assert.match(picker, /props\.onChange\(draftValue\)/);
+  assert.match(picker, /event\.key === "Escape"/);
   assert.match(picker, /取消/);
   assert.match(picker, /完成/);
   assert.doesNotMatch(picker, /<details/);

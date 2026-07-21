@@ -3840,6 +3840,12 @@ function RejectReasonPicker(props: { value: string; onChange: (value: string) =>
         onClick={(event) => {
           if (event.target === event.currentTarget) discardChanges();
         }}
+        onKeyDown={(event) => {
+          if (event.key === "Escape") {
+            event.preventDefault();
+            discardChanges();
+          }
+        }}
       >
         <div className="reject-reason-dialog-card">
           <header className="reject-reason-dialog-head">
