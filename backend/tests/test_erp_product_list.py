@@ -1,3 +1,4 @@
+import logging
 from io import BytesIO
 from urllib.error import URLError
 
@@ -194,3 +195,178 @@ def test_http_errors_do_not_expose_credentials_tokens_or_sensitive_urls(monkeypa
     assert "temporary-token" not in error
     assert secret_url not in error
     assert exc_info.value.__cause__ is None
+
+
+def test_fetch_product_volumes_rejects_another_tasks_new_export_and_keeps_polling(monkeypatch) -> None:
+    list_calls = 0
+    downloaded: list[str] = []
+
+    def fake_post_json(url: str, body: dict, headers: dict | None = None) -> dict:
+        nonlocal list_calls
+        if url.endswith("/login"):
+            return {"success": True, "data": {"accessToken": "temporary-token"}}
+        if url.endswith("/product-list"):
+            return {"success": True, "data": "任务创建成功"}
+        list_calls += 1
+        if list_calls == 1:
+            return {"success": True, "data": {"list": []}}
+        rows = [
+            {
+                "id": "other-task",
+                "source": "productList",
+                "status": "success",
+                "downloadUrl": "http://files.example/other.xlsx",
+            }
+        ]
+        if list_calls >= 3:
+            rows.append(
+                {
+                    "id": "this-task",
+                    "source": "productList",
+                    "status": "success",
+                    "downloadUrl": "http://files.example/requested.xlsx",
+                }
+            )
+        return {"success": True, "data": {"list": rows}}
+
+    def fake_download_bytes(url: str) -> bytes:
+        downloaded.append(url)
+        if url.endswith("/other.xlsx"):
+            return _workbook_bytes(
+                [
+                    ["GSHWAC225ND", "OTHER-MAIN", 1, 1, 1, 3, 3, 3],
+                    ["OTHER-SKU", "OTHER-MAIN", 1, 1, 1, 2, 2, 2],
+                ]
+            )
+        return _workbook_bytes([["GSHWAC225ND", "MAIN-1", 1, 1, 1, 10.1, 9.4, 1.4]])
+
+    monkeypatch.setattr(erp_product_list, "_post_json", fake_post_json)
+    monkeypatch.setattr(erp_product_list, "_download_bytes", fake_download_bytes)
+    monkeypatch.setattr(erp_product_list.time, "sleep", lambda *_: None)
+
+    result = erp_product_list.fetch_product_volumes(
+        ["GSHWAC225ND"],
+        Settings(
+            erp_login_url="http://erp.example/login",
+            erp_product_list_url="http://erp.example/product-list",
+            erp_download_list_url="http://erp.example/download-list",
+            erp_username="erp-user",
+            erp_password="erp-password",
+        ),
+    )
+
+    assert downloaded == [
+        "http://files.example/other.xlsx",
+        "http://files.example/requested.xlsx",
+    ]
+    assert result == {"GSHWAC225ND": 0.000132916}
+
+
+def test_missing_configuration_logs_safe_skipped_reason(caplog) -> None:
+    caplog.set_level(logging.INFO, logger=erp_product_list.__name__)
+    settings = Settings(
+        erp_login_url="http://erp.example/login?password=query-secret",
+        erp_product_list_url="http://erp.example/product-list",
+        erp_download_list_url="http://erp.example/download-list",
+        erp_username="secret-user",
+        erp_password="",
+    )
+
+    assert erp_product_list.fetch_product_volumes(["SKU-1"], settings) == {"SKU-1": None}
+    assert "skipped" in caplog.text
+    assert "configuration-incomplete" in caplog.text
+    assert "http://erp.example" not in caplog.text
+    assert "secret-user" not in caplog.text
+    assert "query-secret" not in caplog.text
+
+
+class SensitiveFailure(Exception):
+    pass
+
+
+@pytest.mark.parametrize("failure_phase", ["login", "create", "poll", "download", "parse"])
+def test_runtime_failures_log_safe_phase_and_exception_class(monkeypatch, caplog, failure_phase: str) -> None:
+    secret_url = "http://erp.example/path?password=query-secret"
+    secret_username = "secret-user"
+    secret_password = "secret-password"
+    secret_token = "secret-token"
+    secret_message = (
+        f"{secret_url} {secret_username} {secret_password} "
+        f"Authorization: {secret_token} Cookie=session-secret"
+    )
+    list_calls = 0
+    original_parser = erp_product_list.parse_product_list_workbook
+
+    def fail() -> None:
+        raise SensitiveFailure(secret_message)
+
+    def fake_post_json(url: str, body: dict, headers: dict | None = None) -> dict:
+        nonlocal list_calls
+        if url == secret_url:
+            if failure_phase == "login":
+                fail()
+            return {"success": True, "data": {"accessToken": secret_token}}
+        if url.endswith("/product-list"):
+            if failure_phase == "create":
+                fail()
+            return {"success": True, "data": "任务创建成功"}
+        list_calls += 1
+        if list_calls == 1:
+            return {"success": True, "data": {"list": []}}
+        if failure_phase == "poll":
+            fail()
+        return {
+            "success": True,
+            "data": {
+                "list": [
+                    {
+                        "id": "ready",
+                        "source": "productList",
+                        "status": "success",
+                        "downloadUrl": "http://files.example/products.xlsx",
+                    }
+                ]
+            },
+        }
+
+    def fake_download_bytes(_url: str) -> bytes:
+        if failure_phase == "download":
+            fail()
+        return _workbook_bytes([["SKU-1", "MAIN-1", 1, 1, 1, 2, 2, 2]])
+
+    def fake_parser(content: bytes, requested_skus: list[str]) -> dict[str, float | None]:
+        if failure_phase == "parse":
+            fail()
+        return original_parser(content, requested_skus)
+
+    monkeypatch.setattr(erp_product_list, "_post_json", fake_post_json)
+    monkeypatch.setattr(erp_product_list, "_download_bytes", fake_download_bytes)
+    monkeypatch.setattr(erp_product_list, "parse_product_list_workbook", fake_parser)
+    caplog.set_level(logging.WARNING, logger=erp_product_list.__name__)
+
+    result = erp_product_list.fetch_product_volumes(
+        ["SKU-1"],
+        Settings(
+            erp_login_url=secret_url,
+            erp_product_list_url="http://erp.example/product-list",
+            erp_download_list_url="http://erp.example/download-list",
+            erp_username=secret_username,
+            erp_password=secret_password,
+        ),
+    )
+
+    assert result == {"SKU-1": None}
+    assert "failed" in caplog.text
+    assert f"phase={failure_phase}" in caplog.text
+    assert "exception=SensitiveFailure" in caplog.text
+    for secret in (
+        secret_url,
+        "http://erp.example",
+        secret_username,
+        secret_password,
+        secret_token,
+        "Authorization",
+        "Cookie",
+        "session-secret",
+    ):
+        assert secret not in caplog.text

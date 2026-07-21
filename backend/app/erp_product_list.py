@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import math
 import time
 from io import BytesIO
@@ -12,6 +13,8 @@ from urllib.request import Request, urlopen
 from openpyxl import load_workbook
 
 from app.config import Settings
+
+logger = logging.getLogger(__name__)
 
 
 PRODUCT_DIMENSIONS = (
@@ -63,18 +66,23 @@ def parse_product_list_workbook(content: bytes, requested_skus: list[str]) -> di
 
 def fetch_product_volumes(skus: list[str], settings: Settings) -> dict[str, float | None]:
     fallback = dict.fromkeys(skus)
-    if not skus or not all(
-        str(value).strip()
-        for value in (
-            settings.erp_login_url,
-            settings.erp_product_list_url,
-            settings.erp_download_list_url,
-            settings.erp_username,
-            settings.erp_password,
-        )
-    ):
+    if not skus:
         return fallback
 
+    configuration = (
+        settings.erp_login_url,
+        settings.erp_product_list_url,
+        settings.erp_download_list_url,
+        settings.erp_username,
+        settings.erp_password,
+    )
+    if not all(str(value).strip() for value in configuration):
+        logger.info(
+            "ERP product volume skipped phase=configuration reason=configuration-incomplete"
+        )
+        return fallback
+
+    phase = "login"
     try:
         login = _post_json(
             settings.erp_login_url,
@@ -83,14 +91,20 @@ def fetch_product_volumes(skus: list[str], settings: Settings) -> dict[str, floa
         _assert_business_ok(login, "ERP login")
         token = _access_token(login)
         if not token:
-            return fallback
+            raise RuntimeError("ERP login returned no access token")
 
         headers = {"Authorization": token}
         list_body = {"pageNum": 1, "pageSize": 20}
+        phase = "poll"
         before = _post_json(settings.erp_download_list_url, list_body, headers)
         _assert_business_ok(before, "ERP download list")
-        existing_ids = {str(row["id"]) for row in _response_rows(before) if row.get("id") is not None}
+        existing_ids = {
+            str(row["id"])
+            for row in _response_rows(before)
+            if row.get("id") is not None
+        }
 
+        phase = "create"
         created = _post_json(
             settings.erp_product_list_url,
             {"skuList": skus, "isfile": "0", "portionFieldSet": PORTION_FIELDS},
@@ -98,17 +112,37 @@ def fetch_product_volumes(skus: list[str], settings: Settings) -> dict[str, floa
         )
         _assert_business_ok(created, "ERP product list creation")
 
+        requested_skus = set(skus)
         for attempt in range(POLL_ATTEMPTS):
+            phase = "poll"
             listing = _post_json(settings.erp_download_list_url, list_body, headers)
             _assert_business_ok(listing, "ERP download list")
-            ready = _new_product_list_export(_response_rows(listing), existing_ids)
-            if ready:
-                return parse_product_list_workbook(_download_bytes(str(ready["downloadUrl"])), skus)
+            for candidate in _new_product_list_exports(
+                _response_rows(listing), existing_ids
+            ):
+                existing_ids.add(str(candidate["id"]))
+                phase = "download"
+                content = _download_bytes(str(candidate["downloadUrl"]))
+                phase = "parse"
+                candidate_skus = _product_list_skus(content)
+                if (
+                    not candidate_skus
+                    or not candidate_skus.intersection(requested_skus)
+                    or candidate_skus.difference(requested_skus)
+                ):
+                    continue
+                return parse_product_list_workbook(content, skus)
             if attempt + 1 < POLL_ATTEMPTS:
+                phase = "poll"
                 time.sleep(POLL_INTERVAL_SECONDS)
-    except Exception:
+        raise TimeoutError("ERP product list export was not ready")
+    except Exception as exc:
+        logger.warning(
+            "ERP product volume failed phase=%s exception=%s",
+            phase,
+            type(exc).__name__,
+        )
         return fallback
-    return fallback
 
 
 def _dimensions(
@@ -130,9 +164,10 @@ def _positive_number(value: object) -> float | None:
     return number if math.isfinite(number) and number > 0 else None
 
 
-def _new_product_list_export(
+def _new_product_list_exports(
     rows: list[dict[str, Any]], existing_ids: set[str]
-) -> dict[str, Any] | None:
+) -> list[dict[str, Any]]:
+    candidates = []
     for row in rows:
         row_id = row.get("id")
         if (
@@ -142,8 +177,25 @@ def _new_product_list_export(
             and row.get("status") == "success"
             and row.get("downloadUrl")
         ):
-            return row
-    return None
+            candidates.append(row)
+    return candidates
+
+
+def _product_list_skus(content: bytes) -> set[str]:
+    workbook = load_workbook(BytesIO(content), read_only=True, data_only=True)
+    try:
+        rows = workbook.active.iter_rows(values_only=True)
+        headers = tuple(next(rows, ()))
+        if "sku" not in headers:
+            raise ValueError("ERP product workbook has no SKU header")
+        sku_index = headers.index("sku")
+        return {
+            str(values[sku_index] or "").strip()
+            for values in rows
+            if sku_index < len(values) and str(values[sku_index] or "").strip()
+        }
+    finally:
+        workbook.close()
 
 
 def _post_json(url: str, body: dict[str, Any], headers: dict[str, str] | None = None) -> Any:
