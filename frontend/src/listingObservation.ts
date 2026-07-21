@@ -77,8 +77,8 @@ export function observationPeriodDisplay(
   row: Pick<ObservationPeriodRow, "status" | "period_start" | "period_end">,
   dayText = shanghaiDateText()
 ): ObservationPeriodDisplay {
-  if (row.status !== "pending_data") return "ready";
   if (dayText < row.period_start) return "hidden";
+  if (row.status !== "pending_data") return "ready";
   return dayText <= row.period_end ? "in_progress" : "data_pending";
 }
 

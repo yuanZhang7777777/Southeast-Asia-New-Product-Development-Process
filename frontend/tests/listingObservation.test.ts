@@ -220,9 +220,22 @@ test("待取数周期只展示已经开始的当前或历史周期", () => {
   assert.equal(observationPeriodDisplay(row, "2026-07-30"), "data_pending");
 });
 
-test("已取数或已复盘周期始终显示完整记录且预计取数日为周期结束次日", () => {
-  assert.equal(observationPeriodDisplay(observationRow({ status: "pending_review" }), "2026-07-01"), "ready");
-  assert.equal(observationPeriodDisplay(observationRow({ status: "completed" }), "2026-07-01"), "ready");
+test("未来周期即使已有测试数据也隐藏，到期后才显示完整记录", () => {
+  const futurePendingReview = observationRow({
+    status: "pending_review",
+    period_start: "2026-07-23",
+    period_end: "2026-07-29"
+  });
+  const futureCompleted = observationRow({
+    status: "completed",
+    period_start: "2026-07-23",
+    period_end: "2026-07-29"
+  });
+
+  assert.equal(observationPeriodDisplay(futurePendingReview, "2026-07-22"), "hidden");
+  assert.equal(observationPeriodDisplay(futureCompleted, "2026-07-22"), "hidden");
+  assert.equal(observationPeriodDisplay(futurePendingReview, "2026-07-23"), "ready");
+  assert.equal(observationPeriodDisplay(futureCompleted, "2026-07-23"), "ready");
   assert.equal(expectedObservationMetricsDate("2026-07-29"), "2026-07-30");
 });
 
