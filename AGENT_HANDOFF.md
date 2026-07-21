@@ -1,6 +1,6 @@
 # Agent Handoff
 
-> Updated: 2026-07-21 11:46 Asia/Shanghai
+> Updated: 2026-07-21 13:14 Asia/Shanghai
 
 ## Start Here
 
@@ -61,6 +61,7 @@ Later stage:
 - Weekly metrics are read-only; product positioning and optimization action are required; week 4 also requires a summary.
 - Completed reviews remain editable with audit; stopped Items may finish already-fetched periods; only explicit stop pauses future fetches and reminders.
 - Product detail is read-only for listing/observation history and groups records by source business period.
+- The next approved UI change is documented in `docs/superpowers/specs/2026-07-21-listing-observation-workbench-ui-design.md`: product detail becomes the read-only lifecycle archive, while the workbench keeps full viewing and editing in a collapsible main-SKU / Item / visible-week layout. Future weeks stay hidden; the current week shows only its expected data date. This design is not implemented or deployed yet.
 
 Detailed field, state, permission and API rules stay in the confirmed requirement and architecture documents; do not duplicate them here.
 
