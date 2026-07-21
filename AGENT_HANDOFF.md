@@ -1,6 +1,6 @@
 # Agent Handoff
 
-> Updated: 2026-07-17 19:11 Asia/Shanghai
+> Updated: 2026-07-21 10:19 Asia/Shanghai
 
 ## Start Here
 
@@ -40,6 +40,7 @@ PLM arrival endpoint settings and credentials are stored separately in both serv
 - Development deployment: public and server-side health returned `environment=development`; frontend bundle contains the front-stage export center, secondary research, listing/observation workbench and the rejection-reason picker.
 - Latest deployment was frontend-only. API, worker, scheduler, PostgreSQL, Redis and reverse-proxy container IDs were preserved; production was not connected, restarted or deployed.
 - Real development PLM E2E processed 2,263 rows and 22 salesperson groups, proved same-file idempotency, and completed one controlled Item through secondary research, listing, weeks 1-5 and the week-4 summary. Arrival cards were a one-time test redirected to 刘学城; persistent autosend remains disabled.
+- Development UAT uses the existing 刘学城 account: `super_admin` supplies the supervisor and operator views, and an enabled Thailand operator profile is linked to the same user. No extra test account is required for the first single-person UAT.
 
 ## Implemented Scope
 
