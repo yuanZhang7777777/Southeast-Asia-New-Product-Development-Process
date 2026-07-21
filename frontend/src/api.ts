@@ -75,6 +75,7 @@ export type OperatorStockingItem = {
   claim_record_id: string;
   request_id?: string | null;
   business_period?: string | null;
+  country: string | null;
   source_type: string;
   salesperson_name: string;
   main_sku: string;
@@ -88,12 +89,12 @@ export type OperatorStockingItem = {
 };
 
 export type StockingRequestUpdate = {
-  application_date: string;
-  request_type: "initial" | "replenishment";
-  cost_price: number;
-  unit_volume: number;
-  daily_sales: number;
-  country: string;
+  application_date?: string | null;
+  request_type?: "initial" | "replenishment";
+  cost_price?: number | null;
+  unit_volume?: number | null;
+  daily_sales?: number | null;
+  country?: string | null;
   warehouse?: string | null;
   reason?: string | null;
 };

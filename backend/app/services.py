@@ -2751,6 +2751,7 @@ def _operator_stocking_item(
         claim_record_id=claim.id,
         request_id=request.id if request else None,
         business_period=opportunity.batch,
+        country=opportunity.country,
         source_type=opportunity.source_type,
         salesperson_name=claim.salesperson_name or "",
         main_sku=opportunity.main_sku,

@@ -3,12 +3,16 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
+  buildStockingDraftUpdate,
   buildStockingExportPayload,
   groupStockingItems,
+  operatorStockingCountry,
   roleStockingLabel,
   stockingDecisionStatus,
   stockingFormVisible,
   stockingQuantity,
+  stockingSourceLabel,
+  visibleStockingRequestIds,
   validateStockingDraft
 } from "../src/stockingRequests.ts";
 
@@ -69,6 +73,36 @@ test("补货原因按类型必填且销售自选成本价必填", () => {
   }, true).cost_price, "销售自选必须填写成本价");
 });
 
+test("不完整申请和 ERP 体积查询失败仍可保存为部分草稿", () => {
+  assert.deepEqual(buildStockingDraftUpdate({
+    application_date: "",
+    request_type: "initial",
+    cost_price: 12.5,
+    unit_volume: null,
+    daily_sales: null,
+    country: " ",
+    warehouse: "",
+    reason: ""
+  }), {
+    application_date: null,
+    request_type: "initial",
+    cost_price: 12.5,
+    unit_volume: null,
+    daily_sales: null,
+    country: null,
+    warehouse: null,
+    reason: null
+  });
+  assert.match(view, /submit \? payloadFor\([^)]*\) : buildStockingDraftUpdate\(draft\)/);
+});
+
+test("无申请分支使用机会国家筛选并作为新草稿默认国家", () => {
+  assert.equal(operatorStockingCountry({ country: " PH ", request: null }), "PH");
+  assert.equal(operatorStockingCountry({ country: "TH", request: { country: "VN" } }), "TH");
+  assert.match(view, /operatorStockingCountry\(item\) !== filters\.country/);
+  assert.match(view, /country: item\.request\?\.country \|\| operatorStockingCountry\(item\)/);
+});
+
 test("stock 导航按角色显示同一路由的业务名称", () => {
   assert.equal(roleStockingLabel("operator"), "备货申请");
   assert.equal(roleStockingLabel("manager"), "导出中心");
@@ -90,6 +124,27 @@ test("主管仅提交勾选且去重的申请编号", () => {
   });
   assert.throws(() => buildStockingExportPayload([]), /至少选择一条申请/);
   assert.match(apiSource, /availableStockingExport:[\s\S]*method: "POST"[\s\S]*JSON\.stringify\(payload\)/);
+});
+
+test("主管导出选择只保留当前可见且仍可导出的申请", () => {
+  const visibleRows = [{ request_id: "request-a" }, { request_id: "request-c" }];
+  assert.deepEqual(
+    visibleStockingRequestIds(["request-b", "request-a", "stale", "request-a"], visibleRows),
+    ["request-a"]
+  );
+  assert.match(view, /buildStockingExportPayload\(visibleSelected\)/);
+});
+
+test("来源标签和销售自选弹窗提供准确且可访问的名称", () => {
+  assert.equal(stockingSourceLabel("selection1_developer_claim_feedback"), "选品1");
+  assert.equal(stockingSourceLabel("selection2_caigen_claim_feedback"), "选品2/财根");
+  assert.match(view, /role="dialog" aria-modal="true" aria-labelledby="sales-self-title"/);
+  assert.match(view, /id="sales-self-title"/);
+  assert.match(view, /aria-label="关闭销售自选弹窗"/);
+  assert.match(view, /aria-label={"子 SKU " \+ \(index \+ 1\)}/);
+  assert.match(view, /aria-label={"子 SKU 名称 " \+ \(index \+ 1\)}/);
+  assert.match(view, /aria-label={"备货决策 " \+ \(index \+ 1\)}/);
+  assert.match(view, /aria-label={"删除子 SKU " \+ \(index \+ 1\)}/);
 });
 
 test("运营界面覆盖销售自选、三分支、体积降级、草稿和提交", () => {

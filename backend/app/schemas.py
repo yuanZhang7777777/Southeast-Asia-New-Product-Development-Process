@@ -388,6 +388,7 @@ class OperatorStockingItemRead(BaseModel):
     claim_record_id: str
     request_id: str | None = None
     business_period: str | None = None
+    country: str | None = None
     source_type: str
     salesperson_name: str
     main_sku: str

@@ -10,14 +10,18 @@ import {
   StockingRequestUpdate
 } from "./api";
 import {
+  buildStockingDraftUpdate,
   buildStockingExportPayload,
   groupStockingItems,
+  operatorStockingCountry,
   stockingQuantity,
   stockingFormVisible,
+  stockingSourceLabel,
   stockingStatusLabel,
   StockingDraft,
   StockingDraftErrors,
-  validateStockingDraft
+  validateStockingDraft,
+  visibleStockingRequestIds
 } from "./stockingRequests";
 
 type RoleKey = "operator" | "manager";
@@ -55,14 +59,14 @@ function OperatorStockingView({ operatorItems, onReload, onStatus }: Props) {
     const needle = filters.query.trim().toLowerCase();
     if (filters.status && item.downstream_status !== filters.status && item.request?.status !== filters.status) return false;
     if (filters.source && item.source_type !== filters.source) return false;
-    if (filters.country && (item.request?.country || "") !== filters.country) return false;
+    if (filters.country && operatorStockingCountry(item) !== filters.country) return false;
     return !needle || `${item.main_sku} ${item.main_sku_name || ""} ${item.sub_sku} ${item.sub_sku_name || ""}`.toLowerCase().includes(needle);
   }), [filters, operatorItems]);
 
   const groups = groupStockingItems(filteredItems).sort((left, right) => groupPriority(left.items) - groupPriority(right.items));
   const statuses = unique(operatorItems.flatMap((item) => [item.downstream_status, item.request?.status || ""]));
   const sources = unique(operatorItems.map((item) => item.source_type));
-  const countries = unique(operatorItems.map((item) => item.request?.country || ""));
+  const countries = unique(operatorItems.map(operatorStockingCountry));
 
   async function run(key: string, success: string, action: () => Promise<unknown>) {
     setBusy(key);
@@ -134,21 +138,15 @@ function OperatorStockingView({ operatorItems, onReload, onStatus }: Props) {
     const nextErrors = validateStockingDraft(draft, salesSelf);
     setErrors((current) => ({ ...current, [requestId]: nextErrors }));
     if (Object.keys(nextErrors).length) return null;
-    return {
-      application_date: draft.application_date,
-      request_type: draft.request_type,
-      cost_price: Number(draft.cost_price),
-      unit_volume: Number(draft.unit_volume),
-      daily_sales: Number(draft.daily_sales),
-      country: draft.country.trim(),
-      warehouse: draft.warehouse?.trim() || null,
-      reason: draft.reason?.trim() || null
-    };
+    return buildStockingDraftUpdate(draft);
   }
 
   async function saveRequest(item: OperatorStockingItem, submit: boolean) {
     if (!item.request_id) return;
-    const payload = payloadFor(item.request_id, item.source_type === "sales_self_selection");
+    const draft = drafts[item.request_id];
+    if (!draft) return;
+    const payload = submit ? payloadFor(item.request_id, item.source_type === "sales_self_selection") : buildStockingDraftUpdate(draft);
+    if (!submit) setErrors((current) => ({ ...current, [item.request_id!]: {} }));
     if (!payload) {
       onStatus("请先修正申请字段");
       return;
@@ -170,7 +168,7 @@ function OperatorStockingView({ operatorItems, onReload, onStatus }: Props) {
           </select>
           <select value={filters.source} onChange={(event) => setFilters({ ...filters, source: event.target.value })}>
             <option value="">全部来源</option>
-            {sources.map((source) => <option key={source} value={source}>{sourceLabel(source)}</option>)}
+            {sources.map((source) => <option key={source} value={source}>{stockingSourceLabel(source)}</option>)}
           </select>
           <select value={filters.country} onChange={(event) => setFilters({ ...filters, country: event.target.value })}>
             <option value="">全部国家</option>
@@ -197,7 +195,7 @@ function OperatorStockingView({ operatorItems, onReload, onStatus }: Props) {
                   <article className="stocking-item-card" key={item.claim_record_id}>
                     <div className="stocking-item-context">
                       <div><b>{item.sub_sku}</b><span>{item.sub_sku_name || ""}</span></div>
-                      <div className="tag-row"><span className="tag">{sourceLabel(item.source_type)}</span><span className="pill blue">{stockingStatusLabel(item.request?.status || item.downstream_status)}</span></div>
+                      <div className="tag-row"><span className="tag">{stockingSourceLabel(item.source_type)}</span><span className="pill blue">{stockingStatusLabel(item.request?.status || item.downstream_status)}</span></div>
                       {isSalesSelf ? (
                         <div className="stocking-decision-buttons">
                           <button className={item.needs_stocking ? "btn small blue" : "btn small"} disabled={decisionReadOnly || busy !== ""} onClick={() => void updateDecision(item, "stock")}>需要备货</button>
@@ -238,9 +236,9 @@ function OperatorStockingView({ operatorItems, onReload, onStatus }: Props) {
       </div>
 
       {selfOpen && (
-        <div className="stocking-overlay" role="dialog" aria-modal="true">
+        <div className="stocking-overlay" role="dialog" aria-modal="true" aria-labelledby="sales-self-title">
           <div className="stocking-dialog">
-            <header><div><h2>销售自选</h2><p>一次创建一个主 SKU，并逐子 SKU 选择后续分支。</p></div><button className="btn" onClick={() => setSelfOpen(false)}><X size={16} /></button></header>
+            <header><div><h2 id="sales-self-title">销售自选</h2><p>一次创建一个主 SKU，并逐子 SKU 选择后续分支。</p></div><button className="btn" type="button" aria-label="关闭销售自选弹窗" onClick={() => setSelfOpen(false)}><X size={16} /></button></header>
             <div className="stocking-self-main">
               <Field label="主 SKU"><input value={selfForm.main_sku} onChange={(event) => setSelfForm({ ...selfForm, main_sku: event.target.value })} /></Field>
               <Field label="主 SKU 名称"><input value={selfForm.main_sku_name} onChange={(event) => setSelfForm({ ...selfForm, main_sku_name: event.target.value })} /></Field>
@@ -249,10 +247,10 @@ function OperatorStockingView({ operatorItems, onReload, onStatus }: Props) {
             <div className="stocking-self-children">
               {selfForm.children.map((child, index) => (
                 <div className="stocking-self-child" key={index}>
-                  <input placeholder="子 SKU" value={child.sub_sku} onChange={(event) => patchSelfChild(index, { sub_sku: event.target.value }, selfForm, setSelfForm)} />
-                  <input placeholder="子 SKU 名称" value={child.sub_sku_name} onChange={(event) => patchSelfChild(index, { sub_sku_name: event.target.value }, selfForm, setSelfForm)} />
-                  <select value={child.decision} onChange={(event) => patchSelfChild(index, { decision: event.target.value as DecisionKey }, selfForm, setSelfForm)}><option value="stock">需要备货</option><option value="inventory">有库存，不备货</option><option value="pause">无库存，不备货</option></select>
-                  <button className="btn" disabled={selfForm.children.length === 1} onClick={() => setSelfForm({ ...selfForm, children: selfForm.children.filter((_, childIndex) => childIndex !== index) })}><Trash2 size={14} /></button>
+                  <input aria-label={"子 SKU " + (index + 1)} placeholder="子 SKU" value={child.sub_sku} onChange={(event) => patchSelfChild(index, { sub_sku: event.target.value }, selfForm, setSelfForm)} />
+                  <input aria-label={"子 SKU 名称 " + (index + 1)} placeholder="子 SKU 名称" value={child.sub_sku_name} onChange={(event) => patchSelfChild(index, { sub_sku_name: event.target.value }, selfForm, setSelfForm)} />
+                  <select aria-label={"备货决策 " + (index + 1)} value={child.decision} onChange={(event) => patchSelfChild(index, { decision: event.target.value as DecisionKey }, selfForm, setSelfForm)}><option value="stock">需要备货</option><option value="inventory">有库存，不备货</option><option value="pause">无库存，不备货</option></select>
+                  <button className="btn" type="button" aria-label={"删除子 SKU " + (index + 1)} disabled={selfForm.children.length === 1} onClick={() => setSelfForm({ ...selfForm, children: selfForm.children.filter((_, childIndex) => childIndex !== index) })}><Trash2 size={14} /></button>
                 </div>
               ))}
               <button className="btn" onClick={() => setSelfForm({ ...selfForm, children: [...selfForm.children, emptySelfChild()] })}><Plus size={14} />增加子 SKU</button>
@@ -276,14 +274,22 @@ function ManagerStockingView({ managerRows, periods, onReload, onStatus }: Props
     setPeriod((current) => current && periods.some((item) => item.business_period === current) ? current : periods[0]?.business_period || "");
   }, [periods]);
 
-  const filteredRows = managerRows.filter((row) => {
+  const filteredRows = useMemo(() => managerRows.filter((row) => {
     if (period && row.business_period !== period) return false;
     if (status && row.status !== status) return false;
     const needle = query.trim().toLowerCase();
     return !needle || `${row.main_sku} ${row.sub_sku} ${row.salesperson_name || ""}`.toLowerCase().includes(needle);
-  });
+  }), [managerRows, period, query, status]);
   const filteredIds = filteredRows.map((row) => row.request_id);
-  const allSelected = Boolean(filteredIds.length) && filteredIds.every((id) => selected.includes(id));
+  const visibleSelected = visibleStockingRequestIds(selected, filteredRows);
+  const allSelected = Boolean(filteredIds.length) && filteredIds.every((id) => visibleSelected.includes(id));
+
+  useEffect(() => {
+    setSelected((current) => {
+      const next = visibleStockingRequestIds(current, filteredRows);
+      return next.length === current.length && next.every((id, index) => id === current[index]) ? current : next;
+    });
+  }, [filteredRows]);
 
   async function exportTraceability() {
     if (!period) return;
@@ -300,8 +306,8 @@ function ManagerStockingView({ managerRows, periods, onReload, onStatus }: Props
   async function exportSelected() {
     try {
       setBusy(true);
-      await api.availableStockingExport(buildStockingExportPayload(selected));
-      onStatus(`已导出 ${selected.length} 条申请`);
+      await api.availableStockingExport(buildStockingExportPayload(visibleSelected));
+      onStatus(`已导出 ${visibleSelected.length} 条申请`);
       setSelected([]);
       await onReload();
     } catch (error) {
@@ -323,11 +329,11 @@ function ManagerStockingView({ managerRows, periods, onReload, onStatus }: Props
         {!!period && <button className="btn" disabled={busy || !periods.find((item) => item.business_period === period)?.traceability_count} onClick={() => void exportTraceability()}><Download size={14} />导出中央追溯表</button>}
       </div>
       <div className="stocking-manager-toolbar">
-        <label className="stocking-select-all"><input type="checkbox" checked={allSelected} onChange={() => setSelected(allSelected ? selected.filter((id) => !filteredIds.includes(id)) : unique([...selected, ...filteredIds]))} />全选当前筛选</label>
+        <label className="stocking-select-all"><input type="checkbox" checked={allSelected} onChange={() => setSelected(allSelected ? [] : filteredIds)} />全选当前筛选</label>
         <select value={status} onChange={(event) => setStatus(event.target.value)}><option value="">全部状态</option>{unique(managerRows.map((row) => row.status)).map((item) => <option key={item} value={item}>{stockingStatusLabel(item)}</option>)}</select>
         <input placeholder="搜索 SKU / 运营" value={query} onChange={(event) => setQuery(event.target.value)} />
-        <span>已选 {selected.length} 条</span>
-        <button className="btn primary" disabled={!selected.length || busy} onClick={() => void exportSelected()}><Download size={14} />导出选中</button>
+        <span>已选 {visibleSelected.length} 条</span>
+        <button className="btn primary" disabled={!visibleSelected.length || busy} onClick={() => void exportSelected()}><Download size={14} />导出选中</button>
       </div>
       <div className="stocking-export-scroll">
         <table className="stocking-export-table">
@@ -336,7 +342,7 @@ function ManagerStockingView({ managerRows, periods, onReload, onStatus }: Props
             {!filteredRows.length && <tr><td colSpan={16}>{period ? "当前筛选下暂无待导出申请" : "请选择业务期数"}</td></tr>}
             {filteredRows.map((row) => (
               <tr key={row.request_id}>
-                <td><label className="stocking-row-check"><input type="checkbox" checked={selected.includes(row.request_id)} onChange={() => setSelected((current) => current.includes(row.request_id) ? current.filter((id) => id !== row.request_id) : [...current, row.request_id])} />{row.operation_status}</label></td>
+                <td><label className="stocking-row-check"><input type="checkbox" checked={visibleSelected.includes(row.request_id)} onChange={() => setSelected(visibleSelected.includes(row.request_id) ? visibleSelected.filter((id) => id !== row.request_id) : [...visibleSelected, row.request_id])} />{row.operation_status}</label></td>
                 <td>{row.application_date || ""}</td><td>{row.stocking_type}</td><td>{row.selection_source}</td><td>{row.salesperson_name || ""}</td><td>{row.main_sku}</td><td>{row.sub_sku}</td><td>{row.cost_price ?? ""}</td><td>{row.unit_volume ?? ""}</td><td>{row.claim_daily_sales}</td><td>{row.quantity}</td><td>{row.stocking_country || ""}</td><td>{row.warehouse || ""}</td><td>{row.amount ?? ""}</td><td>{row.volume ?? ""}</td><td>{row.replenishment_reason || ""}</td>
               </tr>
             ))}
@@ -358,7 +364,7 @@ function requestDraft(item: OperatorStockingItem): StockingDraft {
     cost_price: item.request?.cost_price ?? null,
     unit_volume: item.request?.unit_volume ?? null,
     daily_sales: item.request?.daily_sales ?? null,
-    country: item.request?.country || "",
+    country: item.request?.country || operatorStockingCountry(item),
     warehouse: item.request?.warehouse || "",
     reason: item.request?.reason || ""
   };
@@ -378,12 +384,6 @@ function numberOrNull(value: string) {
   return value === "" ? null : Number(value);
 }
 
-function sourceLabel(source: string) {
-  if (source === "sales_self_selection") return "销售自选";
-  if (source === "selection1") return "选品1";
-  if (source === "selection2_caigen_claim_feedback") return "选品2/财根";
-  return source;
-}
 
 function groupPriority(items: OperatorStockingItem[]) {
   return items.some((item) => ["waiting_stocking_request", "draft"].includes(item.request?.status || item.downstream_status)) ? 0 : 1;

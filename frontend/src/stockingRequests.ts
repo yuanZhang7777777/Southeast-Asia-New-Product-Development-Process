@@ -48,6 +48,32 @@ export function validateStockingDraft(draft: StockingDraft, salesSelf = false): 
   return errors;
 }
 
+export function buildStockingDraftUpdate(draft: StockingDraft) {
+  const optionalNumber = (value: number | null) => value !== null && Number.isFinite(value) ? value : null;
+  return {
+    application_date: draft.application_date || null,
+    request_type: draft.request_type,
+    cost_price: optionalNumber(draft.cost_price),
+    unit_volume: optionalNumber(draft.unit_volume),
+    daily_sales: optionalNumber(draft.daily_sales),
+    country: draft.country.trim() || null,
+    warehouse: draft.warehouse?.trim() || null,
+    reason: draft.reason?.trim() || null
+  };
+}
+
+export function operatorStockingCountry(item: { country?: string | null }) {
+  return item.country?.trim() || "";
+}
+
+export function visibleStockingRequestIds(
+  selectedIds: readonly string[],
+  visibleRows: readonly { request_id: string }[]
+) {
+  const visible = new Set(visibleRows.map((row) => row.request_id));
+  return Array.from(new Set(selectedIds.filter((id) => visible.has(id))));
+}
+
 export function groupStockingItems<T extends GroupableStockingItem>(items: readonly T[]) {
   const groups = new Map<string, T[]>();
   for (const item of items) groups.set(item.main_sku, [...(groups.get(item.main_sku) || []), item]);
@@ -58,6 +84,13 @@ export function buildStockingExportPayload(requestIds: readonly string[]) {
   const request_ids = Array.from(new Set(requestIds.map((id) => id.trim()).filter(Boolean)));
   if (!request_ids.length) throw new Error("至少选择一条申请");
   return { request_ids };
+}
+
+export function stockingSourceLabel(source: string) {
+  if (source === "sales_self_selection") return "销售自选";
+  if (source === "selection1" || source === "selection1_developer_claim_feedback") return "选品1";
+  if (source === "selection2_caigen_claim_feedback") return "选品2/财根";
+  return source;
 }
 
 export function stockingStatusLabel(status: string) {

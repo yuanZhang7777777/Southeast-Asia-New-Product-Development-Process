@@ -95,7 +95,7 @@ test("窄屏分配明细只在表格内部横向滚动", () => {
 test("导出中心按期筛选并只导出勾选申请", () => {
   assert.match(stockViewSource, /stocking-periods/);
   assert.match(stockViewSource, /stocking-manager-toolbar/);
-  assert.match(stockViewSource, /buildStockingExportPayload\(selected\)/);
+  assert.match(stockViewSource, /buildStockingExportPayload\(visibleSelected\)/);
   assert.match(stockViewSource, /api\.availableStockingExport/);
   assert.match(stockViewSource, /traceabilityExport\(\{ business_period: period \}\)/);
   assert.match(stockViewSource, /onStatus\(error instanceof Error \? error\.message : "导出失败"\)/);

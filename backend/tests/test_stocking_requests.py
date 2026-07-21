@@ -241,6 +241,37 @@ def test_sales_self_selection_creates_each_child_atomically_and_applies_decision
         assert db.query(models.NewProductOpportunity).filter_by(main_sku="MAIN-DUPLICATE").count() == 0
 
 
+def test_operator_stocking_response_includes_country_for_branch_without_request() -> None:
+    token = login_operator("Operator A")
+    created = client.post(
+        "/stocking/self-selections",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "main_sku": "MAIN-NO-REQUEST",
+            "country": "PH",
+            "children": [
+                {"sub_sku": "SUB-LIST", "inventory_available": True, "needs_stocking": False},
+            ],
+        },
+    )
+
+    response = client.get(
+        "/stocking/my-requests",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert created.status_code == 200
+    assert response.status_code == 200
+    assert response.json() == [
+        {
+            **response.json()[0],
+            "sub_sku": "SUB-LIST",
+            "country": "PH",
+            "request_id": None,
+        }
+    ]
+
+
 def test_operator_can_save_incomplete_draft_submit_complete_values_and_edit_until_exported() -> None:
     token = login_operator("Operator A")
     request_id = create_self_stocking_request(token)
