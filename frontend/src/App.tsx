@@ -29,7 +29,7 @@ import {
   X,
   XCircle
 } from "lucide-react";
-import { ChangeEvent, ClipboardEvent, Dispatch, DragEvent, FormEvent, ReactNode, SetStateAction, useEffect, useMemo, useState } from "react";
+import { ChangeEvent, ClipboardEvent, Dispatch, DragEvent, FormEvent, ReactNode, SetStateAction, useEffect, useMemo, useRef, useState } from "react";
 import { formatBusinessNumber, formatBusinessValue } from "./businessFormat";
 import {
   API_BASE,
@@ -3614,27 +3614,29 @@ function ClaimDetailDrawer(props: {
             onRemoveEvidence={props.onRemoveEvidence}
             onRemoveSelfClaim={props.onRemoveSelfClaim}
           />
+          <div className="claim-group-nav-row">
+            <button
+              aria-label="上一个主 SKU"
+              className="claim-group-nav previous"
+              disabled={!props.previousGroup}
+              type="button"
+              onClick={props.onPreviousGroup}
+            >
+              <ChevronLeft size={18} />
+              <span>上一组</span>
+            </button>
+            <button
+              aria-label="下一个主 SKU"
+              className="claim-group-nav next"
+              disabled={!props.nextGroup}
+              type="button"
+              onClick={props.onNextGroup}
+            >
+              <span>下一组</span>
+              <ChevronRight size={18} />
+            </button>
+          </div>
         </div>
-        <button
-          aria-label="上一个主 SKU"
-          className="claim-group-nav previous"
-          disabled={!props.previousGroup}
-          type="button"
-          onClick={props.onPreviousGroup}
-        >
-          <ChevronLeft size={20} />
-          <span>上一组</span>
-        </button>
-        <button
-          aria-label="下一个主 SKU"
-          className="claim-group-nav next"
-          disabled={!props.nextGroup}
-          type="button"
-          onClick={props.onNextGroup}
-        >
-          <ChevronRight size={20} />
-          <span>下一组</span>
-        </button>
       </aside>
     </div>
   );
@@ -3764,7 +3766,6 @@ function ClaimMatrixDraftEditor(props: {
         onFiles={(files) => readEvidenceFiles(files, props.item.id).then(props.onAddEvidence)}
         onRemove={props.onRemoveEvidence}
       />
-      <ClaimSubmissionBadge draft={props.draft} item={props.item} />
       {props.showRemove && (
         <button className="btn small" type="button" onClick={props.onRemoveSelfClaim}>
           <Trash2 size={14} />移除
@@ -3805,40 +3806,85 @@ function reviewDraftFor(item?: Opportunity | null): ReviewDraft {
 }
 
 function RejectReasonPicker(props: { value: string; onChange: (value: string) => void }) {
-  const parsed = parseRejectReason(props.value);
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  const [draftValue, setDraftValue] = useState(props.value);
+  const parsed = parseRejectReason(draftValue);
+  const saved = parseRejectReason(props.value);
   const summary = props.value || "请选择或填写原因";
 
+  function openDialog() {
+    setDraftValue(props.value);
+    dialogRef.current?.showModal();
+  }
+
+  function discardChanges() {
+    setDraftValue(props.value);
+    dialogRef.current?.close();
+  }
+
+  function applyChanges() {
+    props.onChange(draftValue);
+    dialogRef.current?.close();
+  }
+
   return (
-    <details className="reject-reason-picker">
-      <summary aria-label="不认领原因" title={props.value}>{parsed.selected.length ? `已选 ${parsed.selected.length} 项 · ${summary}` : summary}</summary>
-      <div className="reject-reason-menu">
-        <div className="reject-reason-options">
-          {REJECT_REASON_OPTIONS.map((option) => (
-            <label className="reject-reason-option" key={option}>
+    <div className="reject-reason-picker">
+      <button aria-label="不认领原因" className="reject-reason-trigger" title={props.value} type="button" onClick={openDialog}>
+        {saved.selected.length ? `已选 ${saved.selected.length} 项 · ${summary}` : summary}
+      </button>
+      <dialog
+        aria-label="选择不认领原因"
+        className="reject-reason-dialog"
+        ref={dialogRef}
+        onCancel={() => setDraftValue(props.value)}
+        onClick={(event) => {
+          if (event.target === event.currentTarget) discardChanges();
+        }}
+      >
+        <div className="reject-reason-dialog-card">
+          <header className="reject-reason-dialog-head">
+            <div>
+              <b>选择不认领原因</b>
+              <span>可多选，也可以补充其他原因</span>
+            </div>
+            <button aria-label="关闭" className="btn small" type="button" onClick={discardChanges}>
+              <X size={16} />
+            </button>
+          </header>
+          <div className="reject-reason-menu">
+            <div className="reject-reason-options">
+              {REJECT_REASON_OPTIONS.map((option) => (
+                <label className="reject-reason-option" key={option}>
+                  <input
+                    checked={parsed.selected.includes(option)}
+                    onChange={(event) => setDraftValue(formatRejectReason(
+                      event.target.checked
+                        ? [...parsed.selected, option]
+                        : parsed.selected.filter((item) => item !== option),
+                      parsed.custom
+                    ))}
+                    type="checkbox"
+                  />
+                  <span>{option}</span>
+                </label>
+              ))}
+            </div>
+            <label className="reject-reason-custom">
+              <span>其他原因</span>
               <input
-                checked={parsed.selected.includes(option)}
-                onChange={(event) => props.onChange(formatRejectReason(
-                  event.target.checked
-                    ? [...parsed.selected, option]
-                    : parsed.selected.filter((item) => item !== option),
-                  parsed.custom
-                ))}
-                type="checkbox"
+                onChange={(event) => setDraftValue(formatRejectReason(parsed.selected, event.target.value))}
+                placeholder="其他原因"
+                value={parsed.custom}
               />
-              <span>{option}</span>
             </label>
-          ))}
+          </div>
+          <footer className="reject-reason-dialog-actions">
+            <button className="btn" type="button" onClick={discardChanges}>取消</button>
+            <button className="btn primary" type="button" onClick={applyChanges}>完成</button>
+          </footer>
         </div>
-        <label className="reject-reason-custom">
-          <span>其他原因</span>
-          <input
-            onChange={(event) => props.onChange(formatRejectReason(parsed.selected, event.target.value))}
-            placeholder="其他原因"
-            value={parsed.custom}
-          />
-        </label>
-      </div>
-    </details>
+      </dialog>
+    </div>
   );
 }
 
@@ -4243,14 +4289,20 @@ function StockView({
               const traceabilityBusy = Boolean(busyDownloads[`traceability:${period.business_period}`]);
               return (
                 <tr key={period.business_period} className={period.business_period === selectedPeriod ? "export-period-row active" : "export-period-row"}>
-                  <td>{period.business_period}</td>
+                  <td>
+                    <button
+                      aria-current={period.business_period === selectedPeriod ? "true" : undefined}
+                      className="export-period-select"
+                      type="button"
+                      onClick={() => viewPeriod(period.business_period)}
+                    >
+                      {period.business_period}
+                    </button>
+                  </td>
                   <td>{period.stocking_count}</td>
                   <td>{period.traceability_count}</td>
                   <td>
                     <div className="export-period-actions">
-                      <button className="btn blue" type="button" onClick={() => viewPeriod(period.business_period)}>
-                        查看明细
-                      </button>
                       <button
                         className="btn primary"
                         type="button"
@@ -4303,7 +4355,7 @@ function StockView({
           <tbody>
             {!periodRows.length && (
               <tr>
-                <td colSpan={16}>{selectedPeriod ? `${selectedPeriod} 暂无可导出记录` : "请选择业务期数查看明细"}</td>
+                <td colSpan={16}>{selectedPeriod ? `${selectedPeriod} 暂无可导出记录` : "请选择业务期数"}</td>
               </tr>
             )}
             {!!periodRows.length && !filteredRows.length && (

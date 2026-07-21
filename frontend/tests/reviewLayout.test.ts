@@ -21,15 +21,28 @@ test("主管复核按认领类型筛选并提供批量通过和拒绝", () => {
   assert.match(app, /api\.bulkReview/);
 });
 
-test("运营未提交状态紧邻操作按钮且模式切换不清空已填内容", () => {
+test("普通运营列表保留提交状态，商品详情矩阵只在顶部统计未提交项", () => {
   const editor = app.slice(app.indexOf("function ClaimDraftEditor"), app.indexOf("function ClaimDetailDrawer"));
   const matrixEditor = app.slice(app.indexOf("function ClaimMatrixDraftEditor"), app.indexOf("function draftForId"));
+  const drawer = app.slice(app.indexOf("function ClaimDetailDrawer"), app.indexOf("function ClaimMatrixTable"));
   const setMode = app.slice(app.indexOf("function setMode"), app.indexOf("function buildPayload"));
 
   assert.match(editor, /claim-editor-actions[\s\S]*ClaimSubmissionBadge/);
-  assert.match(matrixEditor, /ClaimSubmissionBadge/);
+  assert.doesNotMatch(matrixEditor, /ClaimSubmissionBadge/);
+  assert.match(drawer, /dirtyCount/);
+  assert.match(drawer, /提交本主 SKU 未提交项/);
   assert.match(setMode, /patchDraft\(itemId, \{ mode \}/);
   assert.doesNotMatch(setMode, /rejectReason|claimDailySales/);
+});
+
+test("商品详情组导航位于矩阵下方且不再使用绝对定位", () => {
+  const drawer = app.slice(app.indexOf("function ClaimDetailDrawer"), app.indexOf("function ClaimMatrixTable"));
+  const navRule = styles.match(/\.claim-group-nav\s*\{([^}]*)\}/)?.[1] || "";
+
+  assert.match(drawer, /<ClaimMatrixTable[\s\S]*claim-group-nav-row[\s\S]*上一组[\s\S]*下一组/);
+  assert.doesNotMatch(navRule, /position:\s*absolute/);
+  assert.doesNotMatch(navRule, /transform:\s*translateY/);
+  assert.match(styles, /\.claim-group-nav-row\s*\{/);
 });
 
 test("分配台使用紧凑工具栏、配置抽屉和去重运营卡片", () => {
@@ -82,6 +95,9 @@ test("导出中心按期展示且不保留无范围导出按钮", () => {
   const stockView = app.slice(app.indexOf("function StockView"), app.indexOf("function ArrivalPreviewView"));
 
   assert.match(stockView, /export-periods-table/);
+  assert.match(stockView, /export-period-select/);
+  assert.match(stockView, /viewPeriod\(period\.business_period\)/);
+  assert.doesNotMatch(stockView, /查看明细/);
   assert.match(stockView, /period\.stocking_count\s*<=\s*0/);
   assert.match(stockView, /period\.traceability_count\s*<=\s*0/);
   assert.match(stockView, /exportPeriodFilter\(period\.business_period\)/);
