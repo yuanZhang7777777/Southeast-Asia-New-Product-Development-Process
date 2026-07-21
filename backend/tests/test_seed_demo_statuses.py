@@ -58,3 +58,42 @@ def test_demo_seed_creates_assignment_preview_data() -> None:
         "DEMO-PENDING-VN-OFFICE",
         "DEMO-PENDING-FALLBACK",
     }
+
+
+def test_demo_seed_reproducibly_covers_stocking_request_branches() -> None:
+    seed_demo_statuses.main()
+    seed_demo_statuses.main()
+
+    with SessionLocal() as db:
+        claims = (
+            db.query(models.SalesClaimForecast)
+            .join(models.NewProductOpportunity, models.NewProductOpportunity.id == models.SalesClaimForecast.opportunity_id)
+            .filter(models.NewProductOpportunity.main_sku == "DEMO-SELF-STOCKING")
+            .all()
+        )
+        statuses = {
+            db.get(models.NewProductOpportunity, claim.opportunity_id).sub_sku: claim.downstream_status
+            for claim in claims
+        }
+        requests = {
+            request.sub_sku: request
+            for request in db.query(models.StockingRequest)
+            .join(models.NewProductOpportunity, models.NewProductOpportunity.id == models.StockingRequest.opportunity_id)
+            .filter(models.NewProductOpportunity.main_sku == "DEMO-SELF-STOCKING")
+            .all()
+        }
+        export_rows = services.list_available_stocking_items(db)
+
+    assert statuses == {
+        "DEMO-SELF-DRAFT": "waiting_stocking_request",
+        "DEMO-SELF-SUBMITTED": "waiting_export",
+        "DEMO-SELF-LIST": "waiting_listing",
+        "DEMO-SELF-PAUSED": "stocking_paused",
+    }
+    assert set(requests) == {"DEMO-SELF-DRAFT", "DEMO-SELF-SUBMITTED"}
+    assert requests["DEMO-SELF-DRAFT"].status == "draft"
+    assert requests["DEMO-SELF-SUBMITTED"].status == "submitted"
+    assert {
+        (row.main_sku, row.sub_sku, row.quantity, row.amount, row.volume)
+        for row in export_rows
+    } >= {("DEMO-SELF-STOCKING", "DEMO-SELF-SUBMITTED", 61, 762.5, 0.122)}

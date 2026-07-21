@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date
 import sys
 from pathlib import Path
 
@@ -28,6 +29,7 @@ from app.workflow_status import (
 
 
 DEMO_SOURCE_TYPE = "local_demo_status_coverage"
+DEMO_SOURCE_FILE = "本地演示数据脚本"
 
 
 def main() -> None:
@@ -41,7 +43,12 @@ def main() -> None:
 
 def clear_demo(db) -> None:
     opportunity_ids = list(
-        db.scalars(select(models.NewProductOpportunity.id).where(models.NewProductOpportunity.source_type == DEMO_SOURCE_TYPE))
+        db.scalars(
+            select(models.NewProductOpportunity.id).where(
+                (models.NewProductOpportunity.source_type == DEMO_SOURCE_TYPE)
+                | (models.NewProductOpportunity.source_file == DEMO_SOURCE_FILE)
+            )
+        )
     )
     if not opportunity_ids:
         return
@@ -52,9 +59,9 @@ def clear_demo(db) -> None:
     if flow_ids:
         db.execute(delete(models.FlowTask).where(models.FlowTask.flow_instance_id.in_(flow_ids)))
     db.execute(delete(models.FlowInstance).where(models.FlowInstance.opportunity_id.in_(opportunity_ids)))
-    db.execute(delete(models.SalesClaimForecast).where(models.SalesClaimForecast.opportunity_id.in_(opportunity_ids)))
     db.execute(delete(models.ReviewRecord).where(models.ReviewRecord.opportunity_id.in_(opportunity_ids)))
     db.execute(delete(models.StockingRequest).where(models.StockingRequest.opportunity_id.in_(opportunity_ids)))
+    db.execute(delete(models.SalesClaimForecast).where(models.SalesClaimForecast.opportunity_id.in_(opportunity_ids)))
     db.execute(delete(models.SourceRecordSnapshot).where(models.SourceRecordSnapshot.opportunity_id.in_(opportunity_ids)))
     db.execute(delete(models.NewProductOpportunity).where(models.NewProductOpportunity.id.in_(opportunity_ids)))
 
@@ -127,6 +134,59 @@ def seed_opportunities(db) -> None:
     submit_claim(db, mixed_reject, "陈丽妹", CLAIM_RESULT_REJECT, reject_reason="规格不适合海外仓备货")
     submit_review(db, mixed_reject, REVIEW_CONFIRMED_NOT_CLAIM, "确认不认领")
 
+    seed_stocking_request_branches(db)
+
+
+def seed_stocking_request_branches(db) -> None:
+    items = services.create_sales_self_selection(
+        db,
+        schemas.SalesSelfSelectionCreate(
+            main_sku="DEMO-SELF-STOCKING",
+            main_sku_name="销售自选备货演示",
+            country="PH",
+            children=[
+                schemas.SalesSelfSelectionChildCreate(
+                    sub_sku="DEMO-SELF-DRAFT", inventory_available=False, needs_stocking=True
+                ),
+                schemas.SalesSelfSelectionChildCreate(
+                    sub_sku="DEMO-SELF-SUBMITTED", inventory_available=False, needs_stocking=True
+                ),
+                schemas.SalesSelfSelectionChildCreate(
+                    sub_sku="DEMO-SELF-LIST", inventory_available=True, needs_stocking=False
+                ),
+                schemas.SalesSelfSelectionChildCreate(
+                    sub_sku="DEMO-SELF-PAUSED", inventory_available=False, needs_stocking=False
+                ),
+            ],
+        ),
+        "庞莹莹",
+    )
+    for item in items:
+        opportunity = db.get(models.NewProductOpportunity, item.opportunity_id)
+        opportunity.source_file = DEMO_SOURCE_FILE
+        snapshot = db.scalar(
+            select(models.SourceRecordSnapshot).where(
+                models.SourceRecordSnapshot.opportunity_id == item.opportunity_id
+            )
+        )
+        snapshot.source_file = DEMO_SOURCE_FILE
+
+    submitted = next(item for item in items if item.sub_sku == "DEMO-SELF-SUBMITTED")
+    services.update_stocking_request(
+        db,
+        submitted.request_id,
+        "庞莹莹",
+        schemas.StockingRequestUpdate(
+            application_date=date(2026, 7, 21),
+            request_type="initial",
+            cost_price=12.5,
+            unit_volume=0.002,
+            daily_sales=2.01,
+            country="PH",
+        ),
+    )
+    services.submit_stocking_request(db, submitted.request_id, "庞莹莹")
+
 
 def add_group(
     db,
@@ -154,7 +214,7 @@ def add_opportunity(
 ) -> models.NewProductOpportunity:
     item = models.NewProductOpportunity(
         source_type=DEMO_SOURCE_TYPE,
-        source_file="本地演示数据脚本",
+        source_file=DEMO_SOURCE_FILE,
         source_sheet="状态覆盖",
         source_row=source_row,
         country=site,
