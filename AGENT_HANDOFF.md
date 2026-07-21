@@ -1,6 +1,6 @@
 # Agent Handoff
 
-> Updated: 2026-07-21 13:14 Asia/Shanghai
+> Updated: 2026-07-21 13:56 Asia/Shanghai
 
 ## Start Here
 
@@ -21,7 +21,7 @@ Do not infer current behavior from old plans or prototypes when they conflict wi
 | Environment | Address | Current code | Rule |
 |---|---|---|---|
 | Production | `http://101.132.26.138:8080` | `b373d65` | In use. Do not connect, deploy or restart without a separately approved non-working-time release window. |
-| Development | `http://139.224.2.166:18081` | `24f601f` | Unified branch validation and business UAT only. SSH alias: `hz-new-product-dev`. |
+| Development | `http://139.224.2.166:18081` | `c017c5d` | Unified branch validation and business UAT only. SSH alias: `hz-new-product-dev`. |
 
 Production database is `workflow_prod_20260715`; development database is `workflow_dev_20260715`. Databases, Redis, uploads, volumes, ports and environment variables are isolated. Never commit passwords, tokens, cookies, private keys or `.env` files.
 
@@ -33,12 +33,12 @@ PLM arrival endpoint settings and credentials are stored separately in both serv
 
 - Branch: `lxc/integrated-workflow`.
 - Merge commit: `1aae41ef6b5b86ba086b43f1e61ae0b9ee3c7d83` with parents `fbf574c` and `a4a61e4`.
-- Backend: full baseline `249 passed`; latest secondary-research/listing/notification/card regression `67 passed`.
-- Frontend: deployed branch `99 passed` and production build passed; export-period selection, compact claim matrix state, bottom group navigation and the styled rejection-reason dialog are available in development.
+- Backend: full branch regression `252 passed`; secondary-research and listing-observation focused regression `10 passed`.
+- Frontend: deployed branch `104 passed` and production build passed; the listing workbench, product lifecycle archive, export-period selection and claim UAT usability fixes are available in development.
 - TypeScript/Vite production build: passed.
 - Alembic: one head, `a8d4e6f7b901`.
-- Development deployment: public and server-side health returned `environment=development`; real browser smoke verified the redundant export detail button is gone, group navigation stays below the matrix, row status badges no longer distort the matrix, and the rejection-reason dialog closes through cancel/X/Esc without writing unconfirmed changes.
-- Latest deployment was frontend-only. API, worker, scheduler, PostgreSQL, Redis and reverse-proxy container IDs were preserved; production was not connected, restarted or deployed.
+- Development deployment: public and server-side health returned `environment=development`; real browser smoke verified the workbench defaults to `待刊登`, `全部` exposes all visible records, main-SKU groups fully collapse, only the result pane scrolls vertically, no result-pane horizontal overflow remains, and future periods stay hidden even if development test data already contains them.
+- Commit `dd8edd0` rebuilt API and frontend; the follow-up `c017c5d` rebuilt frontend only. Worker, scheduler, PostgreSQL, Redis and reverse-proxy container IDs were preserved with `RestartCount=0`; production was not connected, restarted or deployed.
 - Real development PLM E2E processed 2,263 rows and 22 salesperson groups, proved same-file idempotency, and completed one controlled Item through secondary research, listing, weeks 1-5 and the week-4 summary. Arrival cards were a one-time test redirected to 刘学城; persistent autosend remains disabled.
 - Development UAT uses the existing 刘学城 account: `super_admin` supplies the supervisor and operator views, and an enabled Thailand operator profile is linked to the same user. No extra test account is required for the first single-person UAT.
 - `GZMO075` now has three development-only simulated arrival records and is the prepared 0/3 secondary-research UAT group for 刘学城. Database backup before this setup: `/opt/hengzhe-new-product-dev/backups/workflow_dev_before_secondary_uat_20260721_114310.sql.gz`. No real PLM job or DingTalk delivery was triggered.
@@ -60,8 +60,8 @@ Later stage:
 - Each Item selects its own first Thursday-to-Wednesday period and observes four independent weeks; later periods are manually added.
 - Weekly metrics are read-only; product positioning and optimization action are required; week 4 also requires a summary.
 - Completed reviews remain editable with audit; stopped Items may finish already-fetched periods; only explicit stop pauses future fetches and reminders.
-- Product detail is read-only for listing/observation history and groups records by source business period.
-- The next approved UI change is documented in `docs/superpowers/specs/2026-07-21-listing-observation-workbench-ui-design.md`: product detail becomes the read-only lifecycle archive, while the workbench keeps full viewing and editing in a collapsible main-SKU / Item / visible-week layout. Future weeks stay hidden; the current week shows only its expected data date. This design is not implemented or deployed yet.
+- Product detail is the read-only lifecycle archive: secondary-research history and listing/observation history have separate entries, with listing records grouped by source business period.
+- The listing workbench keeps full viewing and editing in a collapsible main-SKU / Item / visible-week layout. Its title, common filters, result count and batch action remain outside the independently scrolling result pane; future weeks stay hidden, and current pending-data weeks show only the expected data date.
 
 Detailed field, state, permission and API rules stay in the confirmed requirement and architecture documents; do not duplicate them here.
 
