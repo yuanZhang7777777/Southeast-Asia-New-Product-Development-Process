@@ -1,6 +1,6 @@
 # Agent Handoff
 
-> Updated: 2026-07-21 10:19 Asia/Shanghai
+> Updated: 2026-07-21 11:46 Asia/Shanghai
 
 ## Start Here
 
@@ -21,7 +21,7 @@ Do not infer current behavior from old plans or prototypes when they conflict wi
 | Environment | Address | Current code | Rule |
 |---|---|---|---|
 | Production | `http://101.132.26.138:8080` | `b373d65` | In use. Do not connect, deploy or restart without a separately approved non-working-time release window. |
-| Development | `http://139.224.2.166:18081` | `48b3639` | Unified branch validation and business UAT only. SSH alias: `hz-new-product-dev`. |
+| Development | `http://139.224.2.166:18081` | `24f601f` | Unified branch validation and business UAT only. SSH alias: `hz-new-product-dev`. |
 
 Production database is `workflow_prod_20260715`; development database is `workflow_dev_20260715`. Databases, Redis, uploads, volumes, ports and environment variables are isolated. Never commit passwords, tokens, cookies, private keys or `.env` files.
 
@@ -34,13 +34,14 @@ PLM arrival endpoint settings and credentials are stored separately in both serv
 - Branch: `lxc/integrated-workflow`.
 - Merge commit: `1aae41ef6b5b86ba086b43f1e61ae0b9ee3c7d83` with parents `fbf574c` and `a4a61e4`.
 - Backend: full baseline `249 passed`; latest secondary-research/listing/notification/card regression `67 passed`.
-- Frontend: deployed branch `98 passed` and production build passed; the fixed/multi-select/custom rejection-reason picker is available in the development deployment.
+- Frontend: deployed branch `99 passed` and production build passed; export-period selection, compact claim matrix state, bottom group navigation and the styled rejection-reason dialog are available in development.
 - TypeScript/Vite production build: passed.
 - Alembic: one head, `a8d4e6f7b901`.
-- Development deployment: public and server-side health returned `environment=development`; frontend bundle contains the front-stage export center, secondary research, listing/observation workbench and the rejection-reason picker.
+- Development deployment: public and server-side health returned `environment=development`; real browser smoke verified the redundant export detail button is gone, group navigation stays below the matrix, row status badges no longer distort the matrix, and the rejection-reason dialog closes through cancel/X/Esc without writing unconfirmed changes.
 - Latest deployment was frontend-only. API, worker, scheduler, PostgreSQL, Redis and reverse-proxy container IDs were preserved; production was not connected, restarted or deployed.
 - Real development PLM E2E processed 2,263 rows and 22 salesperson groups, proved same-file idempotency, and completed one controlled Item through secondary research, listing, weeks 1-5 and the week-4 summary. Arrival cards were a one-time test redirected to 刘学城; persistent autosend remains disabled.
 - Development UAT uses the existing 刘学城 account: `super_admin` supplies the supervisor and operator views, and an enabled Thailand operator profile is linked to the same user. No extra test account is required for the first single-person UAT.
+- `GZMO075` now has three development-only simulated arrival records and is the prepared 0/3 secondary-research UAT group for 刘学城. Database backup before this setup: `/opt/hengzhe-new-product-dev/backups/workflow_dev_before_secondary_uat_20260721_114310.sql.gz`. No real PLM job or DingTalk delivery was triggered.
 
 ## Implemented Scope
 
