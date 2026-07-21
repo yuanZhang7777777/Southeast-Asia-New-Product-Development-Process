@@ -40,6 +40,11 @@ class Settings(BaseSettings):
     plm_password: str = ""
     plm_bloc_name: str = "\u96c6\u56e2\u516b\u90e8"
     plm_cache_dir: str = "/data/plm"
+    erp_login_url: str = ""
+    erp_product_list_url: str = ""
+    erp_download_list_url: str = ""
+    erp_username: str = ""
+    erp_password: str = ""
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
