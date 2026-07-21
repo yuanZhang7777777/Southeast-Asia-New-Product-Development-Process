@@ -9,8 +9,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from fastapi.testclient import TestClient  # noqa: E402
 
 from app import models, schemas, services  # noqa: E402
+from app.auth import AuthContext  # noqa: E402
 from app.db import Base, SessionLocal, engine  # noqa: E402
 from app.main import app  # noqa: E402
+from app.routers.secondary_research import secondary_research_owner  # noqa: E402
 
 
 client = TestClient(app)
@@ -19,6 +21,17 @@ client = TestClient(app)
 def setup_function() -> None:
     Base.metadata.drop_all(bind=engine)
     Base.metadata.create_all(bind=engine)
+
+
+def test_secondary_research_read_scope_allows_managers_and_locks_operators() -> None:
+    user = models.User(name="测试用户", enabled=True)
+    manager = AuthContext(user=user, roles=[schemas.AuthRoleRead(role="manager", name="主管")])
+    operator = AuthContext(user=user, roles=[schemas.AuthRoleRead(role="operator", name="运营甲")])
+
+    assert secondary_research_owner(manager, None) is None
+    assert secondary_research_owner(manager, "运营乙") == "运营乙"
+    assert secondary_research_owner(operator, None) == "运营甲"
+    assert secondary_research_owner(operator, "运营乙") == "运营甲"
 
 
 def test_approved_review_marks_the_specific_claim_waiting_for_export() -> None:
@@ -137,6 +150,39 @@ def test_secondary_research_defaults_latest_period_and_supports_history_and_all_
     assert [group["business_period"] for group in latest] == ["开发0710期"]
     assert [group["business_period"] for group in history] == ["开发0703期"]
     assert sorted(group["business_period"] for group in all_periods) == ["开发0703期", "开发0710期"]
+
+
+def test_secondary_research_history_can_include_submitted_records_after_workflow_moves_on() -> None:
+    pending_opportunity, pending_claim = make_claim(
+        "SUB-PENDING",
+        "销售A",
+        downstream_status="waiting_secondary_research",
+    )
+    submitted_opportunity, submitted_claim = make_claim(
+        "SUB-SUBMITTED",
+        "销售A",
+        downstream_status="waiting_listing",
+    )
+    submitted_claim.secondary_research_submitted_at = datetime(2026, 7, 12, 10, tzinfo=timezone.utc)
+    submitted_claim.secondary_conclusion = "已提交结论"
+    submitted_claim.product_positioning = "利润款"
+    with SessionLocal() as db:
+        db.add_all([pending_opportunity, pending_claim, submitted_opportunity, submitted_claim])
+        db.commit()
+
+    response = client.get(
+        "/secondary-research",
+        params={
+            "salesperson_name": "销售A",
+            "business_period": "__all__",
+            "downstream_status": "",
+        },
+    )
+
+    assert response.status_code == 200
+    items = [item for group in response.json() for item in group["items"]]
+    assert {item["sub_sku"] for item in items} == {"SUB-PENDING", "SUB-SUBMITTED"}
+    assert next(item for item in items if item["sub_sku"] == "SUB-SUBMITTED")["secondary_conclusion"] == "已提交结论"
 
 
 def test_saving_draft_keeps_status_and_rejects_editing_another_operator() -> None:

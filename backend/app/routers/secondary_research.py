@@ -9,6 +9,12 @@ from app.workflow_status import CLAIM_WAITING_SECONDARY_RESEARCH
 router = APIRouter(prefix="/secondary-research", tags=["secondary-research"])
 
 
+def secondary_research_owner(auth: AuthContext | None, requested_owner: str | None) -> str | None:
+    if auth is None or auth.role_keys.intersection({"manager", "super_admin"}):
+        return requested_owner
+    return auth.operator_name
+
+
 @router.get("", response_model=list[schemas.SecondaryResearchGroupRead])
 def list_secondary_research(
     salesperson_name: str | None = None,
@@ -17,7 +23,7 @@ def list_secondary_research(
     db: Session = Depends(get_db),
     auth: AuthContext | None = Depends(require_roles("operator", "manager")),
 ) -> list[dict]:
-    owner = auth.operator_name if auth and auth.operator_name else salesperson_name
+    owner = secondary_research_owner(auth, salesperson_name)
     return services.list_secondary_research_groups(db, owner, business_period, downstream_status)
 
 

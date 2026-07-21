@@ -71,6 +71,24 @@ export function defaultNextBusinessPeriodStart(dayText = shanghaiDateText()) {
   return value.toISOString().slice(0, 10);
 }
 
+export type ObservationPeriodDisplay = "hidden" | "in_progress" | "data_pending" | "ready";
+
+export function observationPeriodDisplay(
+  row: Pick<ObservationPeriodRow, "status" | "period_start" | "period_end">,
+  dayText = shanghaiDateText()
+): ObservationPeriodDisplay {
+  if (row.status !== "pending_data") return "ready";
+  if (dayText < row.period_start) return "hidden";
+  return dayText <= row.period_end ? "in_progress" : "data_pending";
+}
+
+export function expectedObservationMetricsDate(periodEnd: string) {
+  const [year, month, day] = periodEnd.split("-").map(Number);
+  const value = new Date(Date.UTC(year, month - 1, day));
+  value.setUTCDate(value.getUTCDate() + 1);
+  return value.toISOString().slice(0, 10);
+}
+
 export function buildListingTaskContexts<
   TTask extends {
     task_key: string;

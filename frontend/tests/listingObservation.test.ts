@@ -9,6 +9,7 @@ import {
   buildListingTaskContexts,
   createRequestGate,
   defaultNextBusinessPeriodStart,
+  expectedObservationMetricsDate,
   filterListingWorkbenchGroups,
   filterObservationRows,
   formatObservationMetric,
@@ -17,6 +18,7 @@ import {
   latestPeriodIdsByListing,
   mapReviewServerRowErrors,
   mapServerRowErrors,
+  observationPeriodDisplay,
   productListingSummary,
   resolveWorkbenchScope,
   summarySalespersonScope,
@@ -205,6 +207,25 @@ test("主管运营视角未选运营时页面在请求前清空并短路", () =>
   assert.match(listingObservationViewSource, /请先选择运营/);
 });
 
+test("待取数周期只展示已经开始的当前或历史周期", () => {
+  const row = observationRow({
+    status: "pending_data",
+    period_start: "2026-07-23",
+    period_end: "2026-07-29"
+  });
+
+  assert.equal(observationPeriodDisplay(row, "2026-07-22"), "hidden");
+  assert.equal(observationPeriodDisplay(row, "2026-07-23"), "in_progress");
+  assert.equal(observationPeriodDisplay(row, "2026-07-29"), "in_progress");
+  assert.equal(observationPeriodDisplay(row, "2026-07-30"), "data_pending");
+});
+
+test("已取数或已复盘周期始终显示完整记录且预计取数日为周期结束次日", () => {
+  assert.equal(observationPeriodDisplay(observationRow({ status: "pending_review" }), "2026-07-01"), "ready");
+  assert.equal(observationPeriodDisplay(observationRow({ status: "completed" }), "2026-07-01"), "ready");
+  assert.equal(expectedObservationMetricsDate("2026-07-29"), "2026-07-30");
+});
+
 test("刊登观察页面使用单表和业务状态筛选且不暴露内部待取数", () => {
   assert.doesNotMatch(listingObservationViewSource, /const TABS/);
   assert.doesNotMatch(listingObservationViewSource, /listing-tabs/);
@@ -216,12 +237,28 @@ test("刊登观察页面使用单表和业务状态筛选且不暴露内部待�
   assert.match(listingObservationViewSource, /新增店铺 \+ Item/);
 });
 
-test("刊登观察只读汇总的待数据周期四项指标统一显示短横线", () => {
+test("刊登观察工作台使用固定操作区和分组卡片且不再依赖超宽表", () => {
+  assert.match(listingObservationViewSource, /listing-workbench-header/);
+  assert.match(listingObservationViewSource, /listing-workbench-results/);
+  assert.match(listingObservationViewSource, /listing-item-card/);
+  assert.match(listingObservationViewSource, /提交选中周记录（\{visibleSelectedIds\.length\}）/);
+  assert.match(listingObservationViewSource, /observationPeriodDisplay\(row\)/);
+  assert.doesNotMatch(listingStylesSource, /min-width:\s*1900px/);
+  assert.doesNotMatch(listingObservationViewSource, /已有刊登记录/);
+  assert.equal(
+    (listingStylesSource.match(/\{/g) || []).length,
+    (listingStylesSource.match(/\}/g) || []).length,
+    "styles.css 花括号必须成对"
+  );
+});
+
+test("刊登观察只读汇总使用 Item 周期卡片并隐藏未来周期", () => {
   const summarySource = listingObservationViewSource.match(/export function ListingObservationSummary[\s\S]*?function PendingListingTasks/)?.[0] || "";
-  assert.match(summarySource, /\{period\.status === "pending_data" \? "-" : formatObservationMetric\(period\.order_count\)\}/);
-  assert.match(summarySource, /\{period\.status === "pending_data" \? "-" : formatObservationMetric\(period\.total_revenue\)\}/);
-  assert.match(summarySource, /\{period\.status === "pending_data" \? "-" : formatObservationMetric\(period\.gross_profit_amount\)\}/);
-  assert.match(summarySource, /\{period\.status === "pending_data" \? "-" : formatPercent\(period\.gross_profit_rate\)\}/);
+  assert.match(summarySource, /listing-summary-items/);
+  assert.match(summarySource, /observationPeriodDisplay\(period\) !== "hidden"/);
+  assert.match(summarySource, /listing-period-notice/);
+  assert.match(summarySource, /listing-period-metrics/);
+  assert.doesNotMatch(summarySource, /listing-summary-table/);
 });
 
 test("刊登记录的店铺、Item、刊登策略和第一周周期全部必填", () => {
@@ -676,7 +713,7 @@ test("旧身份范围的异步提交完成后不得清空新范围可见状态",
     functionSource("submitVoidListing", "async function submitListings"),
     functionSource("submitListings", "function updateReview"),
     functionSource("submitReviews", "async function changeListingTracking"),
-    functionSource("changeListingTracking", "async function changeTracking"),
+    functionSource("changeListingTracking", "async function submitNewPeriod"),
     functionSource("submitNewPeriod", "  return (")
   ];
   for (const source of mutations) {

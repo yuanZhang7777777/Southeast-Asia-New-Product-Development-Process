@@ -56,6 +56,7 @@ import { groupByBusinessIdentity, normalizeSiteText } from "./opportunityGroups"
 import { adjacentDetailTarget } from "./productDetailNavigation";
 import { ProductBoardView } from "./ProductBoardView";
 import { SecondaryResearchView } from "./SecondaryResearchView";
+import { SecondaryResearchSummary } from "./SecondaryResearchSummary";
 import { isSourceClaimInputLabel, selection1ColumnLabel } from "./selection1Columns";
 import { ListingObservationSummary, ListingObservationView } from "./ListingObservationView";
 import { compactUrlLabel } from "./urlDisplay";
@@ -143,7 +144,7 @@ type AssignmentLoad = {
   draftSubSkus: number;
 };
 
-type DetailSectionKey = "core" | "development" | "market" | "pricing" | "cost" | "claim" | "listing" | "source";
+type DetailSectionKey = "core" | "development" | "market" | "pricing" | "cost" | "claim" | "secondary" | "listing" | "source";
 type ClaimDrawerModuleKey = "market" | "pricing" | "development" | "cost";
 
 const flowItems: { view: ViewKey; roles: RoleKey[]; icon: ReactNode; label: string }[] = [
@@ -1758,6 +1759,7 @@ const detailSections: { key: DetailSectionKey; label: string }[] = [
   { key: "pricing", label: "价格参考" },
   { key: "cost", label: "成本参数" },
   { key: "claim", label: "认领与复核" },
+  { key: "secondary", label: "二次调研" },
   { key: "listing", label: "刊登与观察" },
   { key: "source", label: "源表字段" }
 ];
@@ -2050,6 +2052,19 @@ function ProductDetailView(props: {
                 <h3>认领与复核</h3>
                 {hasOperatorSubmission(activeChild) ? <OperatorSubmissionSummary item={activeChild} /> : <p className="muted detail-empty">暂无运营提交记录。</p>}
                 <ClaimReviewTable item={activeChild} />
+              </div>
+            )}
+            {activeSection === "secondary" && (
+              <div className="detail-pane">
+                <h3>二次调研历史（只读）</h3>
+                <SecondaryResearchSummary
+                  mainSku={group.main_sku}
+                  country={activeChild.country || item.country}
+                  currentBusinessPeriod={activeChild.batch || item.batch || activeChild.source_sheet || item.source_sheet}
+                  role={props.activeRole}
+                  operatorName={props.operatorName}
+                  canManage={props.canManage}
+                />
               </div>
             )}
             {activeSection === "listing" && (

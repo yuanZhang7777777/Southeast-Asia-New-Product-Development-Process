@@ -485,10 +485,15 @@ function query(params: PeriodFilter = {}) {
   return value ? `?${value}` : "";
 }
 
-function secondaryResearchQuery(salespersonName: string, businessPeriod: string) {
+function secondaryResearchQuery(
+  salespersonName: string,
+  businessPeriod: string,
+  downstreamStatus = "waiting_secondary_research"
+) {
   const search = new URLSearchParams();
   if (salespersonName) search.set("salesperson_name", salespersonName);
   if (businessPeriod) search.set("business_period", businessPeriod);
+  search.set("downstream_status", downstreamStatus);
   const value = search.toString();
   return value ? `?${value}` : "";
 }
@@ -578,9 +583,9 @@ export const api = {
     form.append("file", file);
     return request<UploadedEvidenceImage>("/claims/evidence-images", { method: "POST", body: form });
   },
-  secondaryResearch: (salespersonName = "", businessPeriod = "") =>
+  secondaryResearch: (salespersonName = "", businessPeriod = "", downstreamStatus = "waiting_secondary_research") =>
     request<SecondaryResearchGroup[]>(
-      `/secondary-research${secondaryResearchQuery(salespersonName, businessPeriod)}`
+      `/secondary-research${secondaryResearchQuery(salespersonName, businessPeriod, downstreamStatus)}`
     ),
   productBoard: (filter?: ProductBoardFilter) => request<ProductBoardGroup[]>(`/product-board${productBoardQuery(filter)}`),
   updateSecondaryResearch: (claimRecordId: string, salespersonName: string, payload: unknown) =>

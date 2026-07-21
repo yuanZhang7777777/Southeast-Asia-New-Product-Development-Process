@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import { adjacentDetailTarget } from "../src/productDetailNavigation.ts";
@@ -8,6 +9,9 @@ const groups = [
   { key: "MAIN-A", items: [{ id: "A-1" }, { id: "A-2" }] },
   { key: "MAIN-B", items: [{ id: "B-1" }, { id: "B-2" }] }
 ];
+
+const appSource = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
+const apiSource = readFileSync(new URL("../src/api.ts", import.meta.url), "utf8");
 
 test("详情先切同主 SKU 子项，到边界后切换主 SKU", () => {
   assert.deepEqual(adjacentDetailTarget(groups, "MAIN-A", "A-1", 1), { groupKey: "MAIN-A", childId: "A-2" });
@@ -19,4 +23,16 @@ test("详情先切同主 SKU 子项，到边界后切换主 SKU", () => {
 test("长链接只显示域名，完整地址仍作为链接目标", () => {
   assert.equal(compactUrlLabel("https://www.shopee.vn/a/very/long/path?query=1"), "shopee.vn");
   assert.equal(compactUrlLabel("not-a-url"), "打开链接");
+});
+
+test("商品全局档案分别提供二次调研和刊登观察只读历史", () => {
+  assert.match(appSource, /\{ key: "secondary", label: "二次调研" \}/);
+  assert.match(appSource, /activeSection === "secondary"/);
+  assert.match(appSource, /<SecondaryResearchSummary/);
+  assert.match(appSource, /<ListingObservationSummary/);
+});
+
+test("二次调研历史查询可显式请求全部下游状态", () => {
+  assert.match(apiSource, /secondaryResearchQuery\(salespersonName, businessPeriod, downstreamStatus\)/);
+  assert.match(apiSource, /downstream_status/);
 });

@@ -574,7 +574,7 @@ function isUrl(value: string) {
   return /^https?:\/\//i.test(value);
 }
 
-function resolveImageUrl(url?: string | null) {
+export function resolveImageUrl(url?: string | null) {
   if (!url) return "";
   if (url.startsWith("/uploaded-sources/")) return `${API_BASE}${url}`;
   if (url.includes("hz-sea-np-flow-prod.oss-cn-shanghai.aliyuncs.com")) {
