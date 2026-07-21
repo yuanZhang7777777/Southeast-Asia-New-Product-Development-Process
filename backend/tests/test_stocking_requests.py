@@ -432,7 +432,7 @@ def test_stocking_update_rejects_non_finite_numbers_without_persisting() -> None
                 "Authorization": f"Bearer {token}",
                 "Content-Type": "application/json",
             },
-            content=f'{{"cost_price": "{literal}"}}',
+            content=f'{{"cost_price": {literal}}}',
         )
         for literal in ("NaN", "Infinity", "-Infinity")
     ]

@@ -1,3 +1,4 @@
+import math
 from datetime import date, datetime
 from typing import Any, Literal
 
@@ -306,6 +307,14 @@ class StockingRequestUpdate(BaseModel):
     reason: str | None = None
 
     model_config = {"extra": "forbid", "allow_inf_nan": False}
+
+    @field_validator("cost_price", "unit_volume", "daily_sales", mode="before")
+    @classmethod
+    def replace_non_finite_input(cls, value: object) -> object:
+        try:
+            return "__non_finite__" if value is not None and not math.isfinite(float(value)) else value
+        except (TypeError, ValueError):
+            return value
 
     @field_validator("request_type")
     @classmethod
