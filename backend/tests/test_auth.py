@@ -462,3 +462,26 @@ def test_operator_evidence_upload_requires_owned_opportunity() -> None:
     )
 
     assert response.status_code == 403
+
+
+def test_stocking_routes_apply_operator_and_manager_roles_per_endpoint() -> None:
+    with SessionLocal() as db:
+        db.add_all(
+            [
+                models.RoleMapping(name="Operator A", role="operator", dingtalk_user_id="dt-stock-op", enabled=True),
+                models.RoleMapping(name="Manager A", role="manager", dingtalk_user_id="dt-stock-manager", enabled=True),
+            ]
+        )
+        db.commit()
+    operator_token = client.post("/auth/dingtalk/login", json={"dingtalk_user_id": "dt-stock-op"}).json()["access_token"]
+    manager_token = client.post("/auth/dingtalk/login", json={"dingtalk_user_id": "dt-stock-manager"}).json()["access_token"]
+
+    operator_list = client.get("/stocking/my-requests", headers={"Authorization": f"Bearer {operator_token}"})
+    manager_denied = client.get("/stocking/my-requests", headers={"Authorization": f"Bearer {manager_token}"})
+    manager_periods = client.get("/stocking/export-periods", headers={"Authorization": f"Bearer {manager_token}"})
+    operator_denied = client.get("/stocking/export-periods", headers={"Authorization": f"Bearer {operator_token}"})
+
+    assert operator_list.status_code == 200
+    assert manager_denied.status_code == 403
+    assert manager_periods.status_code == 200
+    assert operator_denied.status_code == 403

@@ -227,3 +227,27 @@ def login(name: str, role: str) -> str:
     response = client.post("/auth/login", json={"name": name, "password": default_password_for_name(name)})
     assert response.status_code == 200
     return response.json()["access_token"]
+
+
+def test_product_board_shows_sales_self_paused_and_listing_states() -> None:
+    token = login("Owner A", "operator")
+    created = client.post(
+        "/stocking/self-selections",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "main_sku": "MAIN-SELF-BOARD",
+            "country": "PH",
+            "children": [
+                {"sub_sku": "SUB-LIST", "inventory_available": True, "needs_stocking": False},
+                {"sub_sku": "SUB-PAUSE", "inventory_available": False, "needs_stocking": False},
+            ],
+        },
+    )
+
+    response = client.get("/product-board", headers={"Authorization": f"Bearer {token}"})
+
+    assert created.status_code == 200
+    assert response.status_code == 200
+    [group] = response.json()
+    assert {item["visible_status"] for item in group["child_skus"]} == {"waiting_listing", "stocking_paused"}
+    assert {item["visible_status"] for item in group["responsibilities"]} == {"waiting_listing", "stocking_paused"}

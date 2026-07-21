@@ -34,7 +34,7 @@ def test_secondary_research_read_scope_allows_managers_and_locks_operators() -> 
     assert secondary_research_owner(operator, "运营乙") == "运营甲"
 
 
-def test_approved_review_marks_the_specific_claim_waiting_for_export() -> None:
+def test_approved_review_marks_the_specific_claim_waiting_for_stocking_request() -> None:
     opportunity, claim = make_claim("SUB-A", "销售A")
     with SessionLocal() as db:
         db.add_all([opportunity, claim])
@@ -57,7 +57,7 @@ def test_approved_review_marks_the_specific_claim_waiting_for_export() -> None:
     with SessionLocal() as db:
         saved_claim = db.get(models.SalesClaimForecast, claim_id)
         review = db.query(models.ReviewRecord).one()
-    assert saved_claim.downstream_status == "waiting_export"
+    assert saved_claim.downstream_status == "waiting_stocking_request"
     assert review.claim_record_id == claim_id
 
 

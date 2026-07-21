@@ -33,6 +33,7 @@ from app.workflow_status import (
     CLAIM_WAITING_LISTING,
     CLAIM_WAITING_SECONDARY_RESEARCH,
     CLAIM_WAITING_STOCKING_REQUEST,
+    CLAIM_STOCKING_PAUSED,
     OPPORTUNITY_ASSIGNED,
     OPPORTUNITY_CLAIM_REJECTED,
     OPPORTUNITY_CLAIM_SUBMITTED,
@@ -2402,6 +2403,361 @@ def _date_in_range(value: datetime | None, start: date | None, end: date | None)
     return (start is None or current >= start) and (end is None or current <= end)
 
 
+SALES_SELF_SELECTION = "sales_self_selection"
+
+
+def create_sales_self_selection(
+    db: Session,
+    payload: schemas.SalesSelfSelectionCreate,
+    operator_name: str,
+    actor_user_id: str | None = None,
+) -> list[schemas.OperatorStockingItemRead]:
+    main_sku = _clean_text(payload.main_sku)
+    country = _clean_text(payload.country)
+    children = [(_clean_text(child.sub_sku), child) for child in payload.children]
+    if not main_sku or not country or any(not sub_sku for sub_sku, _ in children):
+        raise ValueError("main_sku, country, and child sub_sku are required")
+    normalized = [sub_sku.casefold() for sub_sku, _ in children if sub_sku]
+    if len(normalized) != len(set(normalized)):
+        raise ValueError("child sub_sku values must be unique")
+
+    period = f"销售自选{datetime.now(EXCEL_TIMEZONE):%Y%m%d}"
+    existing = db.scalar(
+        select(models.NewProductOpportunity.id)
+        .join(
+            models.SalesClaimForecast,
+            models.SalesClaimForecast.opportunity_id == models.NewProductOpportunity.id,
+        )
+        .where(
+            models.NewProductOpportunity.source_type == SALES_SELF_SELECTION,
+            models.NewProductOpportunity.batch == period,
+            models.NewProductOpportunity.main_sku == main_sku,
+            models.NewProductOpportunity.sub_sku.in_([sub_sku for sub_sku, _ in children]),
+            models.SalesClaimForecast.salesperson_name == operator_name,
+        )
+    )
+    if existing:
+        raise ValueError("sales self selection already exists")
+
+    claims: list[models.SalesClaimForecast] = []
+    now = datetime.now(timezone.utc)
+    for source_row, (sub_sku, child) in enumerate(children, start=1):
+        snapshot = {
+            "source": "销售自选",
+            "operator_name": operator_name,
+            "main_sku": main_sku,
+            "main_sku_name": _clean_text(payload.main_sku_name),
+            "sub_sku": sub_sku,
+            "sub_sku_name": _clean_text(child.sub_sku_name),
+            "country": country,
+            "inventory_available": child.inventory_available,
+            "needs_stocking": child.needs_stocking,
+        }
+        opportunity = models.NewProductOpportunity(
+            source_type=SALES_SELF_SELECTION,
+            source_file="平台销售自选",
+            source_sheet=period,
+            source_row=source_row,
+            batch=period,
+            country=country,
+            site=country,
+            main_sku=main_sku,
+            main_sku_name=_clean_text(payload.main_sku_name),
+            sub_sku=sub_sku,
+            sub_sku_name=_clean_text(child.sub_sku_name),
+            current_status=OPPORTUNITY_READY_FOR_STOCKING,
+            snapshot=snapshot,
+        )
+        db.add(opportunity)
+        db.flush()
+        db.add(
+            models.SourceRecordSnapshot(
+                opportunity_id=opportunity.id,
+                source_file=opportunity.source_file,
+                source_sheet=period,
+                source_row=source_row,
+                column_range="sales_self_selection",
+                payload=snapshot,
+            )
+        )
+        claim = models.SalesClaimForecast(
+            opportunity_id=opportunity.id,
+            platform="Shopee",
+            salesperson_name=operator_name,
+            claim_result=CLAIM_RESULT_CLAIM,
+            source_column="platform",
+            claim_source=SALES_SELF_SELECTION,
+            inventory_available=child.inventory_available,
+            needs_stocking=child.needs_stocking,
+            stocking_decision_updated_at=now,
+            downstream_status=_stocking_decision_status(child.inventory_available, child.needs_stocking),
+        )
+        db.add(claim)
+        db.flush()
+        if child.needs_stocking:
+            create_stocking_draft_for_claim(db, claim.id, operator_name)
+        audit(
+            db,
+            "sales_self_selection.created",
+            "new_product_opportunity",
+            opportunity.id,
+            snapshot,
+            operator_name,
+            actor_user_id,
+        )
+        claims.append(claim)
+    db.flush()
+    return [_operator_stocking_item(db, claim) for claim in claims]
+
+
+def list_operator_stocking_items(db: Session, operator_name: str) -> list[schemas.OperatorStockingItemRead]:
+    rows = db.execute(
+        select(models.SalesClaimForecast, models.NewProductOpportunity)
+        .join(
+            models.NewProductOpportunity,
+            models.NewProductOpportunity.id == models.SalesClaimForecast.opportunity_id,
+        )
+        .where(
+            models.SalesClaimForecast.salesperson_name == operator_name,
+            models.SalesClaimForecast.source_column == "platform",
+        )
+        .order_by(models.SalesClaimForecast.updated_at.desc())
+    )
+    result = []
+    for claim, opportunity in rows:
+        request = db.scalar(
+            select(models.StockingRequest).where(models.StockingRequest.claim_record_id == claim.id)
+        )
+        if request is None and not (
+            opportunity.source_type == SALES_SELF_SELECTION
+            and claim.downstream_status in {CLAIM_STOCKING_PAUSED, CLAIM_WAITING_LISTING}
+        ):
+            continue
+        result.append(_operator_stocking_item(db, claim, opportunity, request))
+    return result
+
+
+def update_stocking_request(
+    db: Session,
+    request_id: str,
+    operator_name: str,
+    payload: schemas.StockingRequestUpdate,
+    actor_user_id: str | None = None,
+) -> models.StockingRequest:
+    request, claim = _owned_stocking_request(db, request_id, operator_name, lock=True)
+    if request.status == "exported":
+        raise RuntimeError("exported stocking request is read-only")
+    before_status = request.status
+    before = {
+        field: value.isoformat() if isinstance((value := getattr(request, field)), (date, datetime)) else value
+        for field in payload.model_fields_set
+    }
+    for field, value in payload.model_dump(exclude_unset=True).items():
+        if field in {"country", "warehouse", "reason"}:
+            value = _clean_text(value)
+        setattr(request, field, value)
+        if field == "unit_volume" and value is not None:
+            request.unit_volume_source = "manual"
+    _recalculate_stocking_request(request)
+    if before_status == "submitted" and payload.model_fields_set:
+        request.status = "draft"
+        request.submitted_at = None
+        claim.downstream_status = CLAIM_WAITING_STOCKING_REQUEST
+    audit(
+        db,
+        "stocking.request_updated",
+        "stocking_request",
+        request.id,
+        {
+            "status_before": before_status,
+            "status_after": request.status,
+            "before": before,
+            "after": {
+                field: value.isoformat()
+                if isinstance((value := getattr(request, field)), (date, datetime))
+                else value
+                for field in payload.model_fields_set
+            },
+        },
+        operator_name,
+        actor_user_id,
+    )
+    db.flush()
+    return request
+
+
+def submit_stocking_request(
+    db: Session,
+    request_id: str,
+    operator_name: str,
+    actor_user_id: str | None = None,
+) -> models.StockingRequest:
+    request, claim = _owned_stocking_request(db, request_id, operator_name, lock=True)
+    if request.status == "exported":
+        raise RuntimeError("exported stocking request is read-only")
+    errors = []
+    if request.request_type not in {"initial", "replenishment"}:
+        errors.append("request_type")
+    for field in ("application_date", "cost_price", "unit_volume", "daily_sales"):
+        value = getattr(request, field)
+        if value is None or (field != "application_date" and (not math.isfinite(value) or value <= 0)):
+            errors.append(field)
+    request.country = _clean_text(request.country)
+    request.warehouse = _clean_text(request.warehouse)
+    request.reason = _clean_text(request.reason)
+    if not request.country:
+        errors.append("country")
+    if request.request_type == "replenishment" and not request.reason:
+        errors.append("reason")
+    if errors:
+        raise ValueError(f"required stocking fields: {', '.join(errors)}")
+    _recalculate_stocking_request(request)
+    request.status = "submitted"
+    request.submitted_at = datetime.now(timezone.utc)
+    claim.claim_daily_sales = request.daily_sales
+    claim.downstream_status = CLAIM_WAITING_EXPORT
+    audit(
+        db,
+        "stocking.request_submitted",
+        "stocking_request",
+        request.id,
+        {"quantity": request.quantity, "amount": request.amount, "volume": request.volume},
+        operator_name,
+        actor_user_id,
+    )
+    db.flush()
+    return request
+
+
+def update_stocking_decision(
+    db: Session,
+    claim_record_id: str,
+    operator_name: str,
+    payload: schemas.StockingDecisionUpdate,
+    actor_user_id: str | None = None,
+) -> schemas.OperatorStockingItemRead:
+    claim = db.scalar(
+        select(models.SalesClaimForecast)
+        .where(models.SalesClaimForecast.id == claim_record_id)
+        .with_for_update()
+    )
+    if claim is None:
+        raise LookupError("claim record not found")
+    if claim.salesperson_name != operator_name:
+        raise PermissionError("claim record belongs to another operator")
+    opportunity = db.get(models.NewProductOpportunity, claim.opportunity_id)
+    if opportunity is None:
+        raise LookupError("opportunity not found")
+    if opportunity.source_type != SALES_SELF_SELECTION:
+        raise ValueError("stocking decisions are only available for sales self selections")
+    request = db.scalar(
+        select(models.StockingRequest)
+        .where(models.StockingRequest.claim_record_id == claim.id)
+        .with_for_update()
+    )
+    if request is not None and request.status in {"submitted", "exported"}:
+        raise RuntimeError(f"{request.status} stocking request decision is read-only")
+    claim.inventory_available = payload.inventory_available
+    claim.needs_stocking = payload.needs_stocking
+    claim.stocking_decision_updated_at = datetime.now(timezone.utc)
+    claim.downstream_status = _stocking_decision_status(payload.inventory_available, payload.needs_stocking)
+    if payload.needs_stocking:
+        request = request or create_stocking_draft_for_claim(db, claim.id, operator_name)
+    elif request is not None:
+        request.status = "draft"
+        request.submitted_at = None
+    audit(
+        db,
+        "stocking.decision_updated",
+        "sales_claim_forecast",
+        claim.id,
+        payload.model_dump(),
+        operator_name,
+        actor_user_id,
+    )
+    db.flush()
+    return _operator_stocking_item(db, claim, opportunity, request)
+
+
+def _stocking_decision_status(inventory_available: bool, needs_stocking: bool) -> str:
+    if needs_stocking:
+        return CLAIM_WAITING_STOCKING_REQUEST
+    return CLAIM_WAITING_LISTING if inventory_available else CLAIM_STOCKING_PAUSED
+
+
+def _owned_stocking_request(
+    db: Session,
+    request_id: str,
+    operator_name: str,
+    lock: bool = False,
+) -> tuple[models.StockingRequest, models.SalesClaimForecast]:
+    query = select(models.StockingRequest).where(models.StockingRequest.id == request_id)
+    if lock:
+        query = query.with_for_update()
+    request = db.scalar(query)
+    if request is None:
+        raise LookupError("stocking request not found")
+    claim_query = select(models.SalesClaimForecast).where(
+        models.SalesClaimForecast.id == request.claim_record_id
+    )
+    if lock:
+        claim_query = claim_query.with_for_update()
+    claim = db.scalar(claim_query)
+    if claim is None:
+        raise LookupError("claim record not found")
+    if claim.salesperson_name != operator_name or request.salesperson_name != operator_name:
+        raise PermissionError("stocking request belongs to another operator")
+    return request, claim
+
+
+def _recalculate_stocking_request(request: models.StockingRequest) -> None:
+    request.quantity = (
+        stocking_quantity(request.daily_sales)
+        if request.daily_sales is not None and request.daily_sales > 0
+        else 0
+    )
+    request.amount = (
+        request.cost_price * request.quantity
+        if request.cost_price is not None and request.cost_price > 0 and request.quantity > 0
+        else None
+    )
+    request.volume = (
+        request.unit_volume * request.quantity
+        if request.unit_volume is not None and request.unit_volume > 0 and request.quantity > 0
+        else None
+    )
+
+
+def _operator_stocking_item(
+    db: Session,
+    claim: models.SalesClaimForecast,
+    opportunity: models.NewProductOpportunity | None = None,
+    request: models.StockingRequest | None = None,
+) -> schemas.OperatorStockingItemRead:
+    opportunity = opportunity or db.get(models.NewProductOpportunity, claim.opportunity_id)
+    if opportunity is None:
+        raise LookupError("opportunity not found")
+    if request is None:
+        request = db.scalar(
+            select(models.StockingRequest).where(models.StockingRequest.claim_record_id == claim.id)
+        )
+    return schemas.OperatorStockingItemRead(
+        opportunity_id=opportunity.id,
+        claim_record_id=claim.id,
+        request_id=request.id if request else None,
+        business_period=opportunity.batch,
+        source_type=opportunity.source_type,
+        salesperson_name=claim.salesperson_name or "",
+        main_sku=opportunity.main_sku,
+        main_sku_name=opportunity.main_sku_name,
+        sub_sku=opportunity.sub_sku,
+        sub_sku_name=opportunity.sub_sku_name,
+        inventory_available=claim.inventory_available,
+        needs_stocking=claim.needs_stocking,
+        downstream_status=claim.downstream_status or "",
+        request=request,
+    )
+
 def stocking_quantity(daily_sales: float) -> int:
     return math.ceil(daily_sales * 30)
 
@@ -2426,9 +2782,7 @@ def create_stocking_draft_for_claim(
     opportunity = db.get(models.NewProductOpportunity, claim.opportunity_id)
     if opportunity is None:
         raise LookupError("opportunity not found")
-    if claim.claim_daily_sales is None:
-        raise ValueError("claim_daily_sales is required")
-    quantity = stocking_quantity(claim.claim_daily_sales)
+    quantity = stocking_quantity(claim.claim_daily_sales) if claim.claim_daily_sales is not None else 0
     cost_price = number_value(central_field_value(opportunity, "商品成本-含税（元）"))
     unit_volume = number_value(central_field_value(opportunity, "包装后体积"))
     request = models.StockingRequest(
@@ -3395,6 +3749,8 @@ def selection_source_label(opportunity: models.NewProductOpportunity) -> str:
         label = "选品1-开发部门认领反馈"
     elif opportunity.source_type == "selection2_caigen_claim_feedback":
         label = "选品2-财根团队认领反馈"
+    elif opportunity.source_type == SALES_SELF_SELECTION:
+        label = "销售自选"
     else:
         label = opportunity.source_type
     return f"{label} + {sheet}" if sheet else label

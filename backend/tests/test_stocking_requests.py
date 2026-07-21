@@ -9,6 +9,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from fastapi.testclient import TestClient  # noqa: E402
 
 from app import models, schemas, services  # noqa: E402
+from app.auth import default_password_for_name  # noqa: E402
 from app.db import Base, SessionLocal, engine  # noqa: E402
 from app.main import app  # noqa: E402
 from app import workflow_status  # noqa: E402
@@ -163,3 +164,261 @@ def test_stocking_request_post_reuses_claim_draft_and_rejects_mismatched_opportu
     assert valid.json()["id"] == ids[3]
     with SessionLocal() as db:
         assert db.query(models.StockingRequest).count() == 1
+
+
+def test_sales_self_selection_creates_each_child_atomically_and_applies_decisions() -> None:
+    token = login_operator("Operator A")
+    response = client.post(
+        "/stocking/self-selections",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "main_sku": " MAIN-SELF ",
+            "main_sku_name": "Self selected",
+            "country": " PH ",
+            "children": [
+                {"sub_sku": "SUB-STOCK", "inventory_available": False, "needs_stocking": True},
+                {"sub_sku": "SUB-LIST", "inventory_available": True, "needs_stocking": False},
+                {"sub_sku": "SUB-PAUSE", "inventory_available": False, "needs_stocking": False},
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    with SessionLocal() as db:
+        opportunities = db.query(models.NewProductOpportunity).order_by(models.NewProductOpportunity.source_row).all()
+        snapshots = db.query(models.SourceRecordSnapshot).all()
+        claims = db.query(models.SalesClaimForecast).order_by(models.SalesClaimForecast.created_at).all()
+        requests = db.query(models.StockingRequest).all()
+        claim_statuses = {
+            db.get(models.NewProductOpportunity, claim.opportunity_id).sub_sku: claim.downstream_status
+            for claim in claims
+        }
+    assert len(opportunities) == len(snapshots) == len(claims) == 3
+    assert {item.batch for item in opportunities} == {f"\u9500\u552e\u81ea\u9009{datetime.now(services.EXCEL_TIMEZONE):%Y%m%d}"}
+    assert {item.main_sku for item in opportunities} == {"MAIN-SELF"}
+    assert {item.country for item in opportunities} == {"PH"}
+    assert {item.salesperson_name for item in claims} == {"Operator A"}
+    assert {item.claim_result for item in claims} == {"claim"}
+    assert {item.source_column for item in claims} == {"platform"}
+    assert claim_statuses == {
+        "SUB-STOCK": "waiting_stocking_request",
+        "SUB-LIST": "waiting_listing",
+        "SUB-PAUSE": "stocking_paused",
+    }
+    assert [item.claim_record_id for item in requests] == [
+        next(item.id for item in claims if item.downstream_status == "waiting_stocking_request")
+    ]
+
+    token_b = login_operator("Operator B")
+    same_sku_other_operator = client.post(
+        "/stocking/self-selections",
+        headers={"Authorization": f"Bearer {token_b}"},
+        json={
+            "main_sku": "MAIN-SELF",
+            "country": "PH",
+            "children": [
+                {"sub_sku": "SUB-STOCK", "inventory_available": True, "needs_stocking": False},
+            ],
+        },
+    )
+    assert same_sku_other_operator.status_code == 200
+
+    duplicate = client.post(
+        "/stocking/self-selections",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "main_sku": "MAIN-DUPLICATE",
+            "country": "PH",
+            "children": [
+                {"sub_sku": "DUP", "inventory_available": False, "needs_stocking": True},
+                {"sub_sku": " DUP ", "inventory_available": True, "needs_stocking": False},
+            ],
+        },
+    )
+    assert duplicate.status_code in {400, 409, 422}
+    with SessionLocal() as db:
+        assert db.query(models.NewProductOpportunity).filter_by(main_sku="MAIN-DUPLICATE").count() == 0
+
+
+def test_operator_can_save_incomplete_draft_submit_complete_values_and_edit_until_exported() -> None:
+    token = login_operator("Operator A")
+    request_id = create_self_stocking_request(token)
+
+    incomplete = client.put(
+        f"/stocking/requests/{request_id}",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"warehouse": ""},
+    )
+    invalid_submit = client.post(
+        f"/stocking/requests/{request_id}/submit",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    complete = client.put(
+        f"/stocking/requests/{request_id}",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "application_date": "2026-07-21",
+            "request_type": "initial",
+            "cost_price": 12.5,
+            "unit_volume": 0.002,
+            "daily_sales": 2.01,
+            "country": " PH ",
+            "warehouse": "",
+        },
+    )
+    submitted = client.post(
+        f"/stocking/requests/{request_id}/submit",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    denied_withdrawal = client.post(
+        f"/stocking/decisions/{submitted.json()['claim_record_id']}",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"inventory_available": False, "needs_stocking": False},
+    )
+    edited = client.put(
+        f"/stocking/requests/{request_id}",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"daily_sales": 3},
+    )
+
+    assert incomplete.status_code == 200
+    assert invalid_submit.status_code == 400
+    assert complete.status_code == 200
+    assert submitted.status_code == 200
+    assert submitted.json()["quantity"] == 61
+    assert submitted.json()["amount"] == 762.5
+    assert submitted.json()["volume"] == 0.122
+    assert submitted.json()["warehouse"] is None
+    assert denied_withdrawal.status_code == 409
+    assert edited.status_code == 200
+    assert edited.json()["status"] == "draft"
+    with SessionLocal() as db:
+        request = db.get(models.StockingRequest, request_id)
+        claim = db.get(models.SalesClaimForecast, request.claim_record_id)
+        claim_status = claim.downstream_status
+        assert request.submitted_at is None
+        request.status = "exported"
+        audit_details = [item.detail for item in db.query(models.AuditLog).filter_by(action="stocking.request_updated")]
+        db.commit()
+    assert any(
+        detail["after"].get("application_date") == "2026-07-21"
+        and detail["after"].get("warehouse") is None
+        for detail in audit_details
+    )
+    denied = client.put(
+        f"/stocking/requests/{request_id}",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"daily_sales": 4},
+    )
+    assert denied.status_code == 409
+    assert claim_status == "waiting_stocking_request"
+
+
+def test_replenishment_requires_reason_and_requests_are_owner_isolated() -> None:
+    token_a = login_operator("Operator A")
+    token_b = login_operator("Operator B")
+    request_id = create_self_stocking_request(token_b)
+
+    denied = client.put(
+        f"/stocking/requests/{request_id}",
+        headers={"Authorization": f"Bearer {token_a}"},
+        json={"daily_sales": 2},
+    )
+    own_list = client.get("/stocking/my-requests", headers={"Authorization": f"Bearer {token_a}"})
+    other_list = client.get("/stocking/my-requests", headers={"Authorization": f"Bearer {token_b}"})
+    update = client.put(
+        f"/stocking/requests/{request_id}",
+        headers={"Authorization": f"Bearer {token_b}"},
+        json={
+            "application_date": "2026-07-21",
+            "request_type": "replenishment",
+            "cost_price": 1,
+            "unit_volume": 0.001,
+            "daily_sales": 1,
+            "country": "PH",
+        },
+    )
+    invalid = client.post(
+        f"/stocking/requests/{request_id}/submit",
+        headers={"Authorization": f"Bearer {token_b}"},
+    )
+
+    assert denied.status_code == 403
+    assert own_list.status_code == 200 and own_list.json() == []
+    assert other_list.status_code == 200 and len(other_list.json()) == 1
+    assert update.status_code == 200
+    assert invalid.status_code == 400
+    assert "reason" in invalid.json()["detail"]
+
+    null_type_id = create_self_stocking_request(token_a)
+    null_type_update = client.put(
+        f"/stocking/requests/{null_type_id}",
+        headers={"Authorization": f"Bearer {token_a}"},
+        json={
+            "application_date": "2026-07-21",
+            "request_type": None,
+            "cost_price": 1,
+            "unit_volume": 0.001,
+            "daily_sales": 1,
+            "country": "PH",
+        },
+    )
+    assert null_type_update.status_code == 422
+    assert "request_type" in null_type_update.text
+
+
+def test_decision_can_resume_paused_claim_and_volume_preview_uses_erp_resolver(monkeypatch) -> None:
+    token = login_operator("Operator A")
+    response = client.post(
+        "/stocking/self-selections",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "main_sku": "MAIN-DECISION",
+            "country": "PH",
+            "children": [{"sub_sku": "SUB-A", "inventory_available": False, "needs_stocking": False}],
+        },
+    )
+    claim_id = response.json()[0]["claim_record_id"]
+
+    resumed = client.post(
+        f"/stocking/decisions/{claim_id}",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"inventory_available": False, "needs_stocking": True},
+    )
+    monkeypatch.setattr(
+        "app.routers.stocking.erp_product_list.fetch_product_volumes",
+        lambda skus, settings: {skus[0]: 0.000132916, skus[1]: None},
+    )
+    preview = client.post(
+        "/stocking/volume-preview",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"skus": ["GSHWAC225ND", "MISSING"]},
+    )
+
+    assert resumed.status_code == 200
+    assert resumed.json()["downstream_status"] == "waiting_stocking_request"
+    assert [item["status"] for item in preview.json()] == ["resolved", "manual_required"]
+    assert preview.json()[0]["unit_volume"] == 0.000132916
+
+
+def create_self_stocking_request(token: str) -> str:
+    response = client.post(
+        "/stocking/self-selections",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "main_sku": f"MAIN-{models.new_id()}",
+            "country": "PH",
+            "children": [{"sub_sku": f"SUB-{models.new_id()}", "inventory_available": False, "needs_stocking": True}],
+        },
+    )
+    assert response.status_code == 200
+    return response.json()[0]["request_id"]
+
+
+def login_operator(name: str) -> str:
+    with SessionLocal() as db:
+        db.add(models.RoleMapping(name=name, role="operator", enabled=True))
+        db.commit()
+    response = client.post("/auth/login", json={"name": name, "password": default_password_for_name(name)})
+    assert response.status_code == 200
+    return response.json()["access_token"]

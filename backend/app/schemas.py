@@ -1,5 +1,5 @@
 from datetime import date, datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -295,25 +295,100 @@ class StockingRequestCreate(BaseModel):
     reason: str | None = None
 
 
+class StockingRequestUpdate(BaseModel):
+    application_date: date | None = None
+    request_type: Literal["initial", "replenishment"] | None = None
+    cost_price: float | None = None
+    unit_volume: float | None = None
+    daily_sales: float | None = None
+    country: str | None = None
+    warehouse: str | None = None
+    reason: str | None = None
+
+    model_config = {"extra": "forbid"}
+
+    @field_validator("request_type")
+    @classmethod
+    def request_type_must_not_be_null(cls, value: str | None) -> str:
+        if value is None:
+            raise ValueError("request_type must be initial or replenishment")
+        return value
+
+
+class StockingDecisionUpdate(BaseModel):
+    inventory_available: bool
+    needs_stocking: bool
+
+    model_config = {"extra": "forbid"}
+
+
+class SalesSelfSelectionChildCreate(StockingDecisionUpdate):
+    sub_sku: str
+    sub_sku_name: str | None = None
+
+
+class SalesSelfSelectionCreate(BaseModel):
+    main_sku: str
+    main_sku_name: str | None = None
+    country: str
+    children: list[SalesSelfSelectionChildCreate] = Field(min_length=1, max_length=500)
+
+    model_config = {"extra": "forbid"}
+
+
+class VolumePreviewRequest(BaseModel):
+    skus: list[str] = Field(min_length=1, max_length=500)
+
+    model_config = {"extra": "forbid"}
+
+
+class VolumePreviewRead(BaseModel):
+    sub_sku: str
+    unit_volume: float | None = None
+    status: Literal["resolved", "manual_required"]
+
+
 class StockingRequestRead(BaseModel):
     id: str
     opportunity_id: str
     claim_record_id: str | None
     application_date: date | None
     submitted_at: datetime | None
+    request_type: str
     unit_volume_source: str | None
     salesperson_name: str | None
     main_sku: str | None
     sub_sku: str | None
+    cost_price: float | None
+    unit_volume: float | None
     daily_sales: float | None
     quantity: int
     country: str | None
     warehouse: str | None
+    amount: float | None
+    volume: float | None
+    reason: str | None
     status: str
     created_at: datetime
 
     model_config = {"from_attributes": True}
 
+
+class OperatorStockingItemRead(BaseModel):
+    opportunity_id: str
+    claim_record_id: str
+    request_id: str | None = None
+    business_period: str | None = None
+    source_type: str
+    salesperson_name: str
+    main_sku: str
+    main_sku_name: str | None = None
+    sub_sku: str
+    sub_sku_name: str | None = None
+    inventory_available: bool | None = None
+    needs_stocking: bool | None = None
+    downstream_status: str
+    request: StockingRequestRead | None = None
 
 class AvailableStockingItem(BaseModel):
     opportunity_id: str
