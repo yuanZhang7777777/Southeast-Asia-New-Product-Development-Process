@@ -4,6 +4,7 @@ import test from "node:test";
 
 const styles = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");
 const app = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
+const stockViewSource = readFileSync(new URL("../src/StockingRequestView.tsx", import.meta.url), "utf8");
 
 test("主管复核右栏固定在滚动区域顶部", () => {
   const rule = styles.match(/\.review-layout\s*>\s*\.form-card\s*\{([^}]*)\}/)?.[1] || "";
@@ -91,20 +92,15 @@ test("窄屏分配明细只在表格内部横向滚动", () => {
   assert.match(viewportRule, /max-width:\s*100%/);
 });
 
-test("导出中心按期展示且不保留无范围导出按钮", () => {
-  const stockView = app.slice(app.indexOf("function StockView"), app.indexOf("function ArrivalPreviewView"));
-
-  assert.match(stockView, /export-periods-table/);
-  assert.match(stockView, /export-period-select/);
-  assert.match(stockView, /viewPeriod\(period\.business_period\)/);
-  assert.doesNotMatch(stockView, /查看明细/);
-  assert.match(stockView, /period\.stocking_count\s*<=\s*0/);
-  assert.match(stockView, /period\.traceability_count\s*<=\s*0/);
-  assert.match(stockView, /exportPeriodFilter\(period\.business_period\)/);
-  assert.doesNotMatch(stockView, /api\.traceabilityExport\(\)/);
-  assert.doesNotMatch(stockView, /api\.availableStockingExport\(\)/);
+test("导出中心按期筛选并只导出勾选申请", () => {
+  assert.match(stockViewSource, /stocking-periods/);
+  assert.match(stockViewSource, /stocking-manager-toolbar/);
+  assert.match(stockViewSource, /buildStockingExportPayload\(selected\)/);
+  assert.match(stockViewSource, /api\.availableStockingExport/);
+  assert.match(stockViewSource, /traceabilityExport\(\{ business_period: period \}\)/);
+  assert.match(stockViewSource, /onStatus\(error instanceof Error \? error\.message : "导出失败"\)/);
+  assert.doesNotMatch(stockViewSource, /查看明细/);
 });
-
 test("导出中心刷新失败时保留当前期数和明细切片", () => {
   const refresh = app.slice(app.indexOf("async function refresh"), app.indexOf("async function loadPlmArrivalPreview"));
 
@@ -113,4 +109,10 @@ test("导出中心刷新失败时保留当前期数和明细切片", () => {
   assert.doesNotMatch(refresh, /loadPart\("导出中心", api\.availableStocking, \[\]\)/);
   assert.doesNotMatch(refresh, /loadPart\("导出期数", api\.exportPeriods, \[\]\)/);
   assert.match(refresh, /部分数据未加载/);
+});
+
+
+test("stock 工作台使用全宽布局", () => {
+  assert.match(app, /activeView === "stock"/);
+  assert.match(app, /activeView !== "stock"/);
 });

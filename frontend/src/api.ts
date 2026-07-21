@@ -49,23 +49,81 @@ export type Task = {
 export type StockingRequest = {
   id: string;
   opportunity_id: string;
+  claim_record_id?: string | null;
+  application_date?: string | null;
+  submitted_at?: string | null;
+  request_type: "initial" | "replenishment";
+  unit_volume_source?: string | null;
   salesperson_name?: string | null;
   main_sku?: string | null;
   sub_sku?: string | null;
+  cost_price?: number | null;
+  unit_volume?: number | null;
   daily_sales?: number | null;
   quantity: number;
   country?: string | null;
   warehouse?: string | null;
+  amount?: number | null;
+  volume?: number | null;
+  reason?: string | null;
   status: string;
   created_at: string;
 };
 
+export type OperatorStockingItem = {
+  opportunity_id: string;
+  claim_record_id: string;
+  request_id?: string | null;
+  business_period?: string | null;
+  source_type: string;
+  salesperson_name: string;
+  main_sku: string;
+  main_sku_name?: string | null;
+  sub_sku: string;
+  sub_sku_name?: string | null;
+  inventory_available?: boolean | null;
+  needs_stocking?: boolean | null;
+  downstream_status: string;
+  request?: StockingRequest | null;
+};
+
+export type StockingRequestUpdate = {
+  application_date: string;
+  request_type: "initial" | "replenishment";
+  cost_price: number;
+  unit_volume: number;
+  daily_sales: number;
+  country: string;
+  warehouse?: string | null;
+  reason?: string | null;
+};
+
+export type SalesSelfSelectionPayload = {
+  main_sku: string;
+  main_sku_name?: string | null;
+  country: string;
+  children: Array<{
+    sub_sku: string;
+    sub_sku_name?: string | null;
+    inventory_available: boolean;
+    needs_stocking: boolean;
+  }>;
+};
+
+export type VolumePreviewItem = {
+  sub_sku: string;
+  unit_volume?: number | null;
+  status: "resolved" | "manual_required";
+};
+
 export type AvailableStockingItem = {
   opportunity_id: string;
+  request_id: string;
   claim_record_id: string;
   business_period?: string | null;
   operation_status: string;
-  time: string;
+  time?: string | null;
+  application_date?: string | null;
   stocking_type: string;
   selection_source: string;
   salesperson_name?: string | null;
@@ -79,12 +137,13 @@ export type AvailableStockingItem = {
   cost_price?: number | null;
   unit_volume?: number | null;
   amount?: number | null;
+  volume?: number | null;
   replenishment_reason?: string | null;
   needs_launch_email?: string | null;
   launch_email_status?: string | null;
   review_status?: string | null;
+  status: string;
 };
-
 export type ExportPeriodSummary = {
   business_period: string;
   latest_imported_at?: string | null;
@@ -441,11 +500,11 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   return (text ? JSON.parse(text) : undefined) as T;
 }
 
-async function download(path: string, fallbackName: string): Promise<void> {
+async function download(path: string, fallbackName: string, options: RequestInit = {}): Promise<void> {
   const token = getAuthToken();
-  const response = await fetch(`${API_BASE}${path}`, {
-    headers: token ? { Authorization: `Bearer ${token}` } : {}
-  });
+  const headers: Record<string, string> = options.body ? { "Content-Type": "application/json" } : {};
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const response = await fetch(`${API_BASE}${path}`, { ...options, headers });
   if (!response.ok) {
     const message = await response.text();
     if (response.status === 401 || response.status === 403) {
@@ -601,9 +660,21 @@ export const api = {
   review: (payload: unknown) => request<{ message: string; id: string }>("/reviews", { method: "POST", body: JSON.stringify(payload) }),
   bulkReview: (payload: unknown) => request<{ message: string; id: string }>("/reviews/bulk", { method: "POST", body: JSON.stringify(payload) }),
   stocking: () => request<StockingRequest[]>("/stocking/requests"),
+  myStockingRequests: () => request<OperatorStockingItem[]>("/stocking/my-requests"),
+  createSalesSelfSelection: (payload: SalesSelfSelectionPayload) =>
+    request<OperatorStockingItem[]>("/stocking/self-selections", { method: "POST", body: JSON.stringify(payload) }),
+  updateStockingRequest: (requestId: string, payload: StockingRequestUpdate) =>
+    request<StockingRequest>(`/stocking/requests/${requestId}`, { method: "PUT", body: JSON.stringify(payload) }),
+  submitStockingRequest: (requestId: string) =>
+    request<StockingRequest>(`/stocking/requests/${requestId}/submit`, { method: "POST" }),
+  updateStockingDecision: (claimRecordId: string, payload: { inventory_available: boolean; needs_stocking: boolean }) =>
+    request<OperatorStockingItem>(`/stocking/decisions/${claimRecordId}`, { method: "POST", body: JSON.stringify(payload) }),
+  volumePreview: (skus: string[]) =>
+    request<VolumePreviewItem[]>("/stocking/volume-preview", { method: "POST", body: JSON.stringify({ skus }) }),
   availableStocking: (filter?: PeriodFilter) => request<AvailableStockingItem[]>(`/stocking/available-list${query(filter)}`),
   exportPeriods: () => request<ExportPeriodSummary[]>("/stocking/export-periods"),
-  availableStockingExport: (filter?: PeriodFilter) => download(`/stocking/available-list/export${query(filter)}`, "海外仓备货申请表.xlsx"),
+  availableStockingExport: (payload: { request_ids: string[] }) =>
+    download("/stocking/available-list/export", "海外仓备货申请表.xlsx", { method: "POST", body: JSON.stringify(payload) }),
   traceabilityExport: (filter?: PeriodFilter) => download(`/stocking/traceability/export${query(filter)}`, "新品中央字段导出.xlsx"),
   arrival: (payload: unknown) => request<unknown>("/arrival/records", { method: "POST", body: JSON.stringify(payload) }),
   plmArrivalPreview: (date: string) => request<PlmArrivalPreview>(`/arrival/plm-preview?date=${encodeURIComponent(date)}`),

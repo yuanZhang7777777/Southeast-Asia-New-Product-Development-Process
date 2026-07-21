@@ -66,6 +66,11 @@ const desiredHelpers = listingObservation as unknown as ListingObservationContra
 const apiSource = readFileSync(new URL("../src/api.ts", import.meta.url), "utf8");
 const appSource = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
 const listingObservationViewSource = readFileSync(new URL("../src/ListingObservationView.tsx", import.meta.url), "utf8");
+
+test("普通待刊登任务继续使用既有刊登工作台", () => {
+  assert.match(listingObservationViewSource, /pending_listing_tasks/);
+  assert.doesNotMatch(listingObservationViewSource, /stocking_paused/);
+});
 const listingStylesSource = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");
 
 test("只有普通运营会被登录身份锁定当前运营", () => {

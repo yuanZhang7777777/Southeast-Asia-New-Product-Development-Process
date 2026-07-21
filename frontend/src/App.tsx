@@ -42,6 +42,7 @@ import {
   ImportBatchSummary,
   Opportunity,
   OperatorAssignmentProfile,
+  OperatorStockingItem,
   PlmArrivalPreview,
   Selection1ImportResponse,
   setAuthToken,
@@ -60,8 +61,9 @@ import { SecondaryResearchSummary } from "./SecondaryResearchSummary";
 import { isSourceClaimInputLabel, selection1ColumnLabel } from "./selection1Columns";
 import { ListingObservationSummary, ListingObservationView } from "./ListingObservationView";
 import { compactUrlLabel } from "./urlDisplay";
-import { exportPeriodFilter, filterRowsForExportPeriod, selectExportPeriod } from "./exportPeriods";
 import { imageFiles } from "./imageUploads";
+import { StockingRequestView } from "./StockingRequestView";
+import { roleStockingLabel } from "./stockingRequests";
 
 type DingTalkAuthCodeResult = {
   authCode?: string;
@@ -153,7 +155,7 @@ const flowItems: { view: ViewKey; roles: RoleKey[]; icon: ReactNode; label: stri
   { view: "assign", roles: ["manager"], icon: <UserRoundPlus size={16} />, label: "分配台" },
   { view: "claim", roles: ["operator"], icon: <ClipboardPen size={16} />, label: "运营认领" },
   { view: "review", roles: ["manager"], icon: <ShieldCheck size={16} />, label: "主管复核" },
-  { view: "stock", roles: ["manager"], icon: <Download size={16} />, label: "导出中心" },
+  { view: "stock", roles: ["operator", "manager"], icon: <Download size={16} />, label: "导出中心" },
   { view: "research", roles: ["operator", "manager"], icon: <ClipboardPen size={16} />, label: "二次调研" },
   { view: "listing", roles: ["operator", "manager"], icon: <FileCheck2 size={16} />, label: "刊登与观察" }
 ];
@@ -284,6 +286,7 @@ function App() {
   const [activeOperator, setActiveOperator] = useState("");
   const [availableStocking, setAvailableStocking] = useState<AvailableStockingItem[]>([]);
   const [exportPeriods, setExportPeriods] = useState<ExportPeriodSummary[]>([]);
+  const [operatorStocking, setOperatorStocking] = useState<OperatorStockingItem[]>([]);
   const [lastImports, setLastImports] = useState<ImportResults>({});
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [source1Sheet, setSource1Sheet] = useState("");
@@ -312,7 +315,6 @@ function App() {
   const [arrivalDate, setArrivalDate] = useState(previousDateText());
   const [arrivalPreview, setArrivalPreview] = useState<PlmArrivalPreview | null>(null);
   const [arrivalList, setArrivalList] = useState<ListState>(defaultListState);
-  const [stockList, setStockList] = useState<ListState>(defaultListState);
   const [selectedSelfClaimIds, setSelectedSelfClaimIds] = useState<string[]>([]);
   const [newProfile, setNewProfile] = useState<Pick<OperatorAssignmentProfile, "operator_name" | "key_site" | "key_category1" | "key_category2" | "assignment_priority" | "enabled">>({
     operator_name: "",
@@ -496,7 +498,7 @@ function App() {
 
   useEffect(() => {
     if (authChecked && authSession) refresh();
-  }, [authChecked, authSession]);
+  }, [activeRole, authChecked, authSession]);
 
   useEffect(() => {
     const token = getAuthToken();
@@ -594,6 +596,7 @@ function App() {
     setTasks([]);
     setAvailableStocking([]);
     setExportPeriods([]);
+    setOperatorStocking([]);
     setOperatorProfiles([]);
     setImportBatches([]);
   }
@@ -625,12 +628,16 @@ function App() {
         return fallback;
       }
     }
-    const [health, opportunityList, taskList, stockingList, exportPeriodList, profileList, batchList] = await Promise.all([
+    const managerStocking = activeRole === "manager" ? loadPart("导出中心", api.availableStocking, availableStocking) : Promise.resolve([] as AvailableStockingItem[]);
+    const managerPeriods = activeRole === "manager" ? loadPart("导出期数", api.exportPeriods, exportPeriods) : Promise.resolve([] as ExportPeriodSummary[]);
+    const ownStocking = activeRole === "operator" ? loadPart("备货申请", api.myStockingRequests, operatorStocking) : Promise.resolve([] as OperatorStockingItem[]);
+    const [health, opportunityList, taskList, stockingList, exportPeriodList, operatorStockingList, profileList, batchList] = await Promise.all([
       loadPart("健康检查", api.health, { status: "error", environment: "unknown" }),
       loadPart("机会池", () => api.opportunities(5000, undefined, isSuperAdmin), []),
       loadPart("待办", api.tasks, []),
-      loadPart("导出中心", api.availableStocking, availableStocking),
-      loadPart("导出期数", api.exportPeriods, exportPeriods),
+      managerStocking,
+      managerPeriods,
+      ownStocking,
       loadPart("人员配置", api.operatorProfiles, []),
       canManage ? loadPart("导入批次", api.importBatches, []) : Promise.resolve([])
     ]);
@@ -639,6 +646,7 @@ function App() {
     setTasks(taskList);
     setAvailableStocking(stockingList);
     setExportPeriods(exportPeriodList);
+    setOperatorStocking(operatorStockingList);
     setOperatorProfiles(profileList);
     setImportBatches(batchList);
     if (!options.silent || failures.length) {
@@ -854,7 +862,9 @@ function App() {
 
   const meta = detailGroup
     ? { title: "商品详情", desc: "查看主 SKU 下所有子 SKU、竞品链接、价格参考、源表字段和认领复核信息。" }
-    : viewMeta[activeView];
+    : activeView === "stock"
+      ? { title: roleStockingLabel(activeRole), desc: activeRole === "operator" ? "填写自己的备货申请或创建销售自选。" : "筛选并勾选已提交申请后导出。" }
+      : viewMeta[activeView];
 
   if (!authChecked) {
     return (
@@ -1013,7 +1023,7 @@ function App() {
                   {index > 0 && <span className="arrow">→</span>}
                   <button className={activeView === item.view ? "flow-step active" : "flow-step"} onClick={() => setActiveView(item.view)}>
                     {item.icon}
-                    {item.label}
+                    {item.view === "stock" ? roleStockingLabel(activeRole) : item.label}
                   </button>
                 </span>
               ))}
@@ -1022,7 +1032,7 @@ function App() {
           <span className="hub-note">当前为测试阶段：真实钉钉自动推送保持关闭</span>
         </nav>
 
-        <section className={["claim", "research", "listing"].includes(activeView) && !detailGroup ? "layout claim-full-layout" : "layout"}>
+        <section className={(["claim", "research", "listing"].includes(activeView) || activeView === "stock") && !detailGroup ? "layout claim-full-layout" : "layout"}>
           <div className="panel screen">
             <div className="screen-top">
               <div>
@@ -1186,11 +1196,12 @@ function App() {
               />
             )}
             {activeView === "stock" && (
-              <StockView
-                rows={availableStocking}
+              <StockingRequestView
+                role={activeRole}
+                operatorItems={operatorStocking}
+                managerRows={availableStocking}
                 periods={exportPeriods}
-                list={stockList}
-                setList={setStockList}
+                onReload={() => refresh({ silent: true })}
                 onStatus={setStatusMessage}
               />
             )}
@@ -1216,7 +1227,7 @@ function App() {
             </div>
           </div>
 
-          {activeView !== "claim" && activeView !== "research" && activeView !== "listing" && (
+          {activeView !== "claim" && activeView !== "research" && activeView !== "listing" && activeView !== "stock" && (
           <aside className="side">
             <section className="panel side-card">
               <h2>
@@ -4240,177 +4251,6 @@ function OperatorSubmissionSummary({ item, title = "运营提交内容" }: { ite
   );
 }
 
-function StockView({
-  rows,
-  periods,
-  list,
-  setList,
-  onStatus
-}: {
-  rows: AvailableStockingItem[];
-  periods: ExportPeriodSummary[];
-  list: ListState;
-  setList: Dispatch<SetStateAction<ListState>>;
-  onStatus: (message: string) => void;
-}) {
-  const [selectedPeriod, setSelectedPeriod] = useState("");
-  const [busyDownloads, setBusyDownloads] = useState<Record<string, boolean>>({});
-
-  useEffect(() => {
-    setSelectedPeriod((current) => selectExportPeriod(periods, current));
-  }, [periods]);
-
-  const periodRows = filterRowsForExportPeriod(rows, selectedPeriod);
-  const filteredRows = periodRows.filter((row) => stockItemMatches(row, list.query));
-  const pageRows = pageItems(filteredRows, list);
-
-  function viewPeriod(businessPeriod: string) {
-    setSelectedPeriod(businessPeriod);
-    setList((current) => ({ ...current, page: 1 }));
-  }
-
-  async function downloadPeriod(period: ExportPeriodSummary, exportType: "stocking" | "traceability") {
-    const busyKey = `${exportType}:${period.business_period}`;
-    setBusyDownloads((current) => ({ ...current, [busyKey]: true }));
-    try {
-      if (exportType === "stocking") {
-        await api.availableStockingExport(exportPeriodFilter(period.business_period));
-        onStatus(`已导出 ${period.business_period} 海外仓备货表`);
-      } else {
-        await api.traceabilityExport(exportPeriodFilter(period.business_period));
-        onStatus(`已导出 ${period.business_period} 中央字段追溯表`);
-      }
-    } catch (error) {
-      onStatus(error instanceof Error ? error.message : "导出失败");
-    } finally {
-      setBusyDownloads(({ [busyKey]: _, ...current }) => current);
-    }
-  }
-
-  return (
-    <div>
-      <div className="table-wrap export-periods-wrap">
-        <table className="export-periods-table">
-          <thead>
-            <tr>
-              <th>业务期数</th>
-              <th>海外仓备货表</th>
-              <th>中央字段追溯表</th>
-              <th>操作</th>
-            </tr>
-          </thead>
-          <tbody>
-            {!periods.length && (
-              <tr>
-                <td colSpan={4}>暂无可导出的业务期数</td>
-              </tr>
-            )}
-            {periods.map((period) => {
-              const stockingBusy = Boolean(busyDownloads[`stocking:${period.business_period}`]);
-              const traceabilityBusy = Boolean(busyDownloads[`traceability:${period.business_period}`]);
-              return (
-                <tr key={period.business_period} className={period.business_period === selectedPeriod ? "export-period-row active" : "export-period-row"}>
-                  <td>
-                    <button
-                      aria-current={period.business_period === selectedPeriod ? "true" : undefined}
-                      className="export-period-select"
-                      type="button"
-                      onClick={() => viewPeriod(period.business_period)}
-                    >
-                      {period.business_period}
-                    </button>
-                  </td>
-                  <td>{period.stocking_count}</td>
-                  <td>{period.traceability_count}</td>
-                  <td>
-                    <div className="export-period-actions">
-                      <button
-                        className="btn primary"
-                        type="button"
-                        disabled={period.stocking_count <= 0 || stockingBusy}
-                        onClick={() => void downloadPeriod(period, "stocking")}
-                      >
-                        <Download size={15} />
-                        导出海外仓表
-                      </button>
-                      <button
-                        className="btn"
-                        type="button"
-                        disabled={period.traceability_count <= 0 || traceabilityBusy}
-                        onClick={() => void downloadPeriod(period, "traceability")}
-                      >
-                        <Download size={15} />
-                        导出中央追溯表
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-      <ListControls label="导出中心" list={list} total={filteredRows.length} setList={(patch) => setList((current) => ({ ...current, ...patch }))} />
-      <div className="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>操作状态</th>
-              <th>时间</th>
-              <th>备货类型</th>
-              <th>选品数据源</th>
-              <th>运营</th>
-              <th>主 SKU</th>
-              <th>子 SKU</th>
-              <th>成本价</th>
-              <th>单个体积</th>
-              <th>备货单销</th>
-              <th>备货数量</th>
-              <th>备货国家</th>
-              <th>备货仓库</th>
-              <th>货值</th>
-              <th>体积</th>
-              <th>补货原因</th>
-            </tr>
-          </thead>
-          <tbody>
-            {!periodRows.length && (
-              <tr>
-                <td colSpan={16}>{selectedPeriod ? `${selectedPeriod} 暂无可导出记录` : "请选择业务期数"}</td>
-              </tr>
-            )}
-            {!!periodRows.length && !filteredRows.length && (
-              <tr>
-                <td colSpan={16}>{selectedPeriod} 当前搜索条件下没有可导出记录</td>
-              </tr>
-            )}
-            {pageRows.map((row) => (
-              <tr key={row.claim_record_id}>
-                <td>{row.operation_status}</td>
-                <td>{formatDate(row.time)}</td>
-                <td>{row.stocking_type}</td>
-                <td>{row.selection_source}</td>
-                <td>{row.salesperson_name || ""}</td>
-                <td>{row.main_sku}</td>
-                <td>{row.sub_sku}</td>
-                <td>{row.cost_price ?? ""}</td>
-                <td>{row.unit_volume ?? ""}</td>
-                <td>{formatBusinessNumber(row.claim_daily_sales)}</td>
-                <td>{row.quantity}</td>
-                <td>{row.stocking_country || ""}</td>
-                <td>{row.warehouse || ""}</td>
-                <td>{row.amount ?? ""}</td>
-                <td>{row.unit_volume == null ? "" : Number((row.unit_volume * row.quantity).toFixed(6))}</td>
-                <td>{row.replenishment_reason || ""}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
-}
-
 function ArrivalPreviewView({
   date,
   preview,
@@ -4664,24 +4504,6 @@ function filterOpportunitiesBySearch(items: Opportunity[], query: string) {
   return items.filter((item) => opportunitySearchText(item).includes(needle));
 }
 
-function stockItemMatches(row: AvailableStockingItem, query: string) {
-  const needle = normalizeSearch(query);
-  if (!needle) return true;
-  return normalizeSearch([
-    row.operation_status,
-    row.stocking_type,
-    row.selection_source,
-    row.salesperson_name,
-    row.main_sku,
-    row.sub_sku,
-    row.site,
-    row.stocking_country,
-    row.warehouse,
-    row.replenishment_reason,
-    row.review_status
-  ].join(" ")).includes(needle);
-}
-
 function arrivalItemMatches(row: PlmArrivalPreview["items"][number], query: string) {
   const needle = normalizeSearch(query);
   if (!needle) return true;
@@ -4931,10 +4753,6 @@ async function readEvidenceFile(file: File, opportunityId: string): Promise<Evid
     previewUrl: imageSrc(uploaded.url),
     url: uploaded.url
   };
-}
-
-function formatDate(value: string) {
-  return value ? value.slice(0, 10) : "";
 }
 
 function previousDateText() {

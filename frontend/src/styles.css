@@ -4600,3 +4600,302 @@ th {
     width: 100%;
   }
 }
+
+.stocking-workbench {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  overflow-x: hidden;
+}
+
+.stocking-operator {
+  overflow-y: auto;
+}
+
+.stocking-toolbar,
+.stocking-manager-toolbar,
+.stocking-periods,
+.stocking-form-actions,
+.stocking-dialog > header,
+.stocking-dialog > footer {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+}
+
+.stocking-toolbar {
+  flex: 0 0 auto;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.stocking-filters {
+  display: grid;
+  flex: 1;
+  gap: 8px;
+  grid-template-columns: minmax(220px, 2fr) repeat(3, minmax(130px, 1fr));
+}
+
+.stocking-group-list,
+.stocking-item-list {
+  display: grid;
+  gap: 12px;
+}
+
+.stocking-main-card,
+.stocking-item-card {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  min-width: 0;
+}
+
+.stocking-main-card > header {
+  align-items: center;
+  background: #f6f8fb;
+  display: flex;
+  justify-content: space-between;
+  padding: 10px 12px;
+}
+
+.stocking-main-card > header div,
+.stocking-item-context > div:first-child {
+  display: flex;
+  gap: 9px;
+}
+
+.stocking-main-card > header span,
+.stocking-item-context span,
+.stocking-branch-result span {
+  color: var(--muted);
+}
+
+.stocking-item-list {
+  padding: 12px;
+}
+
+.stocking-item-card {
+  display: grid;
+  grid-template-columns: minmax(230px, 0.7fr) minmax(0, 2fr);
+  overflow: hidden;
+}
+
+.stocking-item-context,
+.stocking-item-form {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  padding: 14px;
+}
+
+.stocking-item-context {
+  background: #fafafa;
+  border-right: 1px solid var(--line);
+}
+
+.stocking-decision-buttons,
+.stocking-form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.stocking-request-form-grid,
+.stocking-self-main {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.stocking-field {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.stocking-field > span {
+  color: rgba(0, 0, 0, 0.65);
+  font-size: 12px;
+}
+
+.stocking-field > small {
+  color: var(--red);
+}
+
+.stocking-field.wide {
+  grid-column: 1 / -1;
+}
+
+.stocking-volume-field {
+  display: grid;
+  gap: 7px;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.stocking-form-actions {
+  justify-content: flex-end;
+  margin-top: 12px;
+}
+
+.stocking-branch-result {
+  align-self: center;
+  display: grid;
+  gap: 5px;
+  min-height: 88px;
+  place-content: center start;
+}
+
+.stocking-overlay {
+  align-items: center;
+  background: rgba(0, 0, 0, 0.42);
+  display: flex;
+  inset: 0;
+  justify-content: center;
+  padding: 20px;
+  position: fixed;
+  z-index: 90;
+}
+
+.stocking-dialog {
+  background: #fff;
+  border-radius: 12px;
+  display: grid;
+  gap: 16px;
+  max-height: 90vh;
+  max-width: 920px;
+  overflow-y: auto;
+  padding: 20px;
+  width: 100%;
+}
+
+.stocking-dialog > header,
+.stocking-dialog > footer {
+  justify-content: space-between;
+}
+
+.stocking-dialog header p {
+  color: var(--muted);
+}
+
+.stocking-self-children {
+  display: grid;
+  gap: 8px;
+}
+
+.stocking-self-child {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: 1fr 1fr minmax(170px, 0.8fr) auto;
+}
+
+.stocking-periods {
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.stocking-period {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  display: grid;
+  gap: 2px;
+  padding: 7px 10px;
+  text-align: left;
+}
+
+.stocking-period span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.stocking-period.active {
+  border-color: #91caff;
+  background: var(--blue-soft);
+  color: #0958d9;
+}
+
+.stocking-manager-toolbar {
+  flex: 0 0 auto;
+  margin-bottom: 10px;
+  position: sticky;
+  top: 0;
+  z-index: 5;
+}
+
+.stocking-manager-toolbar > input {
+  min-width: 220px;
+}
+
+.stocking-manager-toolbar > select {
+  width: 150px;
+}
+
+.stocking-manager-toolbar > span {
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+.stocking-select-all,
+.stocking-row-check {
+  align-items: center;
+  display: inline-flex;
+  gap: 7px;
+  white-space: nowrap;
+}
+
+.stocking-select-all input,
+.stocking-row-check input {
+  min-height: 0;
+  width: auto;
+}
+
+.stocking-export-scroll {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  overflow: auto;
+}
+
+.stocking-export-table {
+  min-width: 1800px;
+}
+
+.stocking-export-table thead {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+}
+
+@media (max-width: 900px) {
+  .stocking-toolbar,
+  .stocking-manager-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .stocking-filters,
+  .stocking-item-card,
+  .stocking-request-form-grid,
+  .stocking-self-main,
+  .stocking-self-child {
+    grid-template-columns: 1fr;
+  }
+
+  .stocking-item-context {
+    border-bottom: 1px solid var(--line);
+    border-right: 0;
+  }
+
+  .stocking-manager-toolbar > input,
+  .stocking-manager-toolbar > select {
+    width: 100%;
+  }
+
+  .stocking-manager-toolbar > span {
+    margin-left: 0;
+  }
+}
