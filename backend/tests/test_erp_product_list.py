@@ -125,7 +125,12 @@ def test_fetch_product_volumes_uses_open_login_and_new_successful_product_list_e
 
     def fake_download_bytes(url: str) -> bytes:
         downloaded.append(url)
-        return _workbook_bytes([["GSHWAC225ND", "MAIN-1", 1, 1, 1, 10.1, 9.4, 1.4]])
+        return _workbook_bytes(
+            [
+                ["GSHWAC225ND", "MAIN-1", 1, 1, 1, 10.1, 9.4, 1.4],
+                ["MISSING", "MAIN-2", None, None, None, None, None, None],
+            ]
+        )
 
     monkeypatch.setattr(erp_product_list, "_post_json", fake_post_json)
     monkeypatch.setattr(erp_product_list, "_download_bytes", fake_download_bytes)
@@ -370,3 +375,64 @@ def test_runtime_failures_log_safe_phase_and_exception_class(monkeypatch, caplog
         "session-secret",
     ):
         assert secret not in caplog.text
+
+
+def test_fetch_product_volumes_rejects_a_requested_sku_subset_and_keeps_polling(monkeypatch) -> None:
+    list_calls = 0
+    downloaded: list[str] = []
+
+    def fake_post_json(url: str, body: dict, headers: dict | None = None) -> dict:
+        nonlocal list_calls
+        if url.endswith("/login"):
+            return {"success": True, "data": {"accessToken": "temporary-token"}}
+        if url.endswith("/product-list"):
+            return {"success": True, "data": "任务创建成功"}
+        list_calls += 1
+        if list_calls == 1:
+            return {"success": True, "data": {"list": []}}
+        rows = [
+            {
+                "id": "subset",
+                "source": "productList",
+                "status": "success",
+                "downloadUrl": "http://files.example/subset.xlsx",
+            }
+        ]
+        if list_calls >= 3:
+            rows.append(
+                {
+                    "id": "complete",
+                    "source": "productList",
+                    "status": "success",
+                    "downloadUrl": "http://files.example/complete.xlsx",
+                }
+            )
+        return {"success": True, "data": {"list": rows}}
+
+    def fake_download_bytes(url: str) -> bytes:
+        downloaded.append(url)
+        rows = [["SKU-A", "MAIN-A", 1, 1, 1, 2, 2, 2]]
+        if url.endswith("/complete.xlsx"):
+            rows.append(["SKU-B", "MAIN-B", 1, 1, 1, 3, 3, 3])
+        return _workbook_bytes(rows)
+
+    monkeypatch.setattr(erp_product_list, "_post_json", fake_post_json)
+    monkeypatch.setattr(erp_product_list, "_download_bytes", fake_download_bytes)
+    monkeypatch.setattr(erp_product_list.time, "sleep", lambda *_: None)
+
+    result = erp_product_list.fetch_product_volumes(
+        ["SKU-A", "SKU-B"],
+        Settings(
+            erp_login_url="http://erp.example/login",
+            erp_product_list_url="http://erp.example/product-list",
+            erp_download_list_url="http://erp.example/download-list",
+            erp_username="erp-user",
+            erp_password="erp-password",
+        ),
+    )
+
+    assert downloaded == [
+        "http://files.example/subset.xlsx",
+        "http://files.example/complete.xlsx",
+    ]
+    assert result == {"SKU-A": 0.000008, "SKU-B": 0.000027}

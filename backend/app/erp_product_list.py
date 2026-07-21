@@ -112,7 +112,7 @@ def fetch_product_volumes(skus: list[str], settings: Settings) -> dict[str, floa
         )
         _assert_business_ok(created, "ERP product list creation")
 
-        requested_skus = set(skus)
+        requested_skus = {sku.strip() for sku in skus if sku.strip()}
         for attempt in range(POLL_ATTEMPTS):
             phase = "poll"
             listing = _post_json(settings.erp_download_list_url, list_body, headers)
@@ -125,11 +125,7 @@ def fetch_product_volumes(skus: list[str], settings: Settings) -> dict[str, floa
                 content = _download_bytes(str(candidate["downloadUrl"]))
                 phase = "parse"
                 candidate_skus = _product_list_skus(content)
-                if (
-                    not candidate_skus
-                    or not candidate_skus.intersection(requested_skus)
-                    or candidate_skus.difference(requested_skus)
-                ):
+                if candidate_skus != requested_skus:
                     continue
                 return parse_product_list_workbook(content, skus)
             if attempt + 1 < POLL_ATTEMPTS:
