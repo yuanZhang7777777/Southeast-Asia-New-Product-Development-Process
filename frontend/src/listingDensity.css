@@ -1,0 +1,87 @@
+.listing-workbench-header {
+  gap: 8px;
+  padding-bottom: 8px;
+}
+
+.listing-workbench-results {
+  align-content: start;
+  gap: 8px;
+  padding: 8px 4px 12px 0;
+}
+
+.listing-filters,
+.listing-advanced-filters {
+  gap: 8px;
+}
+
+.listing-batchbar {
+  flex-wrap: nowrap;
+  gap: 10px;
+  padding: 8px 10px;
+}
+
+.listing-select-all input {
+  min-height: auto;
+  width: auto;
+}
+
+.listing-period-overview > input {
+  min-height: auto;
+  width: auto;
+}
+
+.listing-main-group-header {
+  gap: 8px;
+  padding: 8px 10px;
+}
+
+.listing-main-group-content {
+  gap: 8px;
+  padding: 8px;
+}
+
+.listing-item-header {
+  gap: 8px;
+  padding: 8px 10px;
+}
+
+.listing-period-notice {
+  gap: 8px;
+  padding: 9px 10px;
+}
+
+.listing-period-overview {
+  gap: 8px;
+  padding: 8px 10px;
+}
+
+.listing-period-metrics {
+  gap: 6px;
+}
+
+.listing-period-metrics > div {
+  padding: 6px 8px;
+}
+
+.listing-period-review {
+  gap: 8px;
+  padding: 8px 10px;
+}
+
+.listing-period-review textarea {
+  min-height: 44px;
+}
+
+@media (max-width: 900px) {
+  .listing-batchbar {
+    align-items: center;
+    flex-direction: row;
+  }
+}
+
+@media (max-width: 560px) {
+  .listing-batchbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}
