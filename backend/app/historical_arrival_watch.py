@@ -144,7 +144,7 @@ def save_state(path: Path, state: dict[str, Any]) -> None:
 
 def card_markdown(matches: list[dict[str, Any]]) -> str:
     return "\n".join(
-        f"{index}. {item['country']}｜{item['main_sku']}｜{item['child_sku']}｜当前销售：{item['salesperson_name']}｜仓库：{'、'.join(item['warehouses'])}"
+        f"{index}. {item['country']}｜{item['main_sku'] or '未提供/未知'}｜{item['child_sku']}｜当前销售：{item['salesperson_name']}｜仓库：{'、'.join(item['warehouses'])}"
         for index, item in enumerate(matches, start=1)
     )
 
@@ -169,7 +169,7 @@ def validate_day_state(day_state: Any, date_text: str) -> tuple[list[list[dict[s
         for match in card:
             if not isinstance(match, dict) or match.get("date") != date_text:
                 raise RuntimeError("historical arrival pilot state is invalid")
-            if any(not isinstance(match.get(key), str) or not match[key].strip() for key in ("country", "child_sku", "main_sku", "salesperson_name")):
+            if not isinstance(match.get("main_sku"), str) or any(not isinstance(match.get(key), str) or not match[key].strip() for key in ("country", "child_sku", "salesperson_name")):
                 raise RuntimeError("historical arrival pilot state is invalid")
             if not isinstance(match.get("warehouses"), list) or any(not isinstance(value, str) or not value.strip() for value in match["warehouses"]):
                 raise RuntimeError("historical arrival pilot state is invalid")
@@ -214,8 +214,10 @@ def run_pilot(
         dates = state.get("dates")
         if not isinstance(dates, dict):
             raise RuntimeError("historical arrival pilot state is invalid")
-        day_state = dates.get(date_text)
-        if day_state is not None:
+        if date_text in dates:
+            day_state = dates[date_text]
+            if day_state is None:
+                raise RuntimeError("historical arrival pilot state is invalid")
             cards, sent_indexes, completed = validate_day_state(day_state, date_text)
             if cards is not None:
                 matched_rows = sum(len(card) for card in cards)

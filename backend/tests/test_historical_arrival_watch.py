@@ -339,3 +339,41 @@ def test_run_pilot_writes_snapshot_before_calling_sender(monkeypatch) -> None:
             return {"deliverResults": [{"success": True}]}
 
     pilot.run_pilot("2026-07-21", settings=settings(), watchlist_path=watchlist, state_path=state, session=FakeSession([RoleMapping(name="receiver", role="super_admin", enabled=True, dingtalk_user_id="receiver-private-id")]), sender=StateCheckingSender())
+
+
+def test_run_pilot_rejects_present_null_day_state_before_download_or_send(monkeypatch) -> None:
+    tmp_path = pilot_test_path("pilot-null-day")
+    import app.historical_arrival_watch as pilot
+
+    state = tmp_path / "state.json"
+    state.write_text(json.dumps({"dates": {"2026-07-21": None}}), encoding="utf-8")
+    downloads = []
+    monkeypatch.setattr(pilot, "download_plm_export", lambda *_args, **_kwargs: downloads.append(True))
+    sender = FakeSender([])
+
+    with pytest.raises(RuntimeError, match="state"):
+        pilot.run_pilot("2026-07-21", settings=settings(), watchlist_path=tmp_path / "watchlist.json", state_path=state, session=FakeSession([]), sender=sender)
+    assert downloads == []
+    assert sender.cards == []
+
+
+def test_run_pilot_retries_empty_main_sku_from_snapshot(monkeypatch) -> None:
+    tmp_path = pilot_test_path("pilot-empty-main-sku")
+    import app.historical_arrival_watch as pilot
+
+    watchlist = tmp_path / "watchlist.json"
+    state = tmp_path / "state.json"
+    watchlist.write_text(json.dumps({"records": [watch_record("SKU")]}), encoding="utf-8")
+    item = preview_item("SKU")
+    item["main_sku"] = ""
+    monkeypatch.setattr(pilot, "download_plm_export", lambda *_args, **_kwargs: tmp_path / "plm.xlsx")
+    monkeypatch.setattr(pilot, "parse_plm_arrival_preview", lambda *_args, **_kwargs: {"items": [item]})
+    session = FakeSession([RoleMapping(name="receiver", role="super_admin", enabled=True, dingtalk_user_id="receiver-private-id")])
+
+    with pytest.raises(RuntimeError, match="delivery"):
+        pilot.run_pilot("2026-07-21", settings=settings(), watchlist_path=watchlist, state_path=state, session=session, sender=FakeSender([{"deliverResults": [{"success": False}]}]))
+    assert json.loads(state.read_text(encoding="utf-8"))["dates"]["2026-07-21"]["cards"][0][0]["main_sku"] == ""
+
+    retry = FakeSender([{"deliverResults": [{"success": True}]}])
+    pilot.run_pilot("2026-07-21", settings=settings(), watchlist_path=watchlist, state_path=state, session=session, sender=retry)
+    assert "未提供/未知" in retry.cards[0].sku_markdown
