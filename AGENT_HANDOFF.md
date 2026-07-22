@@ -1,6 +1,6 @@
 # Agent Handoff
 
-> Updated: 2026-07-22 15:40 Asia/Shanghai
+> Updated: 2026-07-22 16:32 Asia/Shanghai
 
 ## Start Here
 
@@ -93,7 +93,7 @@ Unique source evidence and the original Spec Kit bundle are frozen under `docs/a
 - Produce a read-only reconciliation report for the two historical workbooks before any importer: their live A:AR layout conflicts with the documented A:AO contract, 39 within-file duplicate-key groups contain field conflicts, one row is exactly duplicated across files, and 420 formula cells contain errors. Do not use last-row-wins or overwrite non-empty platform values.
 - After the cutover and reconciliation gate, run one controlled current-code PLM exact-match transition when a newly and formally exported development record reaches `waiting_arrival`; keep persistent automation and card sending disabled and require exactly one planned match before the one-time write.
 - Development does not currently provide all five ERP settings (`ERP_LOGIN_URL`, `ERP_PRODUCT_LIST_URL`, `ERP_DOWNLOAD_LIST_URL`, `ERP_USERNAME`, `ERP_PASSWORD`); the referenced asset document contains no uniquely locatable credentials. Real ERP volume lookup remains unaccepted until values are supplied through development `.env` only. The deployed fallback is manual dimensions with automatic volume calculation.
-- The real weekly Item endpoint, authentication method and unfiltered aggregate response sample are not provided. Do not guess them. The integration point is the existing `apply_week_metrics(...)` boundary.
+- The weekly Item source was already delivered in `E:\Project\hermes\group8_item_week_package_20260715.zip` and exists in the Hermes automation: FineBI report `35d21769f7a14a6191cdc4f4a211a04a`, widget `ItemID财务数据八部`, payload `config/finebi_payloads/itemid_finance.json`. The raw export contains Item, shop, order count, revenue and gross profit; the `< 7` filter is applied later by `build_item_workbook()`, not by the payload. Do not ask for a new endpoint or consume the filtered finished sheet. The open work is a small raw-export adapter into `apply_week_metrics(...)`, source snapshots, scheduling and retries.
 - Real scheduling, retry monitoring and operator message delivery for weekly Item metrics remain unconnected.
 - Production release of the unified branch is not approved.
 
