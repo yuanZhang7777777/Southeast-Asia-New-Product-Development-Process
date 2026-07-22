@@ -241,3 +241,101 @@ def test_validate_settings_requires_development_disabled_global_switches_and_tem
 
 
 
+
+
+def test_run_pilot_persists_snapshot_before_first_send_and_retries_from_it(monkeypatch) -> None:
+    tmp_path = pilot_test_path("pilot-snapshot")
+    import app.historical_arrival_watch as pilot
+
+    watchlist = tmp_path / "watchlist.json"
+    state = tmp_path / "state.json"
+    watchlist.write_text(json.dumps({"records": [watch_record(f"SKU-{index}") for index in range(21)]}), encoding="utf-8")
+    monkeypatch.setattr(pilot, "download_plm_export", lambda *_args, **_kwargs: tmp_path / "plm.xlsx")
+    monkeypatch.setattr(pilot, "parse_plm_arrival_preview", lambda *_args, **_kwargs: {"items": [preview_item(f"SKU-{index}") for index in range(21)]})
+    session = FakeSession([RoleMapping(name="receiver", role="super_admin", enabled=True, dingtalk_user_id="receiver-private-id")])
+    first = FakeSender([{"deliverResults": [{"success": True}]}, {"deliverResults": [{"success": False}]}])
+
+    with pytest.raises(RuntimeError, match="delivery"):
+        pilot.run_pilot("2026-07-21", settings=settings(), watchlist_path=watchlist, state_path=state, session=session, sender=first)
+    saved = json.loads(state.read_text(encoding="utf-8"))["dates"]["2026-07-21"]
+    assert [len(card) for card in saved["cards"]] == [20, 1]
+    assert saved["cards"][1][0]["child_sku"] == "SKU-9"
+
+    monkeypatch.setattr(pilot, "parse_plm_arrival_preview", lambda *_args, **_kwargs: {"items": [preview_item("LIVE-ONLY")]})
+    retry = FakeSender([{"deliverResults": [{"success": True}]}])
+    pilot.run_pilot("2026-07-21", settings=settings(), watchlist_path=watchlist, state_path=state, session=session, sender=retry)
+
+    assert "SKU-9" in retry.cards[0].sku_markdown
+    assert "LIVE-ONLY" not in retry.cards[0].sku_markdown
+
+
+@pytest.mark.parametrize("sent_cards", [[True], [-1], [2], [0, 0]])
+def test_run_pilot_rejects_malformed_sent_cards_before_send(monkeypatch, sent_cards: list[object]) -> None:
+    tmp_path = pilot_test_path(f"pilot-invalid-{str(sent_cards).replace(' ', '')}")
+    import app.historical_arrival_watch as pilot
+
+    watchlist = tmp_path / "watchlist.json"
+    state = tmp_path / "state.json"
+    watchlist.write_text(json.dumps({"records": [watch_record("SKU")]}), encoding="utf-8")
+    card = {"date": "2026-07-21", "country": "PH", "child_sku": "SKU", "main_sku": "MAIN-SKU", "salesperson_name": "sales", "warehouses": ["warehouse"], "historical_claimants": []}
+    state.write_text(json.dumps({"dates": {"2026-07-21": {"cards": [[card]], "sent_cards": sent_cards, "completed": False}}}), encoding="utf-8")
+    monkeypatch.setattr(pilot, "download_plm_export", lambda *_args, **_kwargs: tmp_path / "plm.xlsx")
+    monkeypatch.setattr(pilot, "parse_plm_arrival_preview", lambda *_args, **_kwargs: {"items": [preview_item("SKU")]})
+    sender = FakeSender([])
+
+    with pytest.raises(RuntimeError, match="state"):
+        pilot.run_pilot("2026-07-21", settings=settings(), watchlist_path=watchlist, state_path=state, session=FakeSession([]), sender=sender)
+    assert sender.cards == []
+
+
+def test_run_pilot_rejects_legacy_sent_cards_without_snapshot_before_send(monkeypatch) -> None:
+    tmp_path = pilot_test_path("pilot-legacy-state")
+    import app.historical_arrival_watch as pilot
+
+    watchlist = tmp_path / "watchlist.json"
+    state = tmp_path / "state.json"
+    watchlist.write_text(json.dumps({"records": [watch_record("SKU")]}), encoding="utf-8")
+    state.write_text(json.dumps({"dates": {"2026-07-21": {"sent_cards": [0], "completed": False}}}), encoding="utf-8")
+    monkeypatch.setattr(pilot, "download_plm_export", lambda *_args, **_kwargs: tmp_path / "plm.xlsx")
+    monkeypatch.setattr(pilot, "parse_plm_arrival_preview", lambda *_args, **_kwargs: {"items": [preview_item("SKU")]})
+    sender = FakeSender([])
+
+    with pytest.raises(RuntimeError, match="state"):
+        pilot.run_pilot("2026-07-21", settings=settings(), watchlist_path=watchlist, state_path=state, session=FakeSession([]), sender=sender)
+    assert sender.cards == []
+
+
+def test_run_pilot_rejects_non_boolean_completed_before_completed_shortcut(monkeypatch) -> None:
+    tmp_path = pilot_test_path("pilot-invalid-completed")
+    import app.historical_arrival_watch as pilot
+
+    watchlist = tmp_path / "watchlist.json"
+    state = tmp_path / "state.json"
+    watchlist.write_text(json.dumps({"records": [watch_record("SKU")]}), encoding="utf-8")
+    card = {"date": "2026-07-21", "country": "PH", "child_sku": "SKU", "main_sku": "MAIN-SKU", "salesperson_name": "sales", "warehouses": ["warehouse"], "historical_claimants": []}
+    state.write_text(json.dumps({"dates": {"2026-07-21": {"cards": [[card]], "sent_cards": [], "completed": 1}}}), encoding="utf-8")
+    monkeypatch.setattr(pilot, "download_plm_export", lambda *_args, **_kwargs: tmp_path / "plm.xlsx")
+    monkeypatch.setattr(pilot, "parse_plm_arrival_preview", lambda *_args, **_kwargs: {"items": [preview_item("SKU")]})
+
+    with pytest.raises(RuntimeError, match="state"):
+        pilot.run_pilot("2026-07-21", settings=settings(), watchlist_path=watchlist, state_path=state, session=FakeSession([]), sender=FakeSender([]))
+
+def test_run_pilot_writes_snapshot_before_calling_sender(monkeypatch) -> None:
+    tmp_path = pilot_test_path("pilot-snapshot-before-send")
+    import app.historical_arrival_watch as pilot
+
+    watchlist = tmp_path / "watchlist.json"
+    state = tmp_path / "state.json"
+    watchlist.write_text(json.dumps({"records": [watch_record("SKU")]}), encoding="utf-8")
+    monkeypatch.setattr(pilot, "download_plm_export", lambda *_args, **_kwargs: tmp_path / "plm.xlsx")
+    monkeypatch.setattr(pilot, "parse_plm_arrival_preview", lambda *_args, **_kwargs: {"items": [preview_item("SKU")]})
+
+    class StateCheckingSender:
+        def send_arrival_card(self, _card):
+            saved = json.loads(state.read_text(encoding="utf-8"))["dates"]["2026-07-21"]
+            assert saved["sent_cards"] == []
+            assert saved["completed"] is False
+            assert saved["cards"][0][0]["child_sku"] == "SKU"
+            return {"deliverResults": [{"success": True}]}
+
+    pilot.run_pilot("2026-07-21", settings=settings(), watchlist_path=watchlist, state_path=state, session=FakeSession([RoleMapping(name="receiver", role="super_admin", enabled=True, dingtalk_user_id="receiver-private-id")]), sender=StateCheckingSender())

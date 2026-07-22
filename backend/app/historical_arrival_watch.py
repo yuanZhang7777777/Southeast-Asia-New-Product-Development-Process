@@ -149,6 +149,39 @@ def card_markdown(matches: list[dict[str, Any]]) -> str:
     )
 
 
+def validate_day_state(day_state: Any, date_text: str) -> tuple[list[list[dict[str, Any]]] | None, set[int], bool]:
+    if not isinstance(day_state, dict):
+        raise RuntimeError("historical arrival pilot state is invalid")
+    sent_cards = day_state.get("sent_cards")
+    completed = day_state.get("completed")
+    if not isinstance(sent_cards, list) or type(completed) is not bool:
+        raise RuntimeError("historical arrival pilot state is invalid")
+    cards = day_state.get("cards")
+    if cards is None:
+        if sent_cards or completed:
+            raise RuntimeError("historical arrival pilot state is invalid")
+        return None, set(), completed
+    if not isinstance(cards, list):
+        raise RuntimeError("historical arrival pilot state is invalid")
+    for card in cards:
+        if not isinstance(card, list) or not card or len(card) > CARD_SIZE:
+            raise RuntimeError("historical arrival pilot state is invalid")
+        for match in card:
+            if not isinstance(match, dict) or match.get("date") != date_text:
+                raise RuntimeError("historical arrival pilot state is invalid")
+            if any(not isinstance(match.get(key), str) or not match[key].strip() for key in ("country", "child_sku", "main_sku", "salesperson_name")):
+                raise RuntimeError("historical arrival pilot state is invalid")
+            if not isinstance(match.get("warehouses"), list) or any(not isinstance(value, str) or not value.strip() for value in match["warehouses"]):
+                raise RuntimeError("historical arrival pilot state is invalid")
+            if not isinstance(match.get("historical_claimants"), list) or any(not isinstance(value, str) for value in match["historical_claimants"]):
+                raise RuntimeError("historical arrival pilot state is invalid")
+    if any(type(index) is not int or index < 0 or index >= len(cards) for index in sent_cards) or len(set(sent_cards)) != len(sent_cards):
+        raise RuntimeError("historical arrival pilot state is invalid")
+    sent_indexes = set(sent_cards)
+    if completed and sent_indexes != set(range(len(cards))):
+        raise RuntimeError("historical arrival pilot state is invalid")
+    return cards, sent_indexes, completed
+
 def pilot_sender(settings: Settings) -> DingTalkCardSender:
     return DingTalkCardSender(
         DingTalkCardConfig(
@@ -173,70 +206,58 @@ def run_pilot(
     sender: DingTalkCardSender | Any | None = None,
 ) -> dict[str, Any]:
     validate_settings(settings)
-    workbook = download_plm_export(
-        date_text,
-        base_url=settings.plm_base_url,
-        username=settings.plm_username,
-        password=settings.plm_password,
-        bloc_name=settings.plm_bloc_name,
-        cache_dir=settings.plm_cache_dir,
-        force=force_download,
-    )
     if download_only:
+        download_plm_export(date_text, base_url=settings.plm_base_url, username=settings.plm_username, password=settings.plm_password, bloc_name=settings.plm_bloc_name, cache_dir=settings.plm_cache_dir, force=force_download)
         return {"date": date_text, "downloaded": True}
+    if not preview_only:
+        state = load_json(state_path, {"dates": {}})
+        dates = state.get("dates")
+        if not isinstance(dates, dict):
+            raise RuntimeError("historical arrival pilot state is invalid")
+        day_state = dates.get(date_text)
+        if day_state is not None:
+            cards, sent_indexes, completed = validate_day_state(day_state, date_text)
+            if cards is not None:
+                matched_rows = sum(len(card) for card in cards)
+                if completed:
+                    return {"date": date_text, "matched_rows": matched_rows, "sent_cards": 0, "completed": True}
+                return send_snapshot(date_text, settings, state_path, state, day_state, cards, sent_indexes, session, sender)
+    workbook = download_plm_export(date_text, base_url=settings.plm_base_url, username=settings.plm_username, password=settings.plm_password, bloc_name=settings.plm_bloc_name, cache_dir=settings.plm_cache_dir, force=force_download)
     watchlist = load_json(watchlist_path, {})
     matches = build_matches(date_text, parse_plm_arrival_preview(workbook, date_text, settings.plm_bloc_name), watchlist)
     if preview_only:
         return {"date": date_text, "matched_rows": len(matches), "preview_only": True}
-    state = load_json(state_path, {"dates": {}})
-    dates = state.setdefault("dates", {})
-    if not isinstance(dates, dict):
-        raise RuntimeError("historical arrival pilot state is invalid")
-    day_state = dates.setdefault(date_text, {"sent_cards": [], "completed": False})
-    if not isinstance(day_state, dict) or not isinstance(day_state.get("sent_cards"), list):
-        raise RuntimeError("historical arrival pilot state is invalid")
-    if day_state.get("completed"):
-        return {"date": date_text, "matched_rows": len(matches), "sent_cards": 0, "completed": True}
-    chunks = chunk_matches(matches)
-    if not chunks:
+    cards = chunk_matches(matches)
+    day_state = {"cards": cards, "sent_cards": [], "completed": False}
+    dates[date_text] = day_state
+    save_state(state_path, state)
+    if not cards:
         day_state["completed"] = True
         save_state(state_path, state)
         return {"date": date_text, "matched_rows": 0, "sent_cards": 0, "completed": True}
+    return send_snapshot(date_text, settings, state_path, state, day_state, cards, set(), session, sender)
+
+
+def send_snapshot(
+    date_text: str, settings: Settings, state_path: Path, state: dict[str, Any], day_state: dict[str, Any], cards: list[list[dict[str, Any]]], sent_indexes: set[int], session: Session | None, sender: DingTalkCardSender | Any | None,
+) -> dict[str, Any]:
     if session is None:
         raise ValueError("historical arrival pilot requires a read-only database session")
     receiver = resolve_receiver(session)
     active_sender = sender or pilot_sender(settings)
     sent_cards = 0
-    sent_indexes = {int(index) for index in day_state["sent_cards"] if isinstance(index, int)}
-    for card_index, rows in enumerate(chunks):
+    for card_index, rows in enumerate(cards):
         if card_index in sent_indexes:
             continue
-        response = active_sender.send_arrival_card(
-            ArrivalCard(
-                receiver_dingtalk_user_id=receiver,
-                arrival_date=date_text,
-                salesperson_name="历史关注试运行",
-                new_items=[],
-                old_items=[],
-                action_url=dingtalk_action_url(settings, "supervisor"),
-                out_track_id=f"historical-arrival-pilot-{date_text}-{card_index}",
-                card_title="历史关注 SKU 到货试运行",
-                summary_text=f"{date_text} 历史关注 SKU 到货，共 {len(rows)} 条",
-                left_label="本卡条数",
-                left_count=len(rows),
-                action_text="进入主管处理",
-                sku_markdown=card_markdown(rows),
-            )
-        )
+        response = active_sender.send_arrival_card(ArrivalCard(receiver_dingtalk_user_id=receiver, arrival_date=date_text, salesperson_name="历史关注试运行", new_items=[], old_items=[], action_url=dingtalk_action_url(settings, "supervisor"), out_track_id=f"historical-arrival-pilot-{date_text}-{card_index}", card_title="历史关注 SKU 到货试运行", summary_text=f"{date_text} 历史关注 SKU 到货，共 {len(rows)} 条", left_label="本卡条数", left_count=len(rows), action_text="进入主管处理", sku_markdown=card_markdown(rows)))
         validate_delivery_response(response)
         day_state["sent_cards"].append(card_index)
-        day_state["sent_cards"] = sorted(set(day_state["sent_cards"]))
+        day_state["sent_cards"].sort()
         save_state(state_path, state)
         sent_cards += 1
     day_state["completed"] = True
     save_state(state_path, state)
-    return {"date": date_text, "matched_rows": len(matches), "sent_cards": sent_cards, "completed": True, "receiver": masked_dingtalk_user_id(receiver)}
-
+    return {"date": date_text, "matched_rows": sum(len(card) for card in cards), "sent_cards": sent_cards, "completed": True, "receiver": masked_dingtalk_user_id(receiver)}
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Development-only historical arrival card pilot.")
@@ -275,5 +296,4 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
 
