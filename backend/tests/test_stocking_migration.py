@@ -21,7 +21,15 @@ def test_stocking_workflow_columns_are_migration_safe() -> None:
     export_row = Base.metadata.tables["export_row"]
 
     assert {"inventory_available", "needs_stocking", "stocking_decision_updated_at"} <= set(claim.c.keys())
-    assert {"claim_record_id", "application_date", "submitted_at", "unit_volume_source"} <= set(request.c.keys())
+    assert {
+        "claim_record_id",
+        "application_date",
+        "submitted_at",
+        "unit_volume_source",
+        "length_cm",
+        "width_cm",
+        "height_cm",
+    } <= set(request.c.keys())
     assert {
         "stocking_request_id",
         "application_date",
@@ -43,6 +51,9 @@ def test_stocking_workflow_columns_are_migration_safe() -> None:
             request.c.application_date,
             request.c.submitted_at,
             request.c.unit_volume_source,
+            request.c.length_cm,
+            request.c.width_cm,
+            request.c.height_cm,
             export_row.c.stocking_request_id,
             export_row.c.application_date,
             export_row.c.stocking_type,
@@ -66,8 +77,8 @@ def test_stocking_workflow_migration_is_the_single_head() -> None:
     config.set_main_option("script_location", str(Path(__file__).resolve().parents[1] / "alembic"))
     script = ScriptDirectory.from_config(config)
 
-    assert script.get_heads() == ["d0e2f3a4b567"]
-    assert script.get_revision("d0e2f3a4b567").down_revision == "c9d1e2f3a456"
+    assert script.get_heads() == ["e1f2a3b4c678"]
+    assert script.get_revision("e1f2a3b4c678").down_revision == "d0e2f3a4b567"
 
 
 def test_sqlite_upgrade_from_previous_head_preserves_legacy_rows(tmp_path: Path, monkeypatch) -> None:
@@ -130,7 +141,7 @@ def test_sqlite_upgrade_from_previous_head_preserves_legacy_rows(tmp_path: Path,
             revision = connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
         assert request == ("request-legacy", None)
         assert export_row == ("row-legacy", None, None)
-        assert revision == "d0e2f3a4b567"
+        assert revision == "e1f2a3b4c678"
     finally:
         engine.dispose()
         get_settings.cache_clear()

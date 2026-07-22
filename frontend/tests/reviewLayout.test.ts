@@ -14,6 +14,20 @@ test("主管复核右栏固定在滚动区域顶部", () => {
   assert.match(rule, /overflow-y:\s*auto/);
 });
 
+test("主管复核展开右栏时左侧列表保持顶部紧凑排列", () => {
+  const rule = styles.match(/\.review-layout\s*>\s*\.group-list\s*\{([^}]*)\}/)?.[1] || "";
+
+  assert.match(rule, /align-content:\s*start/);
+  assert.match(rule, /align-self:\s*start/);
+});
+
+test("主管复核使用自身右栏时不再显示通用主管统计侧栏", () => {
+  const sideCondition = app.slice(app.indexOf('{activeView !== "claim"'), app.indexOf('<aside className="side">'));
+
+  assert.match(sideCondition, /activeView !== "review"/);
+  assert.match(app, /\["claim", "research", "listing", "review"\]\.includes\(activeView\)/);
+});
+
 test("主管复核按认领类型筛选并提供批量通过和拒绝", () => {
   assert.match(app, /运营认领待复核/);
   assert.match(app, /运营不认领待复核/);

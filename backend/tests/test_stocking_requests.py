@@ -534,6 +534,72 @@ def test_stocking_volume_source_tracks_erp_and_manual_updates() -> None:
     assert invalid.status_code == 422
 
 
+def test_manual_dimensions_are_persisted_and_compute_unit_volume() -> None:
+    token = login_operator("Operator A")
+    request_id = create_self_stocking_request(token)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    saved = client.put(
+        f"/stocking/requests/{request_id}",
+        headers=headers,
+        json={"length_cm": 20, "width_cm": 10, "height_cm": 5},
+    )
+    partial = client.put(
+        f"/stocking/requests/{request_id}",
+        headers=headers,
+        json={"length_cm": 25, "width_cm": None, "height_cm": 5},
+    )
+    invalid = client.put(
+        f"/stocking/requests/{request_id}",
+        headers=headers,
+        json={"length_cm": -1},
+    )
+
+    assert saved.status_code == 200
+    assert saved.json()["length_cm"] == 20
+    assert saved.json()["width_cm"] == 10
+    assert saved.json()["height_cm"] == 5
+    assert saved.json()["unit_volume"] == 0.001
+    assert saved.json()["unit_volume_source"] == "manual"
+    assert partial.status_code == 200
+    assert partial.json()["unit_volume"] is None
+    assert invalid.status_code == 422
+
+
+def test_operator_stocking_list_order_does_not_follow_updated_at() -> None:
+    with SessionLocal() as db:
+        opportunities = [
+            models.NewProductOpportunity(
+                source_type="sales_self_selection",
+                source_file="平台销售自选",
+                source_sheet="销售自选20260722",
+                source_row=index,
+                main_sku="MAIN-STABLE",
+                sub_sku=sub_sku,
+            )
+            for index, sub_sku in enumerate(("SUB-B", "SUB-A"), start=2)
+        ]
+        db.add_all(opportunities)
+        db.flush()
+        db.add_all([
+            models.SalesClaimForecast(
+                opportunity_id=opportunity.id,
+                salesperson_name="Operator A",
+                source_column="platform",
+                downstream_status="stocking_paused",
+                inventory_available=False,
+                needs_stocking=False,
+                updated_at=datetime(2026, 7, 22, 12, 0, index),
+            )
+            for index, opportunity in enumerate(opportunities)
+        ])
+        db.commit()
+
+        rows = services.list_operator_stocking_items(db, "Operator A")
+
+    assert [row.sub_sku for row in rows] == ["SUB-A", "SUB-B"]
+
+
 def test_stocking_update_rejects_non_finite_numbers_without_persisting() -> None:
     token = login_operator("Operator A")
     request_id = create_self_stocking_request(token)
@@ -625,6 +691,63 @@ def test_decision_can_resume_paused_claim_and_volume_preview_uses_erp_resolver(m
     assert resumed.json()["downstream_status"] == "waiting_stocking_request"
     assert [item["status"] for item in preview.json()] == ["resolved", "manual_required"]
     assert preview.json()[0]["unit_volume"] == 0.000132916
+
+
+def test_unchanged_submitted_request_update_is_a_noop() -> None:
+    token = login_operator("Operator A")
+    request_id = create_self_stocking_request(token)
+    headers = {"Authorization": f"Bearer {token}"}
+    updated = client.put(
+        f"/stocking/requests/{request_id}",
+        headers=headers,
+        json={
+            "application_date": "2026-07-22",
+            "request_type": "initial",
+            "cost_price": 12.5,
+            "length_cm": 20,
+            "width_cm": 10,
+            "height_cm": 5,
+            "unit_volume": 0.001,
+            "unit_volume_source": "manual",
+            "daily_sales": 2,
+            "country": "PH",
+            "warehouse": None,
+            "reason": None,
+        },
+    )
+    submitted = client.post(
+        f"/stocking/requests/{request_id}/submit",
+        headers=headers,
+    )
+    with SessionLocal() as db:
+        audit_count = db.query(models.AuditLog).filter_by(action="stocking.request_updated").count()
+
+    unchanged = client.put(
+        f"/stocking/requests/{request_id}",
+        headers=headers,
+        json={
+            "application_date": "2026-07-22",
+            "request_type": "initial",
+            "cost_price": 12.5,
+            "length_cm": 20,
+            "width_cm": 10,
+            "height_cm": 5,
+            "unit_volume": 0.001,
+            "unit_volume_source": "manual",
+            "daily_sales": 2,
+            "country": "PH",
+            "warehouse": None,
+            "reason": None,
+        },
+    )
+
+    assert updated.status_code == submitted.status_code == unchanged.status_code == 200
+    assert unchanged.json()["status"] == "submitted"
+    with SessionLocal() as db:
+        request = db.get(models.StockingRequest, request_id)
+        claim = db.get(models.SalesClaimForecast, request.claim_record_id)
+        assert claim.downstream_status == "waiting_export"
+        assert db.query(models.AuditLog).filter_by(action="stocking.request_updated").count() == audit_count
 
 
 def create_self_stocking_request(token: str) -> str:

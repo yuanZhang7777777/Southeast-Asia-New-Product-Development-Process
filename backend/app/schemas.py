@@ -300,6 +300,9 @@ class StockingRequestUpdate(BaseModel):
     application_date: date | None = None
     request_type: Literal["initial", "replenishment"] | None = None
     cost_price: float | None = None
+    length_cm: float | None = None
+    width_cm: float | None = None
+    height_cm: float | None = None
     unit_volume: float | None = None
     unit_volume_source: Literal["erp", "manual"] | None = None
     daily_sales: float | None = None
@@ -309,13 +312,20 @@ class StockingRequestUpdate(BaseModel):
 
     model_config = {"extra": "forbid", "allow_inf_nan": False}
 
-    @field_validator("cost_price", "unit_volume", "daily_sales", mode="before")
+    @field_validator("cost_price", "length_cm", "width_cm", "height_cm", "unit_volume", "daily_sales", mode="before")
     @classmethod
     def replace_non_finite_input(cls, value: object) -> object:
         try:
             return "__non_finite__" if value is not None and not math.isfinite(float(value)) else value
         except (TypeError, ValueError):
             return value
+
+    @field_validator("length_cm", "width_cm", "height_cm")
+    @classmethod
+    def dimensions_must_be_positive(cls, value: float | None) -> float | None:
+        if value is not None and value <= 0:
+            raise ValueError("dimensions must be greater than zero")
+        return value
 
     @field_validator("request_type")
     @classmethod
@@ -376,6 +386,9 @@ class StockingRequestRead(BaseModel):
     main_sku: str | None
     sub_sku: str | None
     cost_price: float | None
+    length_cm: float | None
+    width_cm: float | None
+    height_cm: float | None
     unit_volume: float | None
     daily_sales: float | None
     quantity: int

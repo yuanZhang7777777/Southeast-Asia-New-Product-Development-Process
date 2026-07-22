@@ -93,4 +93,5 @@ test("product board labels the new stocking states and keeps ordinary waiting li
   assert.equal(productBoardStatusLabel("waiting_export"), "待导出");
   assert.equal(productBoardStatusLabel("stocking_paused"), "暂不推进");
   assert.equal(productBoardStatusLabel("waiting_listing"), "待刊登");
+  assert.equal(productBoardStatusLabel("listing_observation"), "刊登观察中");
 });

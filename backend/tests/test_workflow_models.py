@@ -125,11 +125,11 @@ def test_listing_observation_tables_replace_legacy_four_week_summary() -> None:
     assert "uq_item_observation_period_start" in period_constraints
 
 
-def test_listing_observation_migration_is_the_single_head() -> None:
+def test_alembic_has_single_current_head() -> None:
     config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
     config.set_main_option("script_location", str(Path(__file__).resolve().parents[1] / "alembic"))
 
-    assert ScriptDirectory.from_config(config).get_current_head() == "d0e2f3a4b567"
+    assert ScriptDirectory.from_config(config).get_current_head() == "e1f2a3b4c678"
 
 
 def test_stocking_claim_statuses_are_explicit() -> None:

@@ -12,6 +12,8 @@ import {
   stockingFormVisible,
   stockingQuantity,
   stockingSourceLabel,
+  stockingUnitVolume,
+  StockingDraftSaveQueue,
   visibleStockingRequestIds,
   validateStockingDraft
 } from "../src/stockingRequests.ts";
@@ -87,6 +89,9 @@ test("不完整申请和 ERP 体积查询失败仍可保存为部分草稿", () 
     application_date: null,
     request_type: "initial",
     cost_price: 12.5,
+    length_cm: null,
+    width_cm: null,
+    height_cm: null,
     unit_volume: null,
     unit_volume_source: null,
     daily_sales: null,
@@ -143,11 +148,94 @@ test("stock 导航按角色显示同一路由的业务名称", () => {
 
 test("运营申请按主 SKU 分组", () => {
   const groups = groupStockingItems([
-    { claim_record_id: "c1", main_sku: "MAIN-A", sub_sku: "A-1" },
+    { claim_record_id: "c3", main_sku: "MAIN-B", sub_sku: "B-1" },
     { claim_record_id: "c2", main_sku: "MAIN-A", sub_sku: "A-2" },
-    { claim_record_id: "c3", main_sku: "MAIN-B", sub_sku: "B-1" }
+    { claim_record_id: "c1", main_sku: "MAIN-A", sub_sku: "A-1" }
   ]);
   assert.deepEqual(groups.map((group) => [group.main_sku, group.items.length]), [["MAIN-A", 2], ["MAIN-B", 1]]);
+  assert.deepEqual(groups[0].items.map((item) => item.sub_sku), ["A-1", "A-2"]);
+});
+
+test("运营可填写厘米长宽高并自动换算单个体积", () => {
+  assert.equal(stockingUnitVolume(20, 10, 5), 0.001);
+  assert.equal(stockingUnitVolume(20, null, 5), null);
+  assert.equal(stockingUnitVolume(0, 10, 5), null);
+
+  assert.deepEqual(buildStockingDraftUpdate({
+    application_date: "2026-07-22",
+    request_type: "initial",
+    cost_price: 10,
+    length_cm: 20,
+    width_cm: 10,
+    height_cm: 5,
+    unit_volume: 0.001,
+    unit_volume_source: "manual",
+    daily_sales: 2,
+    country: "泰国"
+  }), {
+    application_date: "2026-07-22",
+    request_type: "initial",
+    cost_price: 10,
+    length_cm: 20,
+    width_cm: 10,
+    height_cm: 5,
+    unit_volume: 0.001,
+    unit_volume_source: "manual",
+    daily_sales: 2,
+    country: "泰国",
+    warehouse: null,
+    reason: null
+  });
+});
+
+test("备货草稿离开输入框自动保存且体积只读展示", () => {
+  assert.match(view, /autoSaveRequest/);
+  assert.match(view, /onBlur=.*autoSaveRequest\(item\)/);
+  assert.match(view, /长（cm）/);
+  assert.match(view, /宽（cm）/);
+  assert.match(view, /高（cm）/);
+  assert.match(view, /单个体积（自动）/);
+  assert.match(view, /readOnly/);
+});
+
+test("自动保存跳过未修改草稿并按申请串行保存最新版本", async () => {
+  const queue = new StockingDraftSaveQueue<number>();
+  const started: number[] = [];
+  const states: string[] = [];
+  const resolvers: Array<() => void> = [];
+  const save = async (payload: number) => {
+    started.push(payload);
+    await new Promise<void>((resolve) => resolvers.push(resolve));
+  };
+
+  assert.equal(await queue.enqueue("request-a", 0, save), false);
+  queue.markDirty("request-a");
+  const first = queue.enqueue("request-a", 1, save, (state) => states.push(state));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  queue.markDirty("request-a");
+  const second = queue.enqueue("request-a", 2, save, (state) => states.push(state));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.deepEqual(started, [1]);
+  resolvers.shift()?.();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(started, [1, 2]);
+  resolvers.shift()?.();
+  assert.equal(await first, true);
+  assert.equal(await second, true);
+  assert.equal(queue.isDirty("request-a"), false);
+  assert.deepEqual(states, ["saving", "dirty", "saving", "saved"]);
+  assert.match(view, /saveQueue\.markDirty\(requestId\)/);
+  assert.match(view, /saveQueue\.enqueue\(/);
+});
+
+test("备货条目上下排列，左侧信息不会被表单高度撑出大块空白", () => {
+  const cardRules = styles.match(/\.stocking-item-card\s*\{([^}]*)\}/g) || [];
+  const cardRule = cardRules.at(-1) || "";
+  const contextRule = styles.match(/\.stocking-item-context\s*\{([^}]*)\}/)?.[1] || "";
+  assert.match(cardRule, /display:\s*block/);
+  assert.doesNotMatch(cardRule, /grid-template-columns/);
+  assert.match(contextRule, /border-bottom/);
 });
 
 test("主管仅提交勾选且去重的申请编号", () => {

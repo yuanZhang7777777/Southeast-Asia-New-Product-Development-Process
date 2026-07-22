@@ -30,6 +30,7 @@ export const productBoardStatusMeta: Record<string, { label: string; klass: stri
   waiting_arrival: { label: "待到货", klass: "blue" },
   waiting_secondary_research: { label: "待二次调研", klass: "amber" },
   waiting_listing: { label: "待刊登", klass: "blue" },
+  listing_observation: { label: "刊登观察中", klass: "blue" },
   confirmed_not_claim: { label: "已确认不认领", klass: "gray" },
   disabled: { label: "已停用", klass: "gray" }
 };

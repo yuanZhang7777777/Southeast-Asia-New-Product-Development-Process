@@ -58,6 +58,9 @@ export type StockingRequest = {
   main_sku?: string | null;
   sub_sku?: string | null;
   cost_price?: number | null;
+  length_cm?: number | null;
+  width_cm?: number | null;
+  height_cm?: number | null;
   unit_volume?: number | null;
   daily_sales?: number | null;
   quantity: number;
@@ -92,6 +95,9 @@ export type StockingRequestUpdate = {
   application_date?: string | null;
   request_type?: "initial" | "replenishment";
   cost_price?: number | null;
+  length_cm?: number | null;
+  width_cm?: number | null;
+  height_cm?: number | null;
   unit_volume?: number | null;
   unit_volume_source?: "erp" | "manual" | null;
   daily_sales?: number | null;

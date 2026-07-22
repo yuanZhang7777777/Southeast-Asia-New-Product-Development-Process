@@ -1754,6 +1754,11 @@ textarea {
   gap: 10px;
 }
 
+.review-layout > .group-list {
+  align-content: start;
+  align-self: start;
+}
+
 .review-layout > .form-card {
   position: sticky;
   top: 0;
@@ -4676,8 +4681,7 @@ th {
 }
 
 .stocking-item-card {
-  display: grid;
-  grid-template-columns: minmax(230px, 0.7fr) minmax(0, 2fr);
+  display: block;
   overflow: hidden;
 }
 
@@ -4691,7 +4695,7 @@ th {
 
 .stocking-item-context {
   background: #fafafa;
-  border-right: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
 }
 
 .stocking-decision-buttons,
@@ -4699,6 +4703,17 @@ th {
   display: flex;
   flex-wrap: wrap;
   gap: 7px;
+}
+
+.stocking-request-editor {
+  display: grid;
+  gap: 12px;
+}
+
+.stocking-autosave-state {
+  align-self: center;
+  color: var(--muted);
+  margin-right: auto;
 }
 
 .stocking-request-form-grid,

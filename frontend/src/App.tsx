@@ -1047,7 +1047,7 @@ function App() {
           <span className="hub-note">当前为测试阶段：真实钉钉自动推送保持关闭</span>
         </nav>
 
-        <section className={(["claim", "research", "listing"].includes(activeView) || activeView === "stock") && !detailGroup ? "layout claim-full-layout" : "layout"}>
+        <section className={(["claim", "research", "listing", "review"].includes(activeView) || activeView === "stock") && !detailGroup ? "layout claim-full-layout" : "layout"}>
           <div className="panel screen">
             <div className="screen-top">
               <div>
@@ -1242,7 +1242,7 @@ function App() {
             </div>
           </div>
 
-          {activeView !== "claim" && activeView !== "research" && activeView !== "listing" && activeView !== "stock" && (
+          {activeView !== "claim" && activeView !== "research" && activeView !== "listing" && activeView !== "stock" && activeView !== "review" && (
           <aside className="side">
             <section className="panel side-card">
               <h2>

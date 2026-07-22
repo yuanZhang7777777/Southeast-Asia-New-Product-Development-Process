@@ -18,8 +18,10 @@ import {
   stockingFormVisible,
   stockingSourceLabel,
   stockingStatusLabel,
+  stockingUnitVolume,
   StockingDraft,
   StockingDraftErrors,
+  StockingDraftSaveQueue,
   validateStockingDraft,
   visibleStockingRequestIds
 } from "./stockingRequests";
@@ -49,11 +51,13 @@ function OperatorStockingView({ operatorItems, onReload, onStatus }: Props) {
   const [filters, setFilters] = useState({ query: "", status: "", source: "", country: "" });
   const [drafts, setDrafts] = useState<Record<string, StockingDraft>>({});
   const [errors, setErrors] = useState<Record<string, StockingDraftErrors>>({});
+  const [saveState, setSaveState] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState("");
+  const [saveQueue] = useState(() => new StockingDraftSaveQueue<StockingRequestUpdate>());
 
   useEffect(() => {
-    setDrafts((current) => Object.fromEntries(operatorItems.flatMap((item) => item.request_id ? [[item.request_id, current[item.request_id] || requestDraft(item)]] : [])));
-  }, [operatorItems]);
+    setDrafts((current) => Object.fromEntries(operatorItems.flatMap((item) => item.request_id ? [[item.request_id, saveQueue.isDirty(item.request_id) ? current[item.request_id] || requestDraft(item) : requestDraft(item)]] : [])));
+  }, [operatorItems, saveQueue]);
 
   const filteredItems = useMemo(() => operatorItems.filter((item) => {
     const needle = filters.query.trim().toLowerCase();
@@ -63,7 +67,7 @@ function OperatorStockingView({ operatorItems, onReload, onStatus }: Props) {
     return !needle || `${item.main_sku} ${item.main_sku_name || ""} ${item.sub_sku} ${item.sub_sku_name || ""}`.toLowerCase().includes(needle);
   }), [filters, operatorItems]);
 
-  const groups = groupStockingItems(filteredItems).sort((left, right) => groupPriority(left.items) - groupPriority(right.items));
+  const groups = groupStockingItems(filteredItems);
   const statuses = unique(operatorItems.flatMap((item) => [item.downstream_status, item.request?.status || ""]));
   const sources = unique(operatorItems.map((item) => item.source_type));
   const countries = unique(operatorItems.map(operatorStockingCountry));
@@ -114,9 +118,34 @@ function OperatorStockingView({ operatorItems, onReload, onStatus }: Props) {
     await run(`decision:${item.claim_record_id}`, "备货决策已更新", () => api.updateStockingDecision(item.claim_record_id, decisionPayload(decision)));
   }
 
+  function reflectSaveState(requestId: string, state: "saving" | "saved" | "dirty" | "error", savedLabel: string) {
+    const label = {
+      saving: "保存中…",
+      saved: savedLabel,
+      dirty: "待自动保存",
+      error: "自动保存失败"
+    }[state];
+    setSaveState((current) => ({ ...current, [requestId]: label }));
+  }
+
   function patchDraft(requestId: string, patch: Partial<StockingDraft>) {
     setDrafts((current) => ({ ...current, [requestId]: { ...current[requestId], ...patch } }));
+    saveQueue.markDirty(requestId);
     setErrors((current) => ({ ...current, [requestId]: {} }));
+    setSaveState((current) => ({ ...current, [requestId]: "待自动保存" }));
+  }
+
+  function patchDimension(requestId: string, field: "length_cm" | "width_cm" | "height_cm", value: number | null) {
+    const draft = drafts[requestId];
+    if (!draft) return;
+    const dimensions = {
+      length_cm: draft.length_cm ?? null,
+      width_cm: draft.width_cm ?? null,
+      height_cm: draft.height_cm ?? null,
+      [field]: value
+    };
+    const unitVolume = stockingUnitVolume(dimensions.length_cm, dimensions.width_cm, dimensions.height_cm);
+    patchDraft(requestId, { ...dimensions, unit_volume: unitVolume, unit_volume_source: unitVolume === null ? null : "manual" });
   }
 
   async function previewVolume(item: OperatorStockingItem) {
@@ -124,7 +153,7 @@ function OperatorStockingView({ operatorItems, onReload, onStatus }: Props) {
     setBusy(`volume:${item.request_id}`);
     try {
       const [preview] = await api.volumePreview([item.sub_sku]);
-      patchDraft(item.request_id, { unit_volume: preview?.unit_volume || null, unit_volume_source: preview?.status === "resolved" ? "erp" : null });
+      patchDraft(item.request_id, { length_cm: null, width_cm: null, height_cm: null, unit_volume: preview?.unit_volume || null, unit_volume_source: preview?.status === "resolved" ? "erp" : null });
       onStatus(!preview || preview.status === "manual_required" ? "未取得体积，请手填" : "体积查询完成");
     } catch (error) {
       onStatus(error instanceof Error ? error.message : "未取得体积，请手填");
@@ -141,6 +170,23 @@ function OperatorStockingView({ operatorItems, onReload, onStatus }: Props) {
     return buildStockingDraftUpdate(draft);
   }
 
+  async function autoSaveRequest(item: OperatorStockingItem) {
+    const requestId = item.request_id;
+    if (!requestId || item.request?.status === "exported") return;
+    const draft = drafts[requestId];
+    if (!draft) return;
+    try {
+      await saveQueue.enqueue(
+        requestId,
+        buildStockingDraftUpdate(draft),
+        (payload) => api.updateStockingRequest(requestId, payload),
+        (state) => reflectSaveState(requestId, state, "已自动保存")
+      );
+    } catch (error) {
+      onStatus(error instanceof Error ? error.message : "自动保存失败");
+    }
+  }
+
   async function saveRequest(item: OperatorStockingItem, submit: boolean) {
     if (!item.request_id) return;
     const draft = drafts[item.request_id];
@@ -152,7 +198,12 @@ function OperatorStockingView({ operatorItems, onReload, onStatus }: Props) {
       return;
     }
     await run(`${submit ? "submit" : "save"}:${item.request_id}`, submit ? "申请已提交" : "草稿已保存", async () => {
-      await api.updateStockingRequest(item.request_id!, payload);
+      await saveQueue.enqueue(
+        item.request_id!,
+        payload,
+        (nextPayload) => api.updateStockingRequest(item.request_id!, nextPayload),
+        (state) => reflectSaveState(item.request_id!, state, "草稿已保存")
+      );
       if (submit) await api.submitStockingRequest(item.request_id!);
     });
   }
@@ -206,20 +257,23 @@ function OperatorStockingView({ operatorItems, onReload, onStatus }: Props) {
                     </div>
                     <div className="stocking-item-form">
                       {showRequest && draft ? (
-                        <>
+                        <div className="stocking-request-editor" onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) void autoSaveRequest(item); }}>
                           <div className="stocking-request-form-grid">
                             <Field label="申请日期" error={itemErrors.application_date}><input type="date" value={draft.application_date} disabled={readOnly} onChange={(event) => patchDraft(item.request_id!, { application_date: event.target.value })} /></Field>
                             <Field label="备货类型"><select value={draft.request_type} disabled={readOnly} onChange={(event) => patchDraft(item.request_id!, { request_type: event.target.value as StockingDraft["request_type"] })}><option value="initial">首次备货</option><option value="replenishment">补货</option></select></Field>
                             <Field label="成本价" error={itemErrors.cost_price}><input type="number" min="0" step="0.01" value={draft.cost_price ?? ""} disabled={readOnly} onChange={(event) => patchDraft(item.request_id!, { cost_price: numberOrNull(event.target.value) })} /></Field>
-                            <Field label="单个体积（m³）" error={itemErrors.unit_volume}><div className="stocking-volume-field"><input type="number" min="0" step="0.000001" value={draft.unit_volume ?? ""} disabled={readOnly} onChange={(event) => { const unitVolume = numberOrNull(event.target.value); patchDraft(item.request_id!, { unit_volume: unitVolume, unit_volume_source: unitVolume === null ? null : "manual" }); }} /><button className="btn small" type="button" disabled={readOnly || busy !== ""} onClick={() => void previewVolume(item)}><RefreshCw size={13} />ERP 查询</button></div></Field>
+                            <Field label="长（cm）"><input type="number" min="0" step="0.01" value={draft.length_cm ?? ""} disabled={readOnly} onChange={(event) => patchDimension(item.request_id!, "length_cm", numberOrNull(event.target.value))} /></Field>
+                            <Field label="宽（cm）"><input type="number" min="0" step="0.01" value={draft.width_cm ?? ""} disabled={readOnly} onChange={(event) => patchDimension(item.request_id!, "width_cm", numberOrNull(event.target.value))} /></Field>
+                            <Field label="高（cm）"><input type="number" min="0" step="0.01" value={draft.height_cm ?? ""} disabled={readOnly} onChange={(event) => patchDimension(item.request_id!, "height_cm", numberOrNull(event.target.value))} /></Field>
+                            <Field label="单个体积（自动）" error={itemErrors.unit_volume}><div className="stocking-volume-field"><input type="number" value={draft.unit_volume ?? ""} readOnly /><button className="btn small" type="button" disabled={readOnly || busy !== ""} onClick={() => void previewVolume(item)}><RefreshCw size={13} />ERP 查询</button></div></Field>
                             <Field label="备货单销" error={itemErrors.daily_sales}><input type="number" min="0" step="0.01" value={draft.daily_sales ?? ""} disabled={readOnly} onChange={(event) => patchDraft(item.request_id!, { daily_sales: numberOrNull(event.target.value) })} /></Field>
                             <Field label="备货数量（自动）"><input value={draft.daily_sales ? stockingQuantity(draft.daily_sales) : ""} readOnly /></Field>
                             <Field label="备货国家" error={itemErrors.country}><input value={draft.country} disabled={readOnly} onChange={(event) => patchDraft(item.request_id!, { country: event.target.value })} /></Field>
                             <Field label="备货仓库（可空）"><input value={draft.warehouse || ""} disabled={readOnly} onChange={(event) => patchDraft(item.request_id!, { warehouse: event.target.value })} /></Field>
                             {draft.request_type === "replenishment" && <Field label="补货原因" error={itemErrors.reason} wide><textarea value={draft.reason || ""} disabled={readOnly} onChange={(event) => patchDraft(item.request_id!, { reason: event.target.value })} /></Field>}
                           </div>
-                          {!readOnly && <div className="stocking-form-actions"><button className="btn" disabled={busy !== ""} onClick={() => void saveRequest(item, false)}><Save size={14} />保存草稿</button><button className="btn primary" disabled={busy !== ""} onClick={() => void saveRequest(item, true)}><Send size={14} />提交申请</button></div>}
-                        </>
+                          {!readOnly && <div className="stocking-form-actions"><small className="stocking-autosave-state">{saveState[item.request_id!] || "离开当前申请时自动保存"}</small><button className="btn" disabled={busy !== ""} onClick={() => void saveRequest(item, false)}><Save size={14} />保存草稿</button><button className="btn primary" disabled={busy !== ""} onClick={() => void saveRequest(item, true)}><Send size={14} />提交申请</button></div>}
+                        </div>
                       ) : (
                         <div className="stocking-branch-result">
                           <b>{item.downstream_status === "waiting_listing" ? "直接进入待刊登" : item.downstream_status === "stocking_paused" ? "暂不推进" : "请选择备货决策"}</b>
@@ -362,6 +416,9 @@ function requestDraft(item: OperatorStockingItem): StockingDraft {
     application_date: item.request?.application_date || new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Shanghai" }),
     request_type: item.request?.request_type || "initial",
     cost_price: item.request?.cost_price ?? null,
+    length_cm: item.request?.length_cm ?? null,
+    width_cm: item.request?.width_cm ?? null,
+    height_cm: item.request?.height_cm ?? null,
     unit_volume: item.request?.unit_volume ?? null,
     unit_volume_source: item.request?.unit_volume_source ?? null,
     daily_sales: item.request?.daily_sales ?? null,
@@ -385,10 +442,6 @@ function numberOrNull(value: string) {
   return value === "" ? null : Number(value);
 }
 
-
-function groupPriority(items: OperatorStockingItem[]) {
-  return items.some((item) => ["waiting_stocking_request", "draft"].includes(item.request?.status || item.downstream_status)) ? 0 : 1;
-}
 
 function unique(values: string[]) {
   return Array.from(new Set(values.filter(Boolean)));

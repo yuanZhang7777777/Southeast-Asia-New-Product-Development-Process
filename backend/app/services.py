@@ -2520,7 +2520,11 @@ def list_operator_stocking_items(db: Session, operator_name: str) -> list[schema
             models.SalesClaimForecast.salesperson_name == operator_name,
             models.SalesClaimForecast.source_column == "platform",
         )
-        .order_by(models.SalesClaimForecast.updated_at.desc())
+        .order_by(
+            models.NewProductOpportunity.main_sku.asc(),
+            models.NewProductOpportunity.sub_sku.asc(),
+            models.SalesClaimForecast.created_at.asc(),
+        )
     )
     result = []
     for claim, opportunity in rows:
@@ -2547,20 +2551,48 @@ def update_stocking_request(
     if request.status == "exported":
         raise RuntimeError("exported stocking request is read-only")
     before_status = request.status
+    dimension_fields = {"length_cm", "width_cm", "height_cm"}
+    changed_fields = set(payload.model_fields_set)
+    if dimension_fields & changed_fields:
+        changed_fields.update({"unit_volume", "unit_volume_source"})
     before = {
         field: value.isoformat() if isinstance((value := getattr(request, field)), (date, datetime)) else value
-        for field in payload.model_fields_set
+        for field in changed_fields
     }
     for field, value in payload.model_dump(exclude_unset=True).items():
         if field in {"country", "warehouse", "reason"}:
             value = _clean_text(value)
         setattr(request, field, value)
-    if "unit_volume" in payload.model_fields_set:
+    dimension_values = (
+        request.length_cm,
+        request.width_cm,
+        request.height_cm,
+    )
+    if dimension_fields & payload.model_fields_set and (
+        any(value is not None for value in dimension_values) or "unit_volume" not in payload.model_fields_set
+    ):
+        if all(value is not None for value in dimension_values):
+            request.unit_volume = round(request.length_cm * request.width_cm * request.height_cm / 1_000_000, 12)
+            request.unit_volume_source = "manual"
+        else:
+            request.unit_volume = None
+            request.unit_volume_source = None
+    elif "unit_volume" in payload.model_fields_set:
         request.unit_volume_source = None if request.unit_volume is None else payload.unit_volume_source or "manual"
     elif "unit_volume_source" in payload.model_fields_set:
         request.unit_volume_source = payload.unit_volume_source if request.unit_volume is not None else None
     _recalculate_stocking_request(request)
-    if before_status == "submitted" and payload.model_fields_set:
+    after = {
+        field: value.isoformat() if isinstance((value := getattr(request, field)), (date, datetime)) else value
+        for field in changed_fields
+    }
+    semantic_changed_fields = {
+        field for field in changed_fields if before[field] != after[field]
+    }
+    if not semantic_changed_fields:
+        db.flush()
+        return request
+    if before_status == "submitted":
         request.status = "draft"
         claim.downstream_status = CLAIM_WAITING_STOCKING_REQUEST
     audit(
@@ -2571,13 +2603,8 @@ def update_stocking_request(
         {
             "status_before": before_status,
             "status_after": request.status,
-            "before": before,
-            "after": {
-                field: value.isoformat()
-                if isinstance((value := getattr(request, field)), (date, datetime))
-                else value
-                for field in payload.model_fields_set
-            },
+            "before": {field: before[field] for field in semantic_changed_fields},
+            "after": {field: after[field] for field in semantic_changed_fields},
         },
         operator_name,
         actor_user_id,
