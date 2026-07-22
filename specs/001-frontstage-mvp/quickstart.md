@@ -114,9 +114,9 @@ Expected outcome:
 
 ## Latest Validation Results
 
-Recorded on 2026-07-21 Asia/Shanghai for the uncommitted local candidate:
+Recorded on 2026-07-22 Asia/Shanghai for commit `36a9ae9` deployed to the isolated development environment:
 
-- Backend: 37 focused stocking-request/export/PLM/demo tests passed. A broader run also passed 49 tests before the Windows sandbox denied pytest's own `tmp_path`; final full regression remains required in the development Linux container.
-- Frontend: all 16 test files passed when run directly, 122 tests total; `npx tsc --noEmit` passed. Local Vite build is blocked by the same Windows child-process sandbox and must run in Linux.
-- Alembic: source has one head, `d0e2f3a4b567`; development still runs `a8d4e6f7b901` until an approved deployment.
-- Development deployment, Compose validation, migration read-back and browser UAT remain pending. Production was not touched.
+- Backend: the local regression and an isolated Linux run on the development server each passed all 305 tests; the server run used temporary SQLite with external integrations disabled.
+- Frontend: all 16 test files passed, 122 tests total; `npx tsc --noEmit` and the Vite production build passed.
+- Alembic: source and development database have one head, `d0e2f3a4b567`.
+- Compose config/build, migration read-back, internal/external health, image import and recent-log checks passed. Browser read-only UAT covered operator stocking/self-selection, manager selected export and existing listing history with zero console errors. Controlled-data write UAT remains open. Production was not connected or changed.

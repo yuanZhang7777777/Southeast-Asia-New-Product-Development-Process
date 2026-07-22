@@ -1,6 +1,6 @@
 # Agent Handoff
 
-> Updated: 2026-07-21 23:18 Asia/Shanghai
+> Updated: 2026-07-22 09:55 Asia/Shanghai
 
 ## Start Here
 
@@ -21,7 +21,7 @@ Do not infer current behavior from old plans or prototypes when they conflict wi
 | Environment | Address | Current code | Rule |
 |---|---|---|---|
 | Production | `http://101.132.26.138:8080` | `b373d65` | In use. Do not connect, deploy or restart without a separately approved non-working-time release window. |
-| Development | `http://139.224.2.166:18081` | `c017c5d` | Unified branch validation and business UAT only. SSH alias: `hz-new-product-dev`. |
+| Development | `http://139.224.2.166:18081` | `36a9ae9` | Unified branch validation and business UAT only. SSH alias: `hz-new-product-dev`. |
 
 Production database is `workflow_prod_20260715`; development database is `workflow_dev_20260715`. Databases, Redis, uploads, volumes, ports and environment variables are isolated. Never commit passwords, tokens, cookies, private keys or `.env` files.
 
@@ -29,9 +29,9 @@ PLM arrival endpoint settings and credentials are stored separately in both serv
 
 `caigen-arrival-notifier` is a separate service co-hosted with the workflow production environment on `101.132.26.138`. It is the only sender of arrival cards; neither workflow environment sends arrival cards. The workflow still owns its elimination-summary reminder. Development must not receive a persistent feed from the production notifier. Its current arrival/summary card template is selected through `DINGTALK_ARRIVAL_CARD_TEMPLATE_ID`; never commit the environment value.
 
-## Local Candidate Awaiting Development Deployment
+## Development Deployment: `36a9ae9`
 
-The current working tree contains the locally reviewed sales-self and formal stocking-request candidate, but it is **not committed or yet the code running at `139.224.2.166:18081`**:
+The reviewed sales-self and formal stocking-request candidate is committed as `36a9ae9` and is the code running at `139.224.2.166:18081`:
 
 - Review approval creates one draft per “operator + child SKU”; operators save and submit their own requests, and managers export only explicitly selected submitted requests.
 - Sales-self supports three branches: existing stock goes directly to listing, stocking needed creates a request, and no stock/no stocking enters recoverable `stocking_paused`.
@@ -40,19 +40,19 @@ The current working tree contains the locally reviewed sales-self and formal sto
 - PLM only advances `waiting_arrival` claims backed by a real `stocking_available` `ExportRow`, matched by salesperson, child SKU and the immutable exported-country snapshot.
 - Dual-role UI refreshes always use the currently selected role: the SSE connection is recreated after a manager/operator switch, and generation guards prevent older requests from overwriting the new role state.
 - The demo seed covers draft, submitted/waiting-export, direct-listing and paused branches and can safely remove its own downstream export/arrival/listing data before reseeding.
-- Source migration head is `d0e2f3a4b567`; the running development database remains on the baseline recorded below until an approved deployment occurs.
-- Local candidate verification: 37 focused backend tests passed; all 16 frontend test files passed with 122 tests; `tsc --noEmit` passed; source Alembic head is `d0e2f3a4b567`. The final full backend rerun, Linux Vite build, Compose validation, migration read-back and browser UAT must be recorded after the permission-blocked development deployment resumes; do not substitute projected test counts.
+- Source and development database migration head are both `d0e2f3a4b567`; the upgrade chain from `a8d4e6f7b901` was applied only after the development backup succeeded.
+- Verification: local and isolated development-server Linux backend regressions each passed all 305 tests; all 16 frontend files passed 122 tests; `tsc --noEmit`, Vite build, Compose build/config, migration read-back, internal/external health, image import and recent-log checks passed. Browser read-only UAT verified operator stocking/self-selection, manager selected export and existing listing history with zero console errors. Write-path business UAT remains open.
 
 ## Verified Baseline
 
 - Branch: `lxc/integrated-workflow`.
 - Merge commit: `1aae41ef6b5b86ba086b43f1e61ae0b9ee3c7d83` with parents `fbf574c` and `a4a61e4`.
-- Backend: full branch regression `252 passed`; secondary-research and listing-observation focused regression `10 passed`.
-- Frontend: deployed branch `104 passed` and production build passed; the listing workbench, product lifecycle archive, export-period selection and claim UAT usability fixes are available in development.
+- Backend: local and isolated Linux full branch regressions both `305 passed`; the Linux run used temporary SQLite with external integrations disabled.
+- Frontend: all 16 test files passed with `122 passed`; TypeScript and Vite production build passed. Stocking request, selected export, listing workbench and product lifecycle archive are available in development.
 - TypeScript/Vite production build: passed.
-- Alembic: one head, `a8d4e6f7b901`.
-- Development deployment: public and server-side health returned `environment=development`; real browser smoke verified the workbench defaults to `待刊登`, `全部` exposes all visible records, main-SKU groups fully collapse, only the result pane scrolls vertically, no result-pane horizontal overflow remains, and future periods stay hidden even if development test data already contains them.
-- Commit `dd8edd0` rebuilt API and frontend; the follow-up `c017c5d` rebuilt frontend only. Worker, scheduler, PostgreSQL, Redis and reverse-proxy container IDs were preserved with `RestartCount=0`; production was not connected, restarted or deployed.
+- Alembic: source and development database are at the single head `d0e2f3a4b567`.
+- Development deployment: public and server-side health returned `environment=development`; real browser smoke verified manager/operator navigation, the operator stocking request and sales-self dialog, manager selected export, existing listing history and zero console errors.
+- Commit `36a9ae9` rebuilt API, worker, scheduler and frontend; reverse-proxy was recreated to bind the new frontend, while PostgreSQL and Redis kept their original container IDs and `RestartCount=0`. Backup: `/opt/hengzhe-new-product-dev/backups/workflow_dev_before_36a9ae9_20260722_094053.sql.gz`; rollback directory: `/opt/hengzhe-new-product-dev/app.previous_20260722_094053`. Production was not connected, restarted or deployed.
 - Real development PLM E2E processed 2,263 rows and 22 salesperson groups, proved same-file idempotency, and completed one controlled Item through secondary research, listing, weeks 1-5 and the week-4 summary. Arrival cards were a one-time test redirected to 刘学城; persistent autosend remains disabled.
 - Development UAT uses the existing 刘学城 account: `super_admin` supplies the supervisor and operator views, and an enabled Thailand operator profile is linked to the same user. No extra test account is required for the first single-person UAT.
 - `GZMO075` now has three development-only simulated arrival records and is the prepared 0/3 secondary-research UAT group for 刘学城. Database backup before this setup: `/opt/hengzhe-new-product-dev/backups/workflow_dev_before_secondary_uat_20260721_114310.sql.gz`. No real PLM job or DingTalk delivery was triggered.
@@ -79,10 +79,23 @@ Later stage:
 
 Detailed field, state, permission and API rules stay in the confirmed requirement and architecture documents; do not duplicate them here.
 
+## Documentation Consolidation Requested
+
+The user asked the next task to reduce documentation maintenance instead of continuing to update every historical file. Start with a read-only reference audit and propose an exact keep / merge / archive / delete list before removing files.
+
+Active core candidates to preserve are:
+
+- `README.md` and `AGENT_HANDOFF.md` for onboarding and runtime handoff.
+- `docs/2026-07-09-已确认需求记录.md` for confirmed business rules.
+- `docs/02-功能实现状态.md` and `docs/20-项目推进总控.md` for current implementation and delivery priority.
+- `docs/06-部署与服务器准备.md` for environment, deployment and rollback facts.
+- `docs/README.md` as the documentation index.
+
+Do not assume the numbered documents, `ai-plans/` or historical `superpowers/` artifacts are all disposable. First find code/doc backlinks and unique business facts; consolidate unique current facts into the active core, then present evidence for each proposed archive or deletion. This documentation-governance work must not touch production or alter business data.
 ## Still Open
 
-- Operators and supervisors must complete development-environment UAT with controlled data.
-- Development does not currently provide all five ERP settings (`ERP_LOGIN_URL`, `ERP_PRODUCT_LIST_URL`, `ERP_DOWNLOAD_LIST_URL`, `ERP_USERNAME`, `ERP_PASSWORD`). Real ERP volume lookup cannot be accepted until they are supplied through server `.env` only; manual-volume fallback remains testable.
+- 刘学城 must complete the write-path development UAT for sales-self branches, operator save/submit, manager selected export and later-stage transitions; deployment and read-only UI smoke are complete.
+- Development does not currently provide all five ERP settings (`ERP_LOGIN_URL`, `ERP_PRODUCT_LIST_URL`, `ERP_DOWNLOAD_LIST_URL`, `ERP_USERNAME`, `ERP_PASSWORD`); the referenced asset document contains no uniquely locatable credentials. Real ERP volume lookup remains unaccepted until values are supplied through development `.env` only; manual-volume fallback is deployed and testable.
 - The real weekly Item endpoint, authentication method and unfiltered aggregate response sample are not provided. Do not guess them. The integration point is the existing `apply_week_metrics(...)` boundary.
 - Real scheduling, retry monitoring and operator message delivery for weekly Item metrics remain unconnected.
 - Production release of the unified branch is not approved.

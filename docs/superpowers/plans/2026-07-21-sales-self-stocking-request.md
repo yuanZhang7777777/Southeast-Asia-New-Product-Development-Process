@@ -1,7 +1,7 @@
 # 销售自选与备货申请 Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
-> **Execution status (2026-07-21):** Tasks 1-5 and the demo-seed extension are implemented in the local candidate and independently reviewed. Final local regression/document reconciliation is in progress; Git commit, development deployment, Linux build/Compose validation, migration read-back and browser UAT remain pending because the current session lacks Git/SSH approval. The running development version remains `c017c5d`; the source migration head is `d0e2f3a4b567`. The historical checkboxes below are retained as an execution recipe and are not the authoritative live status.
+> **Execution status (2026-07-22):** Tasks 1-6 and the demo-seed extension are implemented and committed as `36a9ae9`, then deployed only to `http://139.224.2.166:18081`. Local backend 305 tests, frontend 122 tests, TypeScript/Vite, and isolated development-server Linux backend 305 tests passed; Compose build, migration to `d0e2f3a4b567`, internal/external health, logs and manager/operator read-only browser UAT passed. Write-path business UAT and real ERP lookup remain pending because the development `.env` lacks the five exact ERP settings; manual-volume fallback is available. Production `b373d65` was not connected or changed. The historical checkboxes below remain an execution recipe rather than authoritative live status.
 
 **Goal:** 补齐运营正式备货申请，并让销售自选商品按库存/备货决策进入导出、待刊登或暂不推进。
 
