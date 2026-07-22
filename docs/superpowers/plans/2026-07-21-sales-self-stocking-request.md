@@ -1,6 +1,7 @@
 # 销售自选与备货申请 Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **Execution status (2026-07-21):** Tasks 1-5 and the demo-seed extension are implemented in the local candidate and independently reviewed. Final local regression/document reconciliation is in progress; Git commit, development deployment, Linux build/Compose validation, migration read-back and browser UAT remain pending because the current session lacks Git/SSH approval. The running development version remains `c017c5d`; the source migration head is `d0e2f3a4b567`. The historical checkboxes below are retained as an execution recipe and are not the authoritative live status.
 
 **Goal:** 补齐运营正式备货申请，并让销售自选商品按库存/备货决策进入导出、待刊登或暂不推进。
 
@@ -20,6 +21,7 @@
 - 主管只导出勾选的 `submitted` 申请；成功后转 `exported/waiting_arrival`，失败不推进，已导出不重复导出。
 - PLM 只匹配存在 `ExportRow` 的 `waiting_arrival` claim；销售自选无需 ReviewRecord。
 - ERP token 仅在内存；业务头使用 `Authorization: <accessToken>`，不得使用 Bearer/Cookie/固定 token；所有 URL 与凭据走环境变量。
+- 开发环境必须通过 `ERP_LOGIN_URL`、`ERP_PRODUCT_LIST_URL`、`ERP_DOWNLOAD_LIST_URL`、`ERP_USERNAME`、`ERP_PASSWORD` 提供真实查询配置；任一缺失或尺寸不完整时降级为运营手填体积，不得猜接口或把凭据写入仓库。
 - 不提交密码、token、Cookie、`.env`、测试下载产物或生产数据。
 
 ---

@@ -160,6 +160,29 @@ def test_plm_processing_exact_match_ignores_non_platform_claim(tmp_path: Path) -
         assert db.query(models.PlmArrivalItem).filter_by(matched_claim_record_id=claim.id).count() == 0
 
 
+def test_plm_processing_matches_the_country_snapshotted_at_export() -> None:
+    with SessionLocal() as db:
+        opportunity, claim = make_claim("SUB-A", "PH", SALES_A, "waiting_arrival")
+        db.add_all([opportunity, claim])
+        db.flush()
+        add_stocking_export(db, opportunity, claim)
+        opportunity.country = "TH"
+        opportunity.site = "TH"
+        db.commit()
+
+        ph_matches = plm_processing._exact_claim_matches(
+            db,
+            {"sub_sku": "SUB-A", "country": "PH", "salesperson_name": SALES_A},
+        )
+        th_matches = plm_processing._exact_claim_matches(
+            db,
+            {"sub_sku": "SUB-A", "country": "TH", "salesperson_name": SALES_A},
+        )
+
+        assert [matched_claim.id for matched_claim, _ in ph_matches] == [claim.id]
+        assert th_matches == []
+
+
 def test_plm_processing_automation_processes_same_exact_match_across_periods(tmp_path: Path) -> None:
     workbook_path = tmp_path / "plm.xlsx"
     build_workbook(workbook_path)

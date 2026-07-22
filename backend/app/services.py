@@ -2555,8 +2555,10 @@ def update_stocking_request(
         if field in {"country", "warehouse", "reason"}:
             value = _clean_text(value)
         setattr(request, field, value)
-        if field == "unit_volume" and value is not None:
-            request.unit_volume_source = "manual"
+    if "unit_volume" in payload.model_fields_set:
+        request.unit_volume_source = None if request.unit_volume is None else payload.unit_volume_source or "manual"
+    elif "unit_volume_source" in payload.model_fields_set:
+        request.unit_volume_source = payload.unit_volume_source if request.unit_volume is not None else None
     _recalculate_stocking_request(request)
     if before_status == "submitted" and payload.model_fields_set:
         request.status = "draft"
@@ -2790,7 +2792,6 @@ def create_stocking_draft_for_claim(
         raise LookupError("opportunity not found")
     quantity = stocking_quantity(claim.claim_daily_sales) if claim.claim_daily_sales is not None else 0
     cost_price = number_value(central_field_value(opportunity, "商品成本-含税（元）"))
-    unit_volume = number_value(central_field_value(opportunity, "包装后体积"))
     request = models.StockingRequest(
         opportunity_id=opportunity.id,
         claim_record_id=claim.id,
@@ -2799,12 +2800,12 @@ def create_stocking_draft_for_claim(
         main_sku=opportunity.main_sku,
         sub_sku=opportunity.sub_sku,
         cost_price=cost_price,
-        unit_volume=unit_volume,
+        unit_volume=None,
         daily_sales=claim.claim_daily_sales,
         quantity=quantity,
         country=opportunity.country,
         amount=cost_price * quantity if cost_price is not None else None,
-        volume=unit_volume * quantity if unit_volume is not None else None,
+        volume=None,
         status="draft",
     )
     db.add(request)

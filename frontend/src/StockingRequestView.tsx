@@ -124,7 +124,7 @@ function OperatorStockingView({ operatorItems, onReload, onStatus }: Props) {
     setBusy(`volume:${item.request_id}`);
     try {
       const [preview] = await api.volumePreview([item.sub_sku]);
-      patchDraft(item.request_id, { unit_volume: preview?.unit_volume || null });
+      patchDraft(item.request_id, { unit_volume: preview?.unit_volume || null, unit_volume_source: preview?.status === "resolved" ? "erp" : null });
       onStatus(!preview || preview.status === "manual_required" ? "未取得体积，请手填" : "体积查询完成");
     } catch (error) {
       onStatus(error instanceof Error ? error.message : "未取得体积，请手填");
@@ -211,7 +211,7 @@ function OperatorStockingView({ operatorItems, onReload, onStatus }: Props) {
                             <Field label="申请日期" error={itemErrors.application_date}><input type="date" value={draft.application_date} disabled={readOnly} onChange={(event) => patchDraft(item.request_id!, { application_date: event.target.value })} /></Field>
                             <Field label="备货类型"><select value={draft.request_type} disabled={readOnly} onChange={(event) => patchDraft(item.request_id!, { request_type: event.target.value as StockingDraft["request_type"] })}><option value="initial">首次备货</option><option value="replenishment">补货</option></select></Field>
                             <Field label="成本价" error={itemErrors.cost_price}><input type="number" min="0" step="0.01" value={draft.cost_price ?? ""} disabled={readOnly} onChange={(event) => patchDraft(item.request_id!, { cost_price: numberOrNull(event.target.value) })} /></Field>
-                            <Field label="单个体积（m³）" error={itemErrors.unit_volume}><div className="stocking-volume-field"><input type="number" min="0" step="0.000001" value={draft.unit_volume ?? ""} disabled={readOnly} onChange={(event) => patchDraft(item.request_id!, { unit_volume: numberOrNull(event.target.value) })} /><button className="btn small" type="button" disabled={readOnly || busy !== ""} onClick={() => void previewVolume(item)}><RefreshCw size={13} />ERP 查询</button></div></Field>
+                            <Field label="单个体积（m³）" error={itemErrors.unit_volume}><div className="stocking-volume-field"><input type="number" min="0" step="0.000001" value={draft.unit_volume ?? ""} disabled={readOnly} onChange={(event) => { const unitVolume = numberOrNull(event.target.value); patchDraft(item.request_id!, { unit_volume: unitVolume, unit_volume_source: unitVolume === null ? null : "manual" }); }} /><button className="btn small" type="button" disabled={readOnly || busy !== ""} onClick={() => void previewVolume(item)}><RefreshCw size={13} />ERP 查询</button></div></Field>
                             <Field label="备货单销" error={itemErrors.daily_sales}><input type="number" min="0" step="0.01" value={draft.daily_sales ?? ""} disabled={readOnly} onChange={(event) => patchDraft(item.request_id!, { daily_sales: numberOrNull(event.target.value) })} /></Field>
                             <Field label="备货数量（自动）"><input value={draft.daily_sales ? stockingQuantity(draft.daily_sales) : ""} readOnly /></Field>
                             <Field label="备货国家" error={itemErrors.country}><input value={draft.country} disabled={readOnly} onChange={(event) => patchDraft(item.request_id!, { country: event.target.value })} /></Field>
@@ -363,6 +363,7 @@ function requestDraft(item: OperatorStockingItem): StockingDraft {
     request_type: item.request?.request_type || "initial",
     cost_price: item.request?.cost_price ?? null,
     unit_volume: item.request?.unit_volume ?? null,
+    unit_volume_source: item.request?.unit_volume_source ?? null,
     daily_sales: item.request?.daily_sales ?? null,
     country: item.request?.country || operatorStockingCountry(item),
     warehouse: item.request?.warehouse || "",

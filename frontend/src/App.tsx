@@ -269,6 +269,8 @@ function claimTypeLabel(item: Opportunity) {
 
 function App() {
   const [activeRole, setActiveRole] = useState<RoleKey>("manager");
+  const refreshGeneration = useRef(0);
+  const refreshLoadingGeneration = useRef(0);
   const [activeView, setActiveView] = useState<ViewKey>("dashboard");
   const [authChecked, setAuthChecked] = useState(false);
   const [authSession, setAuthSession] = useState<AuthSession | null>(null);
@@ -332,7 +334,6 @@ function App() {
       for (const item of authSession.roles) {
         if (item.role === "super_admin") {
           roles.add("manager");
-          roles.add("operator");
         } else {
           roles.add(item.role);
         }
@@ -530,7 +531,7 @@ function App() {
       document.removeEventListener("visibilitychange", onVisible);
       source.close();
     };
-  }, [authSession?.access_token]);
+  }, [authSession?.access_token, activeRole]);
 
   useEffect(() => {
     if (activeView !== "dashboard" && !visibleFlow.some((item) => item.view === activeView)) {
@@ -618,7 +619,11 @@ function App() {
   }
 
   async function refresh(options: { silent?: boolean } = {}) {
-    if (!options.silent) setLoading(true);
+    const generation = ++refreshGeneration.current;
+    if (!options.silent) {
+      refreshLoadingGeneration.current = generation;
+      setLoading(true);
+    }
     const failures: string[] = [];
     async function loadPart<T>(label: string, loader: () => Promise<T>, fallback: T): Promise<T> {
       try {
@@ -641,6 +646,13 @@ function App() {
       loadPart("人员配置", api.operatorProfiles, []),
       canManage ? loadPart("导入批次", api.importBatches, []) : Promise.resolve([])
     ]);
+    if (generation !== refreshGeneration.current) {
+      if (!options.silent && refreshLoadingGeneration.current === generation) {
+        refreshLoadingGeneration.current = 0;
+        setLoading(false);
+      }
+      return;
+    }
     setHealthStatus(health.status);
     setOpportunities(opportunityList);
     setTasks(taskList);
@@ -652,7 +664,10 @@ function App() {
     if (!options.silent || failures.length) {
       setStatusMessage(failures.length ? `部分数据未加载：${failures.join("、")}` : "已刷新");
     }
-    if (!options.silent) setLoading(false);
+    if (!options.silent && refreshLoadingGeneration.current === generation) {
+      refreshLoadingGeneration.current = 0;
+      setLoading(false);
+    }
   }
 
   async function loadPlmArrivalPreview() {
@@ -966,7 +981,7 @@ function App() {
             </form>
           )}
           <button className="btn" onClick={logout}>退出</button>
-          {activeRole === "operator" && (!authSession || availableRoles.includes("manager")) && (
+          {activeRole === "operator" && activeView !== "stock" && (!authSession || availableRoles.includes("manager")) && (
             <label className="operator-select">
               当前运营
               <select value={activeOperator} onChange={(event) => setActiveOperator(event.target.value)}>
@@ -980,8 +995,8 @@ function App() {
               </select>
             </label>
           )}
-          {activeRole === "operator" && authSession && !availableRoles.includes("manager") && (
-            <span className="auth-chip">当前运营：{activeOperator || authSession.operator_name || authSession.user.name}</span>
+          {activeRole === "operator" && authSession && (activeView === "stock" || !availableRoles.includes("manager")) && (
+            <span className="auth-chip">当前运营：{activeView === "stock" ? authSession.operator_name || authSession.user.name : activeOperator || authSession.operator_name || authSession.user.name}</span>
           )}
           <div className="role-switch">
             {availableRoles.includes("operator") && (

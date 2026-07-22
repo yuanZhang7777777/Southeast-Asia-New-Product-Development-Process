@@ -6,6 +6,7 @@ export type StockingDraft = {
   request_type: StockingRequestType;
   cost_price: number | null;
   unit_volume: number | null;
+  unit_volume_source?: "erp" | "manual" | null;
   daily_sales: number | null;
   country: string;
   warehouse?: string;
@@ -55,6 +56,7 @@ export function buildStockingDraftUpdate(draft: StockingDraft) {
     request_type: draft.request_type,
     cost_price: optionalNumber(draft.cost_price),
     unit_volume: optionalNumber(draft.unit_volume),
+    unit_volume_source: optionalNumber(draft.unit_volume) === null ? null : draft.unit_volume_source || "manual",
     daily_sales: optionalNumber(draft.daily_sales),
     country: draft.country.trim() || null,
     warehouse: draft.warehouse?.trim() || null,

@@ -1,6 +1,6 @@
 # Agent Handoff
 
-> Updated: 2026-07-21 13:56 Asia/Shanghai
+> Updated: 2026-07-21 23:18 Asia/Shanghai
 
 ## Start Here
 
@@ -29,6 +29,20 @@ PLM arrival endpoint settings and credentials are stored separately in both serv
 
 `caigen-arrival-notifier` is a separate service co-hosted with the workflow production environment on `101.132.26.138`. It is the only sender of arrival cards; neither workflow environment sends arrival cards. The workflow still owns its elimination-summary reminder. Development must not receive a persistent feed from the production notifier. Its current arrival/summary card template is selected through `DINGTALK_ARRIVAL_CARD_TEMPLATE_ID`; never commit the environment value.
 
+## Local Candidate Awaiting Development Deployment
+
+The current working tree contains the locally reviewed sales-self and formal stocking-request candidate, but it is **not committed or yet the code running at `139.224.2.166:18081`**:
+
+- Review approval creates one draft per “operator + child SKU”; operators save and submit their own requests, and managers export only explicitly selected submitted requests.
+- Sales-self supports three branches: existing stock goes directly to listing, stocking needed creates a request, and no stock/no stocking enters recoverable `stocking_paused`.
+- Export uses the operator's application date and final 16-column snapshot; quantity is `ceil(daily_sales × 30)`, warehouse is optional, and replenishment reason is conditionally required.
+- ERP volume preview returns the calculated value without persisting it; the normal UI saves that value with provenance label `unit_volume_source=erp`, while manual input uses `manual`. Source-table `包装后体积` is not reused as a silent fallback. If any required ERP configuration is absent, the operator can enter a positive unit volume manually.
+- PLM only advances `waiting_arrival` claims backed by a real `stocking_available` `ExportRow`, matched by salesperson, child SKU and the immutable exported-country snapshot.
+- Dual-role UI refreshes always use the currently selected role: the SSE connection is recreated after a manager/operator switch, and generation guards prevent older requests from overwriting the new role state.
+- The demo seed covers draft, submitted/waiting-export, direct-listing and paused branches and can safely remove its own downstream export/arrival/listing data before reseeding.
+- Source migration head is `d0e2f3a4b567`; the running development database remains on the baseline recorded below until an approved deployment occurs.
+- Local candidate verification: 37 focused backend tests passed; all 16 frontend test files passed with 122 tests; `tsc --noEmit` passed; source Alembic head is `d0e2f3a4b567`. The final full backend rerun, Linux Vite build, Compose validation, migration read-back and browser UAT must be recorded after the permission-blocked development deployment resumes; do not substitute projected test counts.
+
 ## Verified Baseline
 
 - Branch: `lxc/integrated-workflow`.
@@ -49,7 +63,7 @@ Front stage:
 
 - Import the two approved internal feedback workbooks with source file/sheet/row/snapshot traceability.
 - Supervisor assignment by main-SKU group, operator claim/not-claim, supervisor review and audit history.
-- Stocking and central traceability exports, including repeatable business-period export with independent batches and no workflow-state rollback.
+- Formal stocking export is a one-time selected-request transition to `waiting_arrival`; central traceability export remains repeatable by business period with independent batches and no workflow-state rollback.
 - Product board, opportunity pool, assignment filters, operator configuration and pricing/percentage display rules.
 
 Later stage:
@@ -68,6 +82,7 @@ Detailed field, state, permission and API rules stay in the confirmed requiremen
 ## Still Open
 
 - Operators and supervisors must complete development-environment UAT with controlled data.
+- Development does not currently provide all five ERP settings (`ERP_LOGIN_URL`, `ERP_PRODUCT_LIST_URL`, `ERP_DOWNLOAD_LIST_URL`, `ERP_USERNAME`, `ERP_PASSWORD`). Real ERP volume lookup cannot be accepted until they are supplied through server `.env` only; manual-volume fallback remains testable.
 - The real weekly Item endpoint, authentication method and unfiltered aggregate response sample are not provided. Do not guess them. The integration point is the existing `apply_week_metrics(...)` boundary.
 - Real scheduling, retry monitoring and operator message delivery for weekly Item metrics remain unconnected.
 - Production release of the unified branch is not approved.

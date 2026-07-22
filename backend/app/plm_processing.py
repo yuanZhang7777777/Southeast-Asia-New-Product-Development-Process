@@ -118,7 +118,7 @@ def _exact_claim_matches(
     if not sub_sku or not site or not salesperson:
         return []
     rows = db.execute(
-        select(models.SalesClaimForecast, models.NewProductOpportunity)
+        select(models.SalesClaimForecast, models.NewProductOpportunity, models.ExportRow)
         .join(models.NewProductOpportunity, models.NewProductOpportunity.id == models.SalesClaimForecast.opportunity_id)
         .join(models.ExportRow, models.ExportRow.claim_record_id == models.SalesClaimForecast.id)
         .join(models.ExportBatch, models.ExportBatch.id == models.ExportRow.export_batch_id)
@@ -142,16 +142,16 @@ def _exact_claim_matches(
     ).all()
     seen: set[str] = set()
     matches: list[tuple[models.SalesClaimForecast, models.NewProductOpportunity]] = []
-    for claim, opportunity in rows:
+    for claim, opportunity, export_row in rows:
         if claim.id in seen:
             continue
-        seen.add(claim.id)
         if (claim.salesperson_name or "").strip() != salesperson:
             continue
         if _sku_key(opportunity.sub_sku) != sub_sku:
             continue
-        if (normalize_site_code(opportunity.site or opportunity.country) or "") != site:
+        if (normalize_site_code(export_row.country) or "") != site:
             continue
+        seen.add(claim.id)
         matches.append((claim, opportunity))
     return matches
 

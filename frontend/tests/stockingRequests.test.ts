@@ -88,6 +88,7 @@ test("不完整申请和 ERP 体积查询失败仍可保存为部分草稿", () 
     request_type: "initial",
     cost_price: 12.5,
     unit_volume: null,
+    unit_volume_source: null,
     daily_sales: null,
     country: null,
     warehouse: null,
@@ -96,6 +97,37 @@ test("不完整申请和 ERP 体积查询失败仍可保存为部分草稿", () 
   assert.match(view, /submit \? payloadFor\([^)]*\) : buildStockingDraftUpdate\(draft\)/);
 });
 
+test("unit volume provenance follows ERP lookup and manual edits", () => {
+  assert.equal(buildStockingDraftUpdate({
+    application_date: "2026-07-21",
+    request_type: "initial",
+    cost_price: 12.5,
+    unit_volume: 0.002,
+    unit_volume_source: "erp",
+    daily_sales: 2,
+    country: "PH"
+  }).unit_volume_source, "erp");
+  assert.equal(buildStockingDraftUpdate({
+    application_date: "2026-07-21",
+    request_type: "initial",
+    cost_price: 12.5,
+    unit_volume: 0.003,
+    unit_volume_source: "manual",
+    daily_sales: 2,
+    country: "PH"
+  }).unit_volume_source, "manual");
+  assert.equal(buildStockingDraftUpdate({
+    application_date: "2026-07-21",
+    request_type: "initial",
+    cost_price: 12.5,
+    unit_volume: null,
+    unit_volume_source: "erp",
+    daily_sales: 2,
+    country: "PH"
+  }).unit_volume_source, null);
+  assert.match(view, /preview\?\.status === "resolved" \? "erp" : null/);
+  assert.match(view, /unit_volume_source: unitVolume === null \? null : "manual"/);
+});
 test("无申请分支使用机会国家筛选并作为新草稿默认国家", () => {
   assert.equal(operatorStockingCountry({ country: " PH ", request: null }), "PH");
   assert.equal(operatorStockingCountry({ country: "TH", request: { country: "VN" } }), "TH");
@@ -170,8 +202,21 @@ test("主管筛选和选择固定在内部滚动的 16 列表格上方", () => {
   assert.match(scrollRule, /min-width:\s*0/);
 });
 
-test("运营刷新不请求主管导出接口", () => {
+test("operator role and refresh state stay aligned with authenticated ownership", () => {
+  const superAdminStart = app.indexOf('if (item.role === "super_admin")');
+  const superAdminBranch = app.slice(superAdminStart, app.indexOf("} else", superAdminStart));
+  assert.doesNotMatch(superAdminBranch, /roles\.add\("operator"\)/);
+  assert.match(app, /activeRole === "operator" && activeView !== "stock"/);
+  assert.match(app, /activeView === "stock" \? authSession\.operator_name \|\| authSession\.user\.name/);
+
+  const eventStreamStart = app.indexOf("const source = new EventSource");
+  const eventStreamEffect = app.slice(app.lastIndexOf("useEffect(() =>", eventStreamStart), app.indexOf("useEffect(() =>", eventStreamStart + 1));
+  assert.match(eventStreamEffect, /\}, \[authSession\?\.access_token, activeRole\]\);/);
+
   const refresh = app.slice(app.indexOf("async function refresh"), app.indexOf("async function loadPlmArrivalPreview"));
   assert.match(refresh, /activeRole === "manager"/);
   assert.match(refresh, /api\.myStockingRequests/);
+  assert.match(refresh, /const generation = \+\+refreshGeneration\.current/);
+  assert.match(refresh, /if \(generation !== refreshGeneration\.current\) \{[\s\S]*refreshLoadingGeneration\.current === generation[\s\S]*setLoading\(false\)[\s\S]*return;/);
+  assert.match(refresh, /setHealthStatus[\s\S]*refreshLoadingGeneration\.current === generation[\s\S]*setLoading\(false\)/);
 });

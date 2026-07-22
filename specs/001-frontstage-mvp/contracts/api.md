@@ -134,51 +134,87 @@ Supervisor reviews an operator submission.
 
 **Rules**:
 
-- `approved` makes a claimed submission exportable.
+- `approved` creates (or reuses) one `draft` stocking request per claimed operator + child SKU and moves the claim to `waiting_stocking_request`; approval alone is not exportable.
 - `confirmed_not_claim` marks the outcome as `已确认不认领`.
 - `returned_for_supplement` returns the task to the operator.
 - Supervisor cannot edit operator-submitted claim daily sales or not-claim reason.
 
-## Export
+## Stocking requests and export
 
-### `GET /stocking/available-list`
+All operator endpoints derive the operator identity from the authenticated role mapping. A manager or another operator cannot supply a salesperson name to edit someone else's request.
 
-Lists exportable approved claim rows.
+### `GET /stocking/requests` and `POST /stocking/requests` (manager compatibility)
 
-**Response row**:
+`GET` returns the latest 200 stocking requests for manager inspection. `POST` creates or reuses a draft tied to an existing claim; the normal review flow creates this draft automatically, so the current workbench does not require a separate manager action.
 
-- Salesperson
-- Main SKU
-- Child SKU
-- Claim daily sales
-- Stocking quantity
-- Country
-- Warehouse
-- Source batch
+### `GET /stocking/export-periods` (manager)
 
-**Rules**:
+Returns all non-disabled imported business periods plus any eligible period not present in `ImportBatch`, with current `submitted + waiting_export` stocking counts and traceability counts that also include confirmed not-claim rows.
 
-- Only approved claim records appear.
-- Confirmed not-claim records never appear.
-- Multiple approved claims for one child SKU appear as multiple rows.
+### `POST /stocking/self-selections` (operator)
 
-### `GET /stocking/available-list/export`
+Creates one sales-self main SKU with one or more child SKUs in one transaction. Child decisions are:
 
-Exports `备货申请表`.
+- `inventory_available=true, needs_stocking=false` -> `waiting_listing`, no stocking request.
+- `inventory_available=false, needs_stocking=true` -> request `draft` + claim `waiting_stocking_request`.
+- `inventory_available=false, needs_stocking=false` -> recoverable `stocking_paused`, no downstream task.
+
+The child list must be non-empty and child SKUs must be unique inside the request; any invalid row rejects the entire batch. `inventory_available=true, needs_stocking=true` is contradictory and must be rejected at the API boundary.
+
+### `GET /stocking/my-requests` (operator)
+
+Returns the authenticated operator's draft, submitted and exported requests plus direct-listing and paused records. Exported requests remain visible as read-only history.
+
+### `PUT /stocking/requests/{request_id}` (operator)
+
+Saves the authenticated operator's draft or updates a not-yet-exported submitted request. Editable fields are application date, request type, final cost price, unit volume/source, daily sales, country, optional warehouse and conditional reason. Editing a submitted request reopens it as `draft`, returns the claim to `waiting_stocking_request` and requires a new submit. Exported requests are immutable.
+
+### `POST /stocking/requests/{request_id}/submit` (operator)
+
+Validates the final request and calculates authoritative values:
+
+- cost price, unit volume and daily sales must be finite and greater than zero;
+- `quantity = ceil(daily_sales × 30)`;
+- `amount = cost_price × quantity`;
+- `volume = unit_volume × quantity`;
+- warehouse is optional free text;
+- reason is required only for `replenishment`.
+
+Success sets request `submitted` and claim `waiting_export`.
+
+### `POST /stocking/decisions/{claim_record_id}` (operator)
+
+Updates the authenticated operator's inventory/stocking decision. A paused record can be changed back to stocking and resume as `waiting_stocking_request`.
+
+### `POST /stocking/volume-preview` (operator)
+
+**Request:** `{"skus":["CHILD-1", "CHILD-2"]}`. The raw list contains 1-500 strings; the router trims, drops blank values and de-duplicates in order, and returns 400 if nothing remains.
+
+**Response:** one row per unique SKU with `unit_volume` and `status=resolved|manual_required`. Missing ERP configuration, lookup failure or incomplete dimensions must return the manual fallback without exposing credentials. The preview itself does not persist data; when the UI saves a resolved value it labels the source `erp`, while operator input is labeled `manual`. This source is a provenance label saved on the request; the normal UI includes it in the request update audit, but it is not tamper-proof proof of an ERP response.
+
+### `GET /stocking/available-list` (manager)
+
+Lists only requests with `request.status=submitted` whose claim is `waiting_export`. Optional filters remain `source_sheet`, `business_period` and `import_batch_id`. Confirmed not-claim, draft, paused, direct-listing and already exported records never appear.
+
+### `POST /stocking/available-list/export` (manager)
+
+**Request:** `{"request_ids":["request-id-1", "request-id-2"]}`. The list must contain 1-500 non-empty, unique IDs.
+
+The server locks and revalidates the exact selected submitted requests, builds the workbook, then commits one `stocking_available` `ExportBatch` with immutable `ExportRow` snapshots linked to both request and claim. Success sets each request to `exported` and each claim to `waiting_arrival`. If any selected row is missing, ineligible or concurrently changed, the entire request fails and no row advances.
 
 **Workbook rules**:
 
-- Sheet name: `备货申请表`
-- Columns: `操作状态`, `时间`, `备货类型`, `选品数据源`, `销售员`, `主SKU`, `子sku`, `成本价`, `单个体积`, `备货单销`, `备货数量`, `备货国家`, `备货仓库`, `货值`, `体积`, `补货原因`
-- `备货数量 = 备货单销 × 30`
-- `补货原因` is empty in the first version
+- File name: `海外仓备货申请表.xlsx`; rows are split into country sheets.
+- Columns: `操作状态`, `申请日期`, `备货类型`, `选品数据源`, `销售员`, `主SKU`, `子sku`, `成本价`, `单个体积`, `备货单销`, `备货数量`, `备货国家`, `备货仓库`, `货值`, `体积`, `补货原因`.
+- Column B is the operator's application date, never the export timestamp.
+- Quantity, amount and volume use the authoritative submitted snapshot; warehouse may be blank and replenishment reason may not.
 
-### Full-field traceability export
+### `GET /stocking/traceability/export` (manager)
 
-Exports the same approved child-SKU claim rows with central-table fields before `开发是否接受核价结果` plus platform claim/review/export fields.
+Exports current `submitted + waiting_export` child-SKU requests plus confirmed not-claim rows. It includes all 80 central-table fields from column A through and including column CB `开发是否接受核价结果`, followed by platform claim/review/export fields.
 
 **Rules**:
 
-- Same row scope as stocking export.
+- Independent from the formal stocking-export action: it reads the current eligible submitted scope plus confirmed not-claim traceability rows, does not substitute for operator submission, and does not advance claims to `waiting_arrival`.
 - Used for leadership review and traceability.
 - Not an input workbook and not an online-sheet writeback.

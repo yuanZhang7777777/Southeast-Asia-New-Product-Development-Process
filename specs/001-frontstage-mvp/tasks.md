@@ -1,5 +1,7 @@
 # Tasks: Frontstage New Product MVP
 
+> Historical execution baseline for the original front-stage MVP. It is retained for implementation traceability and is not the current post-review stocking workflow. Current behavior is defined by docs/2026-07-09-已确认需求记录.md, docs/23-销售自选与备货申请需求对齐.md, docs/superpowers/specs/2026-07-21-sales-self-stocking-request-design.md, and contracts/api.md.
+
 **Input**: Design documents from `specs/001-frontstage-mvp/`
 
 **Prerequisites**: [plan.md](./plan.md), [spec.md](./spec.md), [research.md](./research.md), [data-model.md](./data-model.md), [contracts/api.md](./contracts/api.md), [quickstart.md](./quickstart.md)

@@ -44,6 +44,7 @@ def test_stocking_draft_is_unique_per_claim() -> None:
             country="PH",
             main_sku="MAIN-1",
             sub_sku="SUB-1",
+            snapshot={"central_fields": {"包装后体积": 0.005}},
         )
         db.add(opportunity)
         db.flush()
@@ -70,6 +71,9 @@ def test_stocking_draft_is_unique_per_claim() -> None:
         assert [first.claim_record_id, second.claim_record_id] == [claims[0].id, claims[1].id]
         assert [first.quantity, second.quantity] == [60, 61]
         assert first.application_date == datetime.now(services.EXCEL_TIMEZONE).date()
+        assert first.unit_volume is None
+        assert first.unit_volume_source is None
+        assert first.volume is None
         assert db.query(models.StockingRequest).count() == 2
 
 
@@ -240,6 +244,49 @@ def test_sales_self_selection_creates_each_child_atomically_and_applies_decision
     with SessionLocal() as db:
         assert db.query(models.NewProductOpportunity).filter_by(main_sku="MAIN-DUPLICATE").count() == 0
 
+
+def test_sales_self_rejects_conflicting_inventory_and_stocking_decision() -> None:
+    token = login_operator("Operator A")
+    invalid_create = client.post(
+        "/stocking/self-selections",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "main_sku": "MAIN-CONFLICT",
+            "country": "PH",
+            "children": [
+                {"sub_sku": "SUB-CONFLICT", "inventory_available": True, "needs_stocking": True},
+            ],
+        },
+    )
+
+    assert invalid_create.status_code == 422
+    with SessionLocal() as db:
+        assert db.query(models.NewProductOpportunity).filter_by(main_sku="MAIN-CONFLICT").count() == 0
+
+    paused = client.post(
+        "/stocking/self-selections",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "main_sku": "MAIN-PAUSED",
+            "country": "PH",
+            "children": [
+                {"sub_sku": "SUB-PAUSED", "inventory_available": False, "needs_stocking": False},
+            ],
+        },
+    )
+    claim_id = paused.json()[0]["claim_record_id"]
+    invalid_update = client.post(
+        f"/stocking/decisions/{claim_id}",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"inventory_available": True, "needs_stocking": True},
+    )
+
+    assert invalid_update.status_code == 422
+    with SessionLocal() as db:
+        claim = db.get(models.SalesClaimForecast, claim_id)
+        assert claim.inventory_available is False
+        assert claim.needs_stocking is False
+        assert claim.downstream_status == "stocking_paused"
 
 def test_operator_stocking_response_includes_country_for_branch_without_request() -> None:
     token = login_operator("Operator A")
@@ -442,6 +489,49 @@ def test_sales_self_preserved_draft_cannot_submit_after_no_stocking_decision() -
         assert request.submitted_at is None
         assert claim.needs_stocking is False
         assert claim.downstream_status == "stocking_paused"
+
+
+def test_stocking_volume_source_tracks_erp_and_manual_updates() -> None:
+    token = login_operator("Operator A")
+    request_id = create_self_stocking_request(token)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    erp = client.put(
+        f"/stocking/requests/{request_id}",
+        headers=headers,
+        json={"unit_volume": 0.002, "unit_volume_source": "erp"},
+    )
+    preserved = client.put(
+        f"/stocking/requests/{request_id}",
+        headers=headers,
+        json={"daily_sales": 2},
+    )
+    manual = client.put(
+        f"/stocking/requests/{request_id}",
+        headers=headers,
+        json={"unit_volume": 0.003},
+    )
+    cleared = client.put(
+        f"/stocking/requests/{request_id}",
+        headers=headers,
+        json={"unit_volume": None},
+    )
+    invalid = client.put(
+        f"/stocking/requests/{request_id}",
+        headers=headers,
+        json={"unit_volume": 0.004, "unit_volume_source": "guessed"},
+    )
+
+    assert erp.status_code == 200
+    assert erp.json()["unit_volume_source"] == "erp"
+    assert preserved.status_code == 200
+    assert preserved.json()["unit_volume_source"] == "erp"
+    assert manual.status_code == 200
+    assert manual.json()["unit_volume_source"] == "manual"
+    assert cleared.status_code == 200
+    assert cleared.json()["unit_volume"] is None
+    assert cleared.json()["unit_volume_source"] is None
+    assert invalid.status_code == 422
 
 
 def test_stocking_update_rejects_non_finite_numbers_without_persisting() -> None:

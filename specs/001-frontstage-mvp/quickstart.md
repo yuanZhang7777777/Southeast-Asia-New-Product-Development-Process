@@ -7,11 +7,11 @@
 - Frontend dependencies are installed
 - For production-like deployment, `.env` points `DATABASE_URL` to PostgreSQL
 - For local tests, pytest may use SQLite test database
-- First development target is local. Later production migration target is SSH `root@101.132.26.138:2323`; credentials must not be committed or written into project docs.
+- Deployment target for current validation is only the isolated development environment `http://139.224.2.166:18081` via SSH alias `hz-new-product-dev`. Do not connect, restart or deploy production `101.132.26.138` without a separate approved release window.
 
 ## Deployment direction
 
-Develop and verify the MVP locally first. After backend tests, frontend build, and Docker Compose config validation pass locally, migrate the same Compose-based service set to the production server.
+Develop and verify locally first, then back up and deploy the candidate only to the isolated development Compose stack. Run the final full backend suite, Linux frontend build, Compose validation, migration read-back and browser UAT there. Production promotion is a separate, explicitly approved task.
 
 Do not store SSH passwords, database passwords, DingTalk credentials, PLM credentials, cookies, or tokens in the repository. Use local secret storage or interactive input during deployment.
 
@@ -80,29 +80,43 @@ Review the claimed and not-claimed rows.
 
 Expected outcome:
 
-- Approved claim becomes exportable
+- Approved claim creates an operator-owned stocking-request draft and is not exportable until the operator submits it
 - Confirmed not-claim becomes `已确认不认领`
 - Confirmed not-claim never appears in stocking export
 - Returned-for-supplement returns work to the operator and does not let supervisor edit operator fields
 
+## Stocking-request validation
+
+Use the authenticated operator account to save and submit a draft.
+
+Expected outcome:
+
+- Draft can be incomplete while saved, but submission requires positive cost, unit volume and daily sales
+- ERP lookup uses the child SKU; failure returns “manual required” and allows a positive manual volume
+- Source-table aggregate `包装后体积` is not silently prefilled
+- `备货数量 = ceil(备货单销 × 30)`
+- `备货仓库` may be blank; `补货原因` is required only for `补货`
+- Editing a submitted request before export reopens it as draft and requires resubmission
+
 ## Export validation
 
-Export approved stocking rows.
+As manager, select only submitted requests from the current available list and export them.
 
 Expected outcome:
 
 - Workbook opens in Excel
-- Sheet name is `备货申请表`
-- Workbook has the 16 columns listed in [contracts/api.md](./contracts/api.md)
-- `备货数量` equals `备货单销 × 30`
-- `补货原因` is empty
-- Same child SKU claimed by multiple approved operators exports as multiple rows
+- Workbook contains country sheets and the 16 columns listed in [contracts/api.md](./contracts/api.md)
+- Only explicitly selected, still-eligible requests are exported; one invalid row rejects the entire batch
+- `备货数量` equals `ceil(备货单销 × 30)`
+- `补货原因` is empty for `首次备货` and populated for `补货`
+- Same child SKU submitted by multiple approved operators exports as independent rows
+- Successful export records immutable `ExportBatch + ExportRow` snapshots and advances only those requests to `exported / waiting_arrival`
 
 ## Latest Validation Results
 
-Recorded on 2026-07-03 Asia/Shanghai:
+Recorded on 2026-07-21 Asia/Shanghai for the uncommitted local candidate:
 
-- Backend: `..\.venv\Scripts\python.exe -m pytest -q` passed with 28 tests.
-- Frontend: `npm run build` passed. Vite reported only the bundle-size warning for the generated JS chunk.
-- Alembic: empty SQLite smoke `upgrade head` passed through the latest migration.
-- Docker Compose: `docker compose config` could not run on this machine because the `docker` CLI is not installed or not on PATH. Re-run this command on a machine with Docker before deployment.
+- Backend: 37 focused stocking-request/export/PLM/demo tests passed. A broader run also passed 49 tests before the Windows sandbox denied pytest's own `tmp_path`; final full regression remains required in the development Linux container.
+- Frontend: all 16 test files passed when run directly, 122 tests total; `npx tsc --noEmit` passed. Local Vite build is blocked by the same Windows child-process sandbox and must run in Linux.
+- Alembic: source has one head, `d0e2f3a4b567`; development still runs `a8d4e6f7b901` until an approved deployment.
+- Development deployment, Compose validation, migration read-back and browser UAT remain pending. Production was not touched.

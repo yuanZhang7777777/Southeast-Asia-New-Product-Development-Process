@@ -53,7 +53,7 @@ export type StockingRequest = {
   application_date?: string | null;
   submitted_at?: string | null;
   request_type: "initial" | "replenishment";
-  unit_volume_source?: string | null;
+  unit_volume_source?: "erp" | "manual" | null;
   salesperson_name?: string | null;
   main_sku?: string | null;
   sub_sku?: string | null;
@@ -93,6 +93,7 @@ export type StockingRequestUpdate = {
   request_type?: "initial" | "replenishment";
   cost_price?: number | null;
   unit_volume?: number | null;
+  unit_volume_source?: "erp" | "manual" | null;
   daily_sales?: number | null;
   country?: string | null;
   warehouse?: string | null;

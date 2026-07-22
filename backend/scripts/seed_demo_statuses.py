@@ -56,15 +56,171 @@ def clear_demo(db) -> None:
     flow_ids = list(
         db.scalars(select(models.FlowInstance.id).where(models.FlowInstance.opportunity_id.in_(opportunity_ids)))
     )
-    if flow_ids:
-        db.execute(delete(models.FlowTask).where(models.FlowTask.flow_instance_id.in_(flow_ids)))
-    db.execute(delete(models.FlowInstance).where(models.FlowInstance.opportunity_id.in_(opportunity_ids)))
-    db.execute(delete(models.ReviewRecord).where(models.ReviewRecord.opportunity_id.in_(opportunity_ids)))
-    db.execute(delete(models.StockingRequest).where(models.StockingRequest.opportunity_id.in_(opportunity_ids)))
-    db.execute(delete(models.SalesClaimForecast).where(models.SalesClaimForecast.opportunity_id.in_(opportunity_ids)))
-    db.execute(delete(models.SourceRecordSnapshot).where(models.SourceRecordSnapshot.opportunity_id.in_(opportunity_ids)))
-    db.execute(delete(models.NewProductOpportunity).where(models.NewProductOpportunity.id.in_(opportunity_ids)))
+    task_ids = list(
+        db.scalars(select(models.FlowTask.id).where(models.FlowTask.flow_instance_id.in_(flow_ids)))
+    )
+    claim_ids = list(
+        db.scalars(
+            select(models.SalesClaimForecast.id).where(
+                models.SalesClaimForecast.opportunity_id.in_(opportunity_ids)
+            )
+        )
+    )
+    review_ids = list(
+        db.scalars(
+            select(models.ReviewRecord.id).where(
+                (models.ReviewRecord.opportunity_id.in_(opportunity_ids))
+                | (models.ReviewRecord.claim_record_id.in_(claim_ids))
+            )
+        )
+    )
+    request_ids = list(
+        db.scalars(
+            select(models.StockingRequest.id).where(
+                (models.StockingRequest.opportunity_id.in_(opportunity_ids))
+                | (models.StockingRequest.claim_record_id.in_(claim_ids))
+            )
+        )
+    )
+    snapshot_ids = list(
+        db.scalars(
+            select(models.SourceRecordSnapshot.id).where(
+                models.SourceRecordSnapshot.opportunity_id.in_(opportunity_ids)
+            )
+        )
+    )
+    research_ids = list(
+        db.scalars(
+            select(models.MarketResearchItem.id).where(
+                models.MarketResearchItem.opportunity_id.in_(opportunity_ids)
+            )
+        )
+    )
+    quote_ids = list(
+        db.scalars(
+            select(models.SupplyChainQuote.id).where(
+                models.SupplyChainQuote.opportunity_id.in_(opportunity_ids)
+            )
+        )
+    )
 
+    claim_id_set = set(claim_ids)
+    # ponytail: this is a development-only cleanup; normalize JSON claim links if the scan becomes slow.
+    listing_ids: list[str] = []
+    period_ids: list[str] = []
+    for listing in db.scalars(select(models.ListingRecord)):
+        source_claim_ids = list(listing.source_claim_ids or [])
+        if not claim_id_set.intersection(source_claim_ids):
+            continue
+        remaining_claim_ids = [claim_id for claim_id in source_claim_ids if claim_id not in claim_id_set]
+        if remaining_claim_ids:
+            listing.source_claim_ids = remaining_claim_ids
+            continue
+        listing_ids.append(listing.id)
+        period_ids.extend(
+            db.scalars(
+                select(models.ItemObservationPeriod.id).where(
+                    models.ItemObservationPeriod.listing_record_id == listing.id
+                )
+            )
+        )
+
+    for item in db.scalars(select(models.PlmArrivalItem)):
+        raw_payload = dict(item.raw_payload or {})
+        raw_claim_ids = raw_payload.get("_matched_claim_record_ids")
+        remaining_claim_ids: list[str] = []
+        if isinstance(raw_claim_ids, list):
+            remaining_claim_ids = [claim_id for claim_id in raw_claim_ids if claim_id not in claim_id_set]
+            if remaining_claim_ids != raw_claim_ids:
+                raw_payload["_matched_claim_record_ids"] = remaining_claim_ids
+                item.raw_payload = raw_payload
+        if item.matched_claim_record_id not in claim_id_set:
+            continue
+        item.matched_claim_record_id = remaining_claim_ids[0] if remaining_claim_ids else None
+        if not remaining_claim_ids:
+            item.match_status = "unmatched"
+        elif not item.match_status.startswith("matched"):
+            item.match_status = "matched"
+    db.flush()
+
+    arrival_ids = list(
+        db.scalars(
+            select(models.ArrivalRecord.id).where(
+                (models.ArrivalRecord.opportunity_id.in_(opportunity_ids))
+                | (models.ArrivalRecord.claim_record_id.in_(claim_ids))
+            )
+        )
+    )
+    export_rows = list(
+        db.scalars(
+            select(models.ExportRow).where(
+                (models.ExportRow.opportunity_id.in_(opportunity_ids))
+                | (models.ExportRow.claim_record_id.in_(claim_ids))
+                | (models.ExportRow.stocking_request_id.in_(request_ids))
+            )
+        )
+    )
+    export_row_ids = [row.id for row in export_rows]
+    affected_batch_ids = {row.export_batch_id for row in export_rows}
+
+    if period_ids:
+        db.execute(delete(models.ItemObservationPeriod).where(models.ItemObservationPeriod.id.in_(period_ids)))
+    if listing_ids:
+        db.execute(delete(models.ListingRecord).where(models.ListingRecord.id.in_(listing_ids)))
+    if arrival_ids:
+        db.execute(delete(models.ArrivalRecord).where(models.ArrivalRecord.id.in_(arrival_ids)))
+    if export_row_ids:
+        db.execute(delete(models.ExportRow).where(models.ExportRow.id.in_(export_row_ids)))
+        db.flush()
+
+    deleted_batch_ids: list[str] = []
+    for batch_id in affected_batch_ids:
+        remaining_row_ids = list(
+            db.scalars(select(models.ExportRow.id).where(models.ExportRow.export_batch_id == batch_id))
+        )
+        if remaining_row_ids:
+            batch = db.get(models.ExportBatch, batch_id)
+            if batch is not None:
+                batch.row_count = len(remaining_row_ids)
+        else:
+            deleted_batch_ids.append(batch_id)
+    if deleted_batch_ids:
+        db.execute(delete(models.ExportBatch).where(models.ExportBatch.id.in_(deleted_batch_ids)))
+
+    db.execute(delete(models.ReviewRecord).where(models.ReviewRecord.id.in_(review_ids)))
+    db.execute(delete(models.StockingRequest).where(models.StockingRequest.id.in_(request_ids)))
+    db.execute(delete(models.SalesClaimForecast).where(models.SalesClaimForecast.id.in_(claim_ids)))
+    db.execute(delete(models.FlowTask).where(models.FlowTask.id.in_(task_ids)))
+    db.execute(delete(models.FlowInstance).where(models.FlowInstance.id.in_(flow_ids)))
+    db.execute(delete(models.MarketResearchItem).where(models.MarketResearchItem.id.in_(research_ids)))
+    db.execute(delete(models.SupplyChainQuote).where(models.SupplyChainQuote.id.in_(quote_ids)))
+    db.execute(delete(models.SourceRecordSnapshot).where(models.SourceRecordSnapshot.id.in_(snapshot_ids)))
+    db.execute(
+        delete(models.NotificationLog).where(
+            (models.NotificationLog.opportunity_id.in_(opportunity_ids))
+            | (models.NotificationLog.task_id.in_(task_ids))
+        )
+    )
+
+    deleted_entity_ids = set(opportunity_ids)
+    for entity_ids in (
+        flow_ids,
+        task_ids,
+        claim_ids,
+        review_ids,
+        request_ids,
+        snapshot_ids,
+        research_ids,
+        quote_ids,
+        arrival_ids,
+        export_row_ids,
+        deleted_batch_ids,
+        listing_ids,
+        period_ids,
+    ):
+        deleted_entity_ids.update(entity_ids)
+    db.execute(delete(models.AuditLog).where(models.AuditLog.entity_id.in_(deleted_entity_ids)))
+    db.execute(delete(models.NewProductOpportunity).where(models.NewProductOpportunity.id.in_(opportunity_ids)))
 
 def seed_profiles(db) -> None:
     rows = [

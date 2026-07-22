@@ -4,7 +4,7 @@
 
 **Created**: 2026-07-02
 
-**Status**: Draft
+**Status**: Implemented baseline; post-review stocking candidate awaiting development deployment/UAT
 
 **Input**: User description: "第一版只围绕两张内部反馈表做导入、主管分配、运营认领/不认领、主管复核和导出；中间桥、在线表自动写回、匹配异常清单、采购/供应链待办都先不做。"
 
@@ -13,6 +13,12 @@
 ### Session 2026-07-03
 
 - Q: 商品看板是否属于第一版，且它和机会池是什么关系？ → A: 商品看板属于第一版；商品看板是全量商品状态总览，机会池只显示待处理新品机会；看板中的后段节点只是状态展示，不代表第一版实现后段任务。
+
+### Session 2026-07-21
+
+- 后段到货承接、二次调研、刊登和周期观察已经作为后续增量实现；销售自选与新版备货申请以 docs/23-销售自选与备货申请需求对齐.md 为业务基线。
+- 主管复核认领通过只生成备货申请草稿；运营提交、主管勾选导出后才进入 waiting_arrival。
+- 独立 PLM 到货通知不依赖平台导出，但平台内后续承接要求真实 stocking_available ExportRow。
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -84,7 +90,7 @@
 
 **Acceptance Scenarios**:
 
-1. **Given** 运营提交认领，**When** 主管复核通过，**Then** 子 SKU 进入可备货导出范围。
+1. **Given** 运营提交认领，**When** 主管复核通过，**Then** 系统生成该运营的子 SKU 备货申请草稿并进入待填写状态，尚不进入主管待导出列表。
 2. **Given** 运营提交不认领并填写理由，**When** 主管确认，**Then** 子 SKU 进入 `已确认不认领` 终态，且不进入备货导出范围。
 3. **Given** 主管认为认领单销或不认领理由不完整，**When** 主管退回补充，**Then** 任务回到运营补充状态，主管不能直接修改运营字段。
 4. **Given** 主管查看复核列表，**When** 任务来自运营认领提交或不认领提交，**Then** 系统分别显示 `待复核-认领` 和 `待复核-不认领`，并在卡片上标明 `运营已认领` 或 `运营不认领`。
@@ -93,20 +99,20 @@
 
 ---
 
-### User Story 5 - Export Approved Stocking Rows (Priority: P1)
+### User Story 5 - Operator Stocking Request and Manager Export (Priority: P1)
 
-主管或数据人员点击导出，系统生成本批可备货子 SKU 明细。导出只包含子 SKU 明细，不生成主 SKU 汇总；同一子 SKU 被多个运营认领通过时按运营分别导出多行。
+主管复核认领通过后，系统按“运营 + 子 SKU”生成备货申请草稿；运营填写并提交，主管只勾选已提交申请导出。导出只包含所选子 SKU 明细，同一子 SKU 被多个运营认领通过时按运营分别保留独立申请行。
 
-**Why this priority**: 第一版的正式闭环是导出，不做在线表自动写回。
+**Why this priority**: 备货申请把运营最终填写值固化为可追溯快照，并由主管选择导出；平台仍不做在线表自动写回或采购执行。
 
-**Independent Test**: 可以准备多个通过复核的认领记录，验证导出文件结构、行数和备货数量。
+**Independent Test**: 可以准备多个通过复核的认领记录，验证草稿生成、运营保存/提交、主管勾选导出、整批校验和状态推进。
 
 **Acceptance Scenarios**:
 
-1. **Given** 认领单销为 1.5，**When** 导出备货申请表，**Then** 备货数量为 45。
-2. **Given** 同一子 SKU 有 3 个运营认领通过，**When** 导出备货申请表，**Then** 导出 3 行，不合并为 1 行。
-3. **Given** 子 SKU 已确认不认领，**When** 导出备货申请表，**Then** 该子 SKU 不出现在导出文件中。
-4. **Given** 主管点击导出，**When** 导出完成，**Then** 系统记录导出人、导出时间、导出文件名和导出范围。
+1. **Given** 主管复核认领通过，**When** 复核提交成功，**Then** 系统为对应运营和子 SKU 生成一条 `draft` 备货申请，而不是直接进入导出范围。
+2. **Given** 备货单销为 2.01，**When** 运营提交申请，**Then** 服务端将备货数量按 `ceil(2.01 × 30)` 计算为 61。
+3. **Given** 同一子 SKU 有 3 个运营认领通过且各自提交，**When** 主管勾选这 3 条申请导出，**Then** 导出 3 行，不合并。
+4. **Given** 主管提交非空、去重的 `request_ids`，**When** 任一申请不再满足 `submitted + waiting_export`，**Then** 整批不导出；全部有效时才记录不可变 `ExportBatch + ExportRow` 快照并推进到 `waiting_arrival`。
 
 ---
 
@@ -123,9 +129,9 @@
 1. **Given** 平台内存在待分配、待认领、待复核、已确认不认领和可导出的商品，**When** 用户打开商品看板，**Then** 系统按主 SKU 分组展示全部商品，而不是只展示机会池中的待处理新品。
 2. **Given** 一个主 SKU 组包含多个子 SKU，**When** 用户展开该主 SKU 组，**Then** 系统展示每个子 SKU 的认领结果、复核结果和是否可导出。
 3. **Given** 用户按站点、运营、状态、健康标签、一级类目 / 二级类目、来源批次筛选，或按主 SKU、子 SKU、商品名、关键词搜索，**When** 条件生效，**Then** 商品看板只缩小展示范围，不改变商品状态。
-4. **Given** 商品看板中展示到货、二次调研、定价、刊登、每周监控或四周总结等后段节点，**When** 第一版运行，**Then** 这些节点只作为状态标签或占位展示，不创建第一版外的到货、调研、刊登、监控或总结待办。
+4. **Given** 商品已经进入到货、二次调研、刊登或周期观察，**When** 用户打开商品详情，**Then** 页面以只读档案展示后段历史；编辑仍在各自工作台完成。
 5. **Given** 同一主 SKU 下有多个子 SKU，**When** 商品看板或认领页展示商品信息，**Then** 开品理由按主 SKU 组显示一次，子 SKU 明细不重复展示开品理由。
-6. **Given** 商品看板没有独立详情页，**When** 用户查看主 SKU 组，**Then** 页面只保留展开 / 收起子 SKU 操作，不提供与展开重复的查看详情按钮。
+6. **Given** 用户点击商品看板、认领页或复核页中的主 SKU / 子 SKU 文本，**When** 导航发生，**Then** 打开统一商品详情页，不额外堆叠重复的“查看详情”按钮。
 
 ### Edge Cases
 
@@ -155,11 +161,11 @@
 - **FR-012**: System MUST prevent supervisors from editing operator-submitted claim daily sales or not-claim reason during review.
 - **FR-013**: System MUST allow supervisors to approve claimed submissions, confirm not-claim submissions, or return submissions for supplement.
 - **FR-014**: System MUST mark supervisor-confirmed not-claim records as `已确认不认领`.
-- **FR-015**: System MUST export only child SKU detail rows that have approved claim submissions.
-- **FR-016**: System MUST calculate stocking quantity as `认领单销 × 30`.
+- **FR-015**: System MUST create or reuse one stocking-request draft per approved operator + child-SKU claim, and MUST export only explicitly selected `submitted + waiting_export` requests.
+- **FR-016**: System MUST calculate stocking quantity as `ceil(备货单销 × 30)` on the server.
 - **FR-017**: System MUST export `备货申请表` using the 16-column structure of `海外仓备货申请表.xlsx`.
-- **FR-018**: System MUST keep `补货原因` empty in the first-version stocking export.
-- **FR-019**: System MUST generate a full-field traceability export for the same approved child SKU rows, using central-table fields before `开发是否接受核价结果` plus internal claim/review/export fields.
+- **FR-018**: System MUST allow an empty replenishment reason for `首次备货` and MUST require it for `补货`.
+- **FR-019**: System MUST generate a repeatable full-field traceability export for current `submitted + waiting_export` requests plus confirmed not-claim rows, using all 80 central fields A-CB including `开发是否接受核价结果`, followed by platform fields.
 - **FR-020**: System MUST record export batch metadata: exporter, export time, export file name, and export scope.
 - **FR-021**: System MUST provide a dedicated `商品看板` that shows all platform product records grouped by main SKU, with expandable child SKU rows and current workflow status.
 - **FR-022**: System MUST keep `商品看板` separate from `机会池`: `商品看板` shows all product statuses, while `机会池` shows only pending or claimable new-product opportunities.
@@ -181,6 +187,10 @@
 - **FR-038**: System MUST require a supervisor return reason only when returning a not-claim submission for supplement, and MUST expose that reason to the operator on the returned child SKU.
 - **FR-039**: System MUST display `开品理由` once at main-SKU-group level when child SKUs share the same main SKU.
 - **FR-040**: System MUST avoid duplicate dashboard actions; if no richer detail view exists, product dashboard cards MUST use only expand/collapse for child SKU details.
+- **FR-041**: System MUST let only the authenticated operator save and submit their own stocking request; editing a submitted request before export reopens it as draft and requires resubmission.
+- **FR-042**: System MUST support exactly three sales-self decisions: existing inventory/no stocking, no inventory/stocking, and no inventory/no stocking; the contradictory true/true combination MUST be rejected.
+- **FR-043**: System MUST obtain unit volume from ERP dimensions when available or require a positive manual value; it MUST NOT silently prefill the source-table aggregate volume.
+- **FR-044**: System MUST advance PLM-linked platform records only when the claim is waiting_arrival and is backed by an exported stocking_available ExportRow, matched by salesperson, child SKU and exported-country snapshot.
 
 ### Key Entities *(include if feature involves data)*
 
@@ -205,7 +215,7 @@
 - **SC-003**: At least 95% of valid source rows in the two in-scope feedback workbooks are imported without manual correction when headers match documented mappings.
 - **SC-004**: A supervisor can generate assignment suggestions and create operator tasks for a weekly batch in under 10 minutes.
 - **SC-005**: Operators cannot submit claim records missing required claim daily sales or not-claim reason.
-- **SC-006**: Approved claim rows export with stocking quantity equal to claim daily sales multiplied by 30 in 100% of tested cases.
+- **SC-006**: Submitted stocking-request rows export with stocking quantity equal to `ceil(daily sales × 30)` in 100% of tested cases.
 - **SC-007**: Confirmed not-claim rows never appear in the stocking export.
 - **SC-008**: The exported stocking workbook can be opened in Excel and contains the same 16 business columns as the existing `海外仓备货申请表.xlsx` template.
 - **SC-009**: A supervisor or operator can locate an imported main SKU or child SKU and identify its current status from the dedicated `商品看板` in under 1 minute during a smoke test.

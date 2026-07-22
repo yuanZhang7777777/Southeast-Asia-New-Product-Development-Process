@@ -165,7 +165,42 @@ Supervisor decision on one operator submission.
 
 - Supervisor cannot edit operator fields.
 - `confirmed_not_claim` changes the opportunity/claim outcome to `已确认不认领`.
-- `approved` on a claim record makes that claim exportable.
+- `approved` on a claim record creates or reuses one operator-owned stocking-request draft; approval alone is not exportable.
+
+## StockingRequest
+
+One operator-owned request for one approved claim / child SKU.
+
+**Fields**:
+
+- `id`
+- `opportunity_id`
+- `claim_record_id` (unique)
+- `application_date`
+- `submitted_at`
+- `request_type`: `initial` or `replenishment`
+- `salesperson_name`
+- `main_sku`
+- `sub_sku`
+- `cost_price`
+- `unit_volume`
+- `unit_volume_source`: `erp`, `manual`, or null
+- `daily_sales`
+- `quantity`
+- `country`
+- `warehouse`
+- `amount`
+- `volume`
+- `reason`
+- `status`: `draft`, `submitted`, or `exported`
+
+**Validation rules**:
+
+- Only the authenticated owner can save or submit; exported requests are read-only.
+- Saving an already submitted request reopens it as `draft` and requires resubmission.
+- `quantity = ceil(daily_sales × 30)`; amount and volume are calculated from final submitted values.
+- `warehouse` is optional; `reason` is required only for `replenishment`.
+- Unit volume comes from ERP dimensions or a positive manual value; source-table aggregate volume is not silently reused.
 
 ## FlowTask
 
@@ -211,7 +246,7 @@ One export action.
 
 ## ExportRow
 
-One approved child SKU claim row in an exported workbook.
+One immutable child-SKU snapshot row in an exported workbook. `stocking_available` rows come from selected submitted requests; traceability batches may also contain confirmed not-claim rows.
 
 **Fields**:
 
@@ -219,6 +254,15 @@ One approved child SKU claim row in an exported workbook.
 - `export_batch_id`
 - `opportunity_id`
 - `claim_record_id`
+- `stocking_request_id`
+- `application_date`
+- `stocking_type`
+- `selection_source`
+- `cost_price`
+- `unit_volume`
+- `amount`
+- `volume`
+- `replenishment_reason`
 - `salesperson_name`
 - `main_sku`
 - `sub_sku`
@@ -229,6 +273,6 @@ One approved child SKU claim row in an exported workbook.
 
 **Validation rules**:
 
-- `stocking_quantity = claim_daily_sales × 30`.
-- Confirmed not-claim records are never export rows.
-- Multiple approved claims for the same child SKU generate multiple export rows.
+- `stocking_quantity = ceil(claim_daily_sales × 30)`.
+- Confirmed not-claim records are excluded from `stocking_available` rows but may appear in a separate traceability export batch.
+- Multiple selected submitted requests for the same child SKU generate independent export rows.

@@ -2,7 +2,7 @@ import math
 from datetime import date, datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class HealthResponse(BaseModel):
@@ -301,6 +301,7 @@ class StockingRequestUpdate(BaseModel):
     request_type: Literal["initial", "replenishment"] | None = None
     cost_price: float | None = None
     unit_volume: float | None = None
+    unit_volume_source: Literal["erp", "manual"] | None = None
     daily_sales: float | None = None
     country: str | None = None
     warehouse: str | None = None
@@ -329,6 +330,12 @@ class StockingDecisionUpdate(BaseModel):
     needs_stocking: bool
 
     model_config = {"extra": "forbid"}
+
+    @model_validator(mode="after")
+    def inventory_and_stocking_are_mutually_exclusive(self) -> "StockingDecisionUpdate":
+        if self.inventory_available and self.needs_stocking:
+            raise ValueError("inventory_available and needs_stocking cannot both be true")
+        return self
 
 
 class SalesSelfSelectionChildCreate(StockingDecisionUpdate):
