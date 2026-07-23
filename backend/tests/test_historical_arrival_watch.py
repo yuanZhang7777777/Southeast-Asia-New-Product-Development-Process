@@ -137,6 +137,36 @@ def test_validate_delivery_response_accepts_all_success() -> None:
     validate_delivery_response({"deliverResults": [{"success": True}]})
 
 
+def test_validate_delivery_response_reports_safe_business_failure() -> None:
+    from app.historical_arrival_watch import validate_delivery_response
+
+    response = {"deliverResults": [{"success": True}, {"success": False, "code": "InvalidReceiver", "message": "receiver rejected", "userId": "private-user-id"}]}
+    with pytest.raises(RuntimeError) as captured:
+        validate_delivery_response(response)
+
+    message = str(captured.value)
+    assert "failed=1/2" in message
+    assert "code=InvalidReceiver" in message
+    assert "private-user-id" not in message
+
+
+def test_safe_error_summary_sanitizes_dingtalk_http_body() -> None:
+    from app.historical_arrival_watch import safe_error_summary
+
+    error = RuntimeError('DingTalk HTTP 400: {"code":"InvalidParameter","message":"bad\\nrequest","userId":"private-user-id","accessToken":"private-token"}')
+    summary = safe_error_summary(error)
+
+    assert summary == "DingTalk HTTP 400: code=InvalidParameter message=bad request"
+    assert "private" not in summary
+
+
+def test_safe_error_summary_hides_unknown_exception_text() -> None:
+    from app.historical_arrival_watch import safe_error_summary
+
+    summary = safe_error_summary(RuntimeError("accessToken=private-token"))
+    assert summary == "RuntimeError"
+
+
 class FakeSender:
     def __init__(self, results: list[dict]) -> None:
         self.results = iter(results)

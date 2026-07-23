@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 from pathlib import Path
 from typing import Any, Iterable
@@ -114,10 +115,65 @@ def resolve_receiver(session: Session) -> str:
     return resolve_receiver_from_mappings(mappings)
 
 
+def _safe_log_text(value: Any, limit: int = 120) -> str:
+    text = " ".join(str(value or "").split())
+    text = re.sub(r"(?i)\b(access[_-]?token|user[_-]?id|open[_-]?space[_-]?id|client[_-]?secret)\b\s*[:=]\s*\S+", r"\1=<redacted>", text)
+    return text[:limit]
+
+
+def _safe_error_fields(value: Any) -> tuple[str, str]:
+    if not isinstance(value, dict):
+        return "", ""
+    code = value.get("code") or value.get("errCode") or value.get("errorCode") or ""
+    message = value.get("message") or value.get("msg") or value.get("errorMessage") or ""
+    return _safe_log_text(code, 40), _safe_log_text(message)
+
+
 def validate_delivery_response(response: Any) -> None:
     results = response.get("deliverResults") if isinstance(response, dict) else None
-    if not isinstance(results, list) or not results or any(not isinstance(result, dict) or result.get("success") is not True for result in results):
-        raise RuntimeError("DingTalk delivery response was not fully successful")
+    if not isinstance(results, list) or not results:
+        raise RuntimeError("DingTalk delivery failed: failed=unknown results=0")
+    failures = [result for result in results if not isinstance(result, dict) or result.get("success") is not True]
+    if not failures:
+        return
+    code, message = _safe_error_fields(failures[0])
+    detail = f"DingTalk delivery failed: failed={len(failures)}/{len(results)}"
+    if code:
+        detail += f" code={code}"
+    if message:
+        detail += f" message={message}"
+    raise RuntimeError(detail)
+
+
+def safe_error_summary(error: Exception) -> str:
+    message = str(error)
+    match = re.match(r"^DingTalk HTTP (\d+):\s*(.*)$", message, re.DOTALL)
+    if match:
+        status, body = match.groups()
+        summary = f"DingTalk HTTP {status}:"
+        try:
+            payload = json.loads(body)
+        except (TypeError, ValueError):
+            payload = {}
+        code, detail = _safe_error_fields(payload)
+        if code:
+            summary += f" code={code}"
+        if detail:
+            summary += f" message={detail}"
+        return summary.rstrip(":")
+    if message.startswith("DingTalk delivery failed:"):
+        return _safe_log_text(message, 200)
+    safe_prefixes = (
+        "historical arrival pilot requires ",
+        "historical arrival pilot state ",
+        "no eligible pilot receiver",
+        "ambiguous pilot receiver",
+        "DingTalk client credentials are not configured",
+        "watchlist records must be a list",
+    )
+    if any(message.startswith(prefix) for prefix in safe_prefixes):
+        return _safe_log_text(message, 200)
+    return type(error).__name__
 
 
 def load_json(path: Path, default: dict[str, Any]) -> dict[str, Any]:
@@ -291,8 +347,8 @@ def main(argv: list[str] | None = None) -> int:
                 summary = run_pilot(args.date, session=session, **parameters)
         print(json.dumps(summary, ensure_ascii=False, sort_keys=True))
         return 0
-    except Exception:
-        print("historical arrival pilot failed", file=sys.stderr)
+    except Exception as error:
+        print(f"historical arrival pilot failed: {safe_error_summary(error)}", file=sys.stderr)
         return 1
 
 
