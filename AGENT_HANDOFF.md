@@ -1,10 +1,10 @@
 # Agent Handoff
 
-> Updated: 2026-07-22 20:00 Asia/Shanghai
+> Updated: 2026-07-23 12:20 Asia/Shanghai
 
 ## Start Here
 
-The canonical development branch is `lxc/integrated-workflow`. It merges the complete production front-stage line `lxc/pricing-review-edit@fbf574c` and the listing/observation line `lxc/listing-observation-workbench@a4a61e4` in merge commit `1aae41e`.
+The canonical base branch is `lxc/integrated-workflow`. The current development/UAT branch is `lxc/uat-usability-fixes` at `d8e637a`; it contains the compact workbench fixes and the development-only historical-arrival pilot.
 
 Read these files before changing behavior:
 
@@ -21,7 +21,7 @@ Do not infer current behavior from old plans or prototypes when they conflict wi
 | Environment | Address | Current code | Rule |
 |---|---|---|---|
 | Production | `http://101.132.26.138:8080` | `b373d65` | In use. Do not connect, deploy or restart without a separately approved non-working-time release window. |
-| Development | `http://139.224.2.166:18081` | `af4addc3f765` | Unified branch validation and approved Liu-only historical-arrival pilot. SSH alias: `hz-new-product-dev`. |
+| Development | `http://139.224.2.166:18081` | `d8e637a` | Compact UAT workbench and approved Liu-only historical-arrival pilot. SSH alias: `hz-new-product-dev`. |
 
 Production database is `workflow_prod_20260715`; development database is `workflow_dev_20260715`. Databases, Redis, uploads, volumes, ports and environment variables are isolated. Never commit passwords, tokens, cookies, private keys or `.env` files.
 
@@ -29,26 +29,27 @@ PLM arrival endpoint settings and credentials are stored separately in both serv
 
 `caigen-arrival-notifier` remains the only production arrival-card sender on `101.132.26.138`. The one explicit development exception is the isolated historical watchlist pilot described below: it can send only to 刘学城, keeps all global switches false and never writes workflow tables. Development does not receive a feed from the production notifier. The template is selected through `DINGTALK_ARRIVAL_CARD_TEMPLATE_ID`; never commit the environment value.
 
-## Development Deployment: `af4addc3f765`
+## Development Deployment: `d8e637a`
 
-The historical-arrival pilot release is running only at `http://139.224.2.166:18081`. The deployed code commit is `af4addc3f765`; the canonical branch `lxc/integrated-workflow` contains that commit. Existing front-end behavior and assets are unchanged.
+The current release is running only at `http://139.224.2.166:18081` from branch `lxc/uat-usability-fixes`.
 
-- Local verification passed: backend `356 passed`, focused Item reconciliation `12 passed`, both pilot reviews approved, Alembic `e1f2a3b4c678 (head)` and `git diff --check`. No front-end code changed; the prior `129 passed` and production build remain the current front-end baseline.
-- Release package: `/opt/hengzhe-new-product-dev/releases/af4addc3f765.tar.gz`, SHA-256 `8a1961df9b8525af181bacff171b1a09a5d5a5911c48d5a082c94f544c57b11f`.
-- Pre-release backup directory: `/opt/hengzhe-new-product-dev/backups/historical_arrival_pilot_20260722_194109/`; it contains the gzip-checked database dump, mode-600 `.env` copy, prior app archive and baseline counts. Rollback scheduler image: `hengzhe-new-product-dev-scheduler-backup:b0f27fde5109_20260722_194109`.
-- Only `scheduler` was rebuilt and recreated (`35a8baef... -> ce8051c8...`). API, worker, frontend, reverse-proxy, PostgreSQL and Redis kept their container IDs; every active container has `RestartCount=0`.
-- Public and internal health return `ok/development`; current assets are `/assets/index-Dyt4ZkdJ.js` and `/assets/index-BiB-4QeZ.css`. `PLM_SYNC_ENABLED=false`, `WORKFLOW_AUTOMATION_ENABLED=false` and `DINGTALK_CARD_AUTOSEND_ENABLED=false` remain unchanged.
-- Runtime watchlist `/data/plm/historical-watchlist.json` has 2,237 unique keys and SHA-256 `c9ca8fd4dd2bc9c625649ca6b1561a1f74b62acf64de58f02579010d886207`. A no-send preview for 2026-07-01 matched 3 rows; the pilot state file remained absent and the five baseline workflow-table counts were unchanged.
-- Development cron `/etc/cron.d/hengzhe-new-product-historical-arrival-pilot` starts on 2026-07-23: 08:00 downloads the prior Beijing day, 09:00-23:45 retries every 15 minutes under a non-blocking lock. Matches are chunked at 20 and delivered only to the uniquely resolved 刘学城 account; zero matches send nothing.
+- Local verification passed: backend `361 passed`, frontend `134 passed`, TypeScript/Vite production build, Alembic `e1f2a3b4c678 (head)` and `git diff --check`.
+- Release package: `/opt/hengzhe-new-product-dev/releases/d8e637a.tar.gz`, SHA-256 `57eb833b71c19969b1b0e1c69495f8170150715105403df0a9a078762bad9812`.
+- Pre-release backup directory: `/opt/hengzhe-new-product-dev/backups/release_d8e637a_20260723_120747`; previous application directory: `/opt/hengzhe-new-product-dev/app.previous_d8e637a_20260723_120747`.
+- Only `frontend` and `scheduler` were rebuilt and recreated. API, worker, reverse-proxy, PostgreSQL and Redis were not recreated; every active container has `RestartCount=0`.
+- Public health returns `ok/development`; current assets are `/assets/index-DGoiYKtv.js` and `/assets/index-CWIn5Bmg.css`. `PLM_SYNC_ENABLED=false`, `WORKFLOW_AUTOMATION_ENABLED=false` and `DINGTALK_CARD_AUTOSEND_ENABLED=false`.
+- The 2026-07-22 historical-arrival run completed naturally at 12:15: one matched card was sent only to 刘学城 and state is `cards=1`, `sent_cards=[0]`, `completed=true`. Counts stayed unchanged at `plm_arrival_batch=1`, `plm_arrival_item=2263`, `listing_record=4`, `item_observation_period=17`, `notification_log=31`.
+- Development cron `/etc/cron.d/hengzhe-new-product-historical-arrival-pilot` is restored. The completed date will not resend.
 - Production was not connected, deployed, restarted or modified.
 
 ## Verified Baseline
 
-- Deployed code commit: `af4addc3f765`; `lxc/integrated-workflow` contains it.
-- Backend: `356 passed`. Frontend remains unchanged at the prior `129 passed` plus TypeScript/Vite production-build baseline.
+- Deployed code commit: `d8e637a` on `lxc/uat-usability-fixes`, based on `lxc/integrated-workflow`.
+- Backend: `361 passed`. Frontend: `134 passed` plus TypeScript/Vite production build.
 - Alembic: source and `workflow_dev_20260715` are at `e1f2a3b4c678 (head)`.
-- Development health is `ok/development` inside the server and through the public `18081` path. Current assets are `/assets/index-Dyt4ZkdJ.js` and `/assets/index-BiB-4QeZ.css`.
-- PostgreSQL and Redis container IDs remain `0383695d...` and `a764cb3f...`; API, worker, frontend and reverse-proxy also retained their prior IDs. Only scheduler changed to `ce8051c8...`; all have `RestartCount=0`.
+- Development health is `ok/development` inside the server and through the public `18081` path. Current assets are `/assets/index-DGoiYKtv.js` and `/assets/index-CWIn5Bmg.css`.
+- Only frontend and scheduler changed in the latest release; all active containers have `RestartCount=0`.
+- The 12:15 historical-arrival delivery succeeded without changing any of the five checked workflow-table counts.
 - A 2026-07-22 read-only live PLM check downloaded and schema-validated historical exports without changing workflow-table counts: 2026-06-22 produced 652 parsed restock rows and zero new arrivals; 2026-07-01 produced 843 parsed rows, including four new arrivals and 839 restocks. None of the four new-arrival keys has an exact current platform match because the development database lacks the corresponding formally exported waiting-arrival records. The current exact-match write transition is therefore still open.
 - A read-only DingTalk Sheet API check resolved node `6LeBq413JAzx7YBNCrBom74n8DOnGvpb` and its `精品流程` worksheet. Of 11 unique `main SKU + country + salesperson` groups represented by the supplemental workbook's 35 arrival-tagged rows, 8 groups matched 25 shop + Item rows; three groups were absent and one additional main-SKU match had a conflicting salesperson. All four-week metric cells in the 25 exact-responsibility matches were empty. Treat this sheet only as a historical listing reconciliation candidate; FineBI raw rows remain the weekly metric source.
 - A read-only audit of the downloaded TH/VN/PH historical new-product workbooks produced 2,237 unique `country + child SKU` watch keys and 3,842 potential unique responsibility keys after separating rejection text, orphan rows and exact duplicates. 1,087 SKUs have multiple historical claimants. The files contain no actual arrival, shop or Item evidence; keep source file/hash/sheet/row/column traceability and do not replay them as completed workflow states.
@@ -68,13 +69,14 @@ Front stage:
 Later stage:
 
 - Secondary research with five positions: 引流款、利润款、淘汰款、稳定款、清仓款.
+- Each site represents one country. Country/site filters use the existing structured site field, while shop name is only an auxiliary filter.
 - 引流款、利润款、稳定款 enter listing; 淘汰款 and 清仓款 skip listing; only entering 淘汰款 creates the daily supervisor reminder event.
 - One main SKU can have multiple manually entered shop + globally unique Item listing records.
 - Each Item selects its own first Thursday-to-Wednesday period and observes four independent weeks; later periods are manually added.
 - Weekly metrics are read-only; product positioning and optimization action are required; week 4 also requires a summary.
-- Completed reviews remain editable with audit; stopped Items may finish already-fetched periods; only explicit stop pauses future fetches and reminders.
+- Completed reviews are read-only by default and become editable only after the operator clicks `纠错`; stopped Items may finish already-fetched periods, while only explicit stop pauses future fetches and reminders.
 - Product detail is the read-only lifecycle archive: secondary-research history and listing/observation history have separate entries, with listing records grouped by source business period.
-- The listing workbench keeps full viewing and editing in a compact collapsible main-SKU / Item / visible-week layout. Its title, common filters, result count and batch action remain outside the independently scrolling result pane; controls no longer stretch at tablet width, future weeks stay hidden, and current pending-data weeks show only the expected data date.
+- The listing workbench separates `刊登任务` and `周期观察`, keeps main-SKU and Item rows compact/collapsible, and shows only visible periods in its progress summary. Future test periods no longer make the header claim that first-round observation is complete.
 
 Detailed field, state, permission and API rules stay in the confirmed requirement and architecture documents; do not duplicate them here.
 
@@ -98,7 +100,7 @@ Unique source evidence and the original Spec Kit bundle are frozen under `docs/a
 - Include the DingTalk `精品流程` historical listing rows in that report as a separate candidate source. Match only after country and salesperson alignment, keep the one observed responsibility conflict and three missing groups explicit, and never infer child-SKU, arrival or weekly metrics from this sheet.
 - Review the 202 unique FineBI candidates before any controlled prefill; keep the 364 multiple candidates manual and ignore the 1,671 unmatched for now. Old claimants remain provenance while the current PLM salesperson is authoritative for arrival notification and exact linkage.
 - No provided asset implements real-time `child SKU -> shop + Item` discovery. FineBI raw rows include `ITEMID + 主SKU + 店铺 + 审核时间` and therefore provide delayed historical candidates after financial activity, but contain no child SKU and do not prove real-time listing. PLM and the ERP product-list wrapper also do not return shop/Item; unmatched records remain operator-entered.
-- After the cutover and reconciliation gate, run one controlled current-code PLM exact-match transition when a newly and formally exported development record reaches `waiting_arrival`; keep persistent automation and card sending disabled and require exactly one planned match before the one-time write.
+- Use one historical PLM arrival hit to create exactly one traceable secondary-research task in development, preserving source-row evidence and the PLM salesperson. 刘学城 is the acting UAT user; do not replay completed workflow states from the old workbooks.
 - Development does not currently provide all five ERP settings (`ERP_LOGIN_URL`, `ERP_PRODUCT_LIST_URL`, `ERP_DOWNLOAD_LIST_URL`, `ERP_USERNAME`, `ERP_PASSWORD`); the referenced asset document contains no uniquely locatable credentials. Real ERP volume lookup remains unaccepted until values are supplied through development `.env` only. The deployed fallback is manual dimensions with automatic volume calculation.
 - The weekly Item source was already delivered in `E:\Project\hermes\group8_item_week_package_20260715.zip` and exists in Hermes: FineBI report `35d21769f7a14a6191cdc4f4a211a04a`, widget `ItemID财务数据八部`, payload `config/finebi_payloads/itemid_finance.json`. Historical-candidate parsing is implemented; the remaining work is aggregating tracked `Item + shop + period` metrics into `apply_week_metrics(...)`, with snapshots, scheduling and retries. Do not consume the filtered finished sheet.
 - Real scheduling, retry monitoring and operator message delivery for weekly Item metrics remain unconnected.
@@ -109,6 +111,6 @@ Unique source evidence and the original Spec Kit bundle are frozen under `docs/a
 1. Confirm the active branch is based on `lxc/integrated-workflow` and inspect `git status` before editing.
 2. Preserve the production/development boundary; normal development and deployment target only `hz-new-product-dev`.
 3. Run backend tests, frontend tests/build and Alembic head verification before every release.
-4. Check the development pilot log after its first 08:00/09:00 cycle; if a card is sent, verify only 刘学城 received it and the five workflow-table counts remain unchanged.
+4. Monitor the next business date's development arrival run; do not replay completed 2026-07-22, and verify any new card goes only to 刘学城 without unintended workflow writes.
 5. Update `docs/02-功能实现状态.md`, `docs/20-项目推进总控.md` and `docs/06-部署与服务器准备.md` when implementation or deployment state changes.
 6. Use `neat-freak` at milestones; update only the active document set and keep `docs/archive/` read-only.
