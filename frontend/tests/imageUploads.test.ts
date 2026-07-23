@@ -142,3 +142,20 @@ test("secondary research only lets the latest queued save set final status", () 
   assert.match(saveDraft, /if \(saveRevision\.current\[item\.claim_record_id\] === revision\) \{[\s\S]*?"已保存"/);
   assert.match(saveDraft, /catch \(error\) \{[\s\S]*?if \(saveRevision\.current\[item\.claim_record_id\] === revision\) \{[\s\S]*?"保存失败"/);
 });
+
+test("submitted secondary research supports explicit operator and manager corrections", () => {
+  assert.match(secondary, /canManage: boolean/);
+  assert.match(secondary, /const \[correctionClaimId, setCorrectionClaimId\] = useState<string \| null>\(null\)/);
+  assert.match(secondary, /const uploadCounts = useRef<Record<string, number>>\(\{\}\)/);
+  assert.match(secondary, /const \[savingCorrectionClaimId, setSavingCorrectionClaimId\] = useState<string \| null>\(null\)/);
+  assert.match(secondary, /function changeUploadCount\(claimRecordId: string, delta: number\)/);
+  assert.match(secondary, /finally \{[\s\S]*?changeUploadCount\(item\.claim_record_id, -1\)/);
+  assert.match(secondary, /if \(isCorrectionBusy\(item\.claim_record_id\)\) return/);
+  assert.match(secondary, /setSavingCorrectionClaimId\(item\.claim_record_id\)[\s\S]*?finally \{[\s\S]*?setSavingCorrectionClaimId\(null\)/);
+  assert.match(secondary, /const rowEditable = \(scenario === "pending" && props\.editable\) \|\| \(correctionActive && savingCorrectionClaimId !== item\.claim_record_id\)/);
+  assert.match(secondary, /api\.correctSecondaryResearch/);
+  assert.match(secondary, /disabled=\{correctionClaimId !== null \|\| isCorrectionBusy\(item\.claim_record_id\)\}[\s\S]*?>纠错</);
+  assert.match(secondary, /disabled=\{isCorrectionBusy\(item\.claim_record_id\)\}[\s\S]*?>保存纠错</);
+  assert.match(secondary, /disabled=\{isCorrectionBusy\(item\.claim_record_id\)\}[\s\S]*?>取消</);
+  assert.match(app, /<SecondaryResearchView[\s\S]*?canManage=\{canManage\}/);
+});

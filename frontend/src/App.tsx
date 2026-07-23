@@ -1224,6 +1224,7 @@ function App() {
               <SecondaryResearchView
                 salespersonName={activeOperator}
                 editable={activeRole === "operator"}
+                canManage={canManage}
                 onStatus={setStatusMessage}
               />
             )}

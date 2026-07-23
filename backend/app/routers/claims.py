@@ -42,10 +42,15 @@ def submit_claim(
 async def upload_evidence_image(
     opportunity_id: str = Form("unknown"),
     file: UploadFile = File(...),
-    auth: AuthContext | None = Depends(require_roles("operator")),
+    auth: AuthContext | None = Depends(require_roles("operator", "manager")),
     db: Session = Depends(get_db),
 ) -> dict[str, object]:
-    if auth and not services.can_upload_claim_evidence(db, opportunity_id, auth.operator_name, auth.user.id):
+    manager_access = bool(auth and auth.role_keys.intersection({"manager", "super_admin"}))
+    if (
+        auth
+        and not manager_access
+        and not services.can_upload_claim_evidence(db, opportunity_id, auth.operator_name, auth.user.id)
+    ):
         raise HTTPException(status_code=403, detail="claim evidence does not belong to current operator")
     data = await file.read()
     if not data:

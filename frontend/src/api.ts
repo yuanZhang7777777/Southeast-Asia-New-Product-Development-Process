@@ -660,6 +660,11 @@ export const api = {
       `/secondary-research/${claimRecordId}?salesperson_name=${encodeURIComponent(salespersonName)}`,
       { method: "PATCH", body: JSON.stringify(payload) }
     ),
+  correctSecondaryResearch: (claimRecordId: string, salespersonName: string, payload: unknown) =>
+    request<SecondaryResearchItem>(
+      `/secondary-research/${claimRecordId}/correction?salesperson_name=${encodeURIComponent(salespersonName)}`,
+      { method: "PATCH", body: JSON.stringify(payload) }
+    ),
   submitSecondaryResearchGroup: (salespersonName: string, claimRecordIds: string[]) =>
     request<SecondaryResearchItem[]>(
       `/secondary-research/submit-group?salesperson_name=${encodeURIComponent(salespersonName)}`,

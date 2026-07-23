@@ -36,6 +36,14 @@ test("二次调研按场景和组合条件精确筛选国家及子 SKU", () => {
       main_sku: "MAIN-NONE",
       main_sku_name: "无国家主品",
       items: [{ sub_sku: "SUB-NONE", sub_sku_name: "绿色", secondary_research_submitted_at: null, downstream_status: "waiting_secondary_research" }]
+    },
+    {
+      country: "VN",
+      business_period: "开发0710期",
+      salesperson_name: "运营甲",
+      main_sku: "MAIN-NOT-SUBMITTED",
+      main_sku_name: "尚未进入二次调研",
+      items: [{ sub_sku: "SUB-NOT-SUBMITTED", secondary_research_submitted_at: null, downstream_status: "waiting_arrival" }]
     }
   ];
 
@@ -57,6 +65,8 @@ test("二次调研按场景和组合条件精确筛选国家及子 SKU", () => {
     filterSecondaryResearchGroups(groups, { scenario: "pending", country: "PH" }).map((group) => group.main_sku),
     ["MAIN-PH"]
   );
+  assert.equal(filterSecondaryResearchGroups(groups, { scenario: "submitted", country: "VN" }).length, 0);
+  assert.equal(filterSecondaryResearchGroups(groups, { scenario: "pending", country: "VN" }).length, 0);
 });
 
 test("二次调研支持五种定位且只有淘汰款和清仓款跳过刊登", () => {

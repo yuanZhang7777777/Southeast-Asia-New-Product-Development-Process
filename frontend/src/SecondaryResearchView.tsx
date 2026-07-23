@@ -47,6 +47,7 @@ type DraftMap = Record<string, SecondaryResearchDraft<UploadedEvidenceImage>>;
 export function SecondaryResearchView(props: {
   salespersonName: string;
   editable: boolean;
+  canManage: boolean;
   onStatus: (message: string) => void;
 }) {
   const [scenario, setScenario] = useState<"pending" | "submitted">("pending");
@@ -62,6 +63,11 @@ export function SecondaryResearchView(props: {
   const saveQueue = useRef(createKeyedSaveQueue()).current;
   const saveRevision = useRef<Record<string, number>>({});
   const [saveState, setSaveState] = useState<Record<string, string>>({});
+  const [correctionClaimId, setCorrectionClaimId] = useState<string | null>(null);
+  const [savingCorrectionClaimId, setSavingCorrectionClaimId] = useState<string | null>(null);
+  const correctionOriginal = useRef<Record<string, SecondaryResearchDraft<UploadedEvidenceImage>>>({});
+  const uploadCounts = useRef<Record<string, number>>({});
+  const [, setUploadRevision] = useState(0);
   const [loading, setLoading] = useState(false);
   const periods = useMemo(
     () => Array.from(new Set(allGroups.map((entry) => entry.business_period || "").filter(Boolean))).sort().reverse(),
@@ -136,30 +142,90 @@ export function SecondaryResearchView(props: {
     }
   }
 
+  function changeUploadCount(claimRecordId: string, delta: number) {
+    const next = Math.max(0, (uploadCounts.current[claimRecordId] ?? 0) + delta);
+    if (next) uploadCounts.current[claimRecordId] = next;
+    else delete uploadCounts.current[claimRecordId];
+    setUploadRevision((current) => current + 1);
+  }
+
+  function isUploading(claimRecordId: string) {
+    return (uploadCounts.current[claimRecordId] ?? 0) > 0;
+  }
+
+  function isCorrectionBusy(claimRecordId: string) {
+    return isUploading(claimRecordId) || savingCorrectionClaimId === claimRecordId;
+  }
+
   async function uploadImages(item: SecondaryResearchItem, source: FileList | File[]) {
     const files = imageFiles(source);
-    if (!files.length) return;
+    if (!files.length || savingCorrectionClaimId === item.claim_record_id) return;
+    changeUploadCount(item.claim_record_id, 1);
     setSaveState((current) => ({ ...current, [item.claim_record_id]: "上传中" }));
     try {
       const uploaded = await Promise.all(files.map((file) => api.uploadClaimEvidence(item.opportunity_id, file)));
       const currentDraft = draftsRef.current[item.claim_record_id] || createSecondaryResearchDraft<UploadedEvidenceImage>();
       const nextDraft = { ...currentDraft, evidenceImages: [...currentDraft.evidenceImages, ...uploaded] };
       replaceDrafts({ ...draftsRef.current, [item.claim_record_id]: nextDraft });
-      await saveDraft(item, nextDraft).catch(() => undefined);
+      if (scenario === "pending") await saveDraft(item, nextDraft).catch(() => undefined);
+      else setSaveState((current) => ({ ...current, [item.claim_record_id]: "待保存纠错" }));
     } catch (error) {
       setSaveState((current) => ({ ...current, [item.claim_record_id]: "上传失败" }));
       props.onStatus(error instanceof Error ? error.message : `${item.sub_sku} 图片上传失败`);
+    } finally {
+      changeUploadCount(item.claim_record_id, -1);
     }
   }
 
   async function removeImage(item: SecondaryResearchItem, image: UploadedEvidenceImage) {
+    if (savingCorrectionClaimId === item.claim_record_id) return;
     const currentDraft = draftsRef.current[item.claim_record_id] || createSecondaryResearchDraft<UploadedEvidenceImage>();
     const nextDraft = {
       ...currentDraft,
       evidenceImages: currentDraft.evidenceImages.filter((entry) => entry.url !== image.url || entry.name !== image.name)
     };
     replaceDrafts({ ...draftsRef.current, [item.claim_record_id]: nextDraft });
-    await saveDraft(item, nextDraft).catch(() => undefined);
+    if (scenario === "pending") await saveDraft(item, nextDraft).catch(() => undefined);
+    else setSaveState((current) => ({ ...current, [item.claim_record_id]: "待保存纠错" }));
+  }
+
+  function startCorrection(item: SecondaryResearchItem) {
+    const draft = draftsRef.current[item.claim_record_id] || createSecondaryResearchDraft<UploadedEvidenceImage>(item);
+    correctionOriginal.current[item.claim_record_id] = { ...draft, evidenceImages: [...draft.evidenceImages] };
+    setCorrectionClaimId(item.claim_record_id);
+    setSaveState((current) => ({ ...current, [item.claim_record_id]: "纠错中，保存后生效" }));
+  }
+
+  function cancelCorrection(item: SecondaryResearchItem) {
+    if (isCorrectionBusy(item.claim_record_id)) return;
+    const original = correctionOriginal.current[item.claim_record_id];
+    if (original) replaceDrafts({ ...draftsRef.current, [item.claim_record_id]: original });
+    delete correctionOriginal.current[item.claim_record_id];
+    setCorrectionClaimId(null);
+    setSaveState((current) => ({ ...current, [item.claim_record_id]: "已取消纠错" }));
+  }
+
+  async function saveCorrection(item: SecondaryResearchItem) {
+    if (isCorrectionBusy(item.claim_record_id)) return;
+    const draft = draftsRef.current[item.claim_record_id];
+    if (!draft?.conclusion.trim() || !draft.positioning) {
+      props.onStatus(`${item.sub_sku} 请填写调研结论和商品定位`);
+      return;
+    }
+    setSavingCorrectionClaimId(item.claim_record_id);
+    setSaveState((current) => ({ ...current, [item.claim_record_id]: "保存纠错中" }));
+    try {
+      await api.correctSecondaryResearch(item.claim_record_id, props.salespersonName, draftPayload(draft));
+      delete correctionOriginal.current[item.claim_record_id];
+      setCorrectionClaimId(null);
+      props.onStatus(`${item.sub_sku} 纠错已保存，原提交时间及后续记录均保留`);
+      await loadGroups();
+    } catch (error) {
+      setSaveState((current) => ({ ...current, [item.claim_record_id]: "纠错保存失败" }));
+      props.onStatus(error instanceof Error ? error.message : `${item.sub_sku} 纠错保存失败`);
+    } finally {
+      setSavingCorrectionClaimId(null);
+    }
   }
 
   async function submitGroup() {
@@ -289,15 +355,27 @@ export function SecondaryResearchView(props: {
             </div>
             {group.items.map((item) => {
               const draft = drafts[item.claim_record_id] || createSecondaryResearchDraft<UploadedEvidenceImage>();
+              const correctionActive = scenario === "submitted" && correctionClaimId === item.claim_record_id;
+              const rowEditable = (scenario === "pending" && props.editable) || (correctionActive && savingCorrectionClaimId !== item.claim_record_id);
+              const canCorrectRow = scenario === "submitted" && (props.editable || props.canManage);
               return (
                 <div className="research-matrix-row research-secondary-grid" key={item.claim_record_id}>
-                  <ResearchSkuCell item={item} />
+                  <ResearchSkuCell item={item}>
+                    {canCorrectRow && (correctionActive ? (
+                      <>
+                        <button className="btn small primary" type="button" disabled={isCorrectionBusy(item.claim_record_id)} onClick={() => void saveCorrection(item)}>保存纠错</button>
+                        <button className="btn small" type="button" disabled={isCorrectionBusy(item.claim_record_id)} onClick={() => cancelCorrection(item)}>取消</button>
+                      </>
+                    ) : (
+                      <button className="btn small" type="button" disabled={correctionClaimId !== null || isCorrectionBusy(item.claim_record_id)} onClick={() => startCorrection(item)}>纠错</button>
+                    ))}
+                  </ResearchSkuCell>
                   <label className="research-entry-cell">
                     <span>AL 调研时间</span>
                     <input
                       type="datetime-local"
                       value={draft.researchedAt}
-                      disabled={!props.editable || scenario === "submitted"}
+                      disabled={!rowEditable}
                       onChange={(event) => updateDraft(item.claim_record_id, { researchedAt: event.target.value })}
                       onBlur={() => void saveDraft(item).catch(() => undefined)}
                     />
@@ -307,7 +385,7 @@ export function SecondaryResearchView(props: {
                     <div className="research-url-input">
                       <input
                         value={draft.competitorUrl}
-                        disabled={!props.editable || scenario === "submitted"}
+                        disabled={!rowEditable}
                         placeholder="粘贴二次调研链接"
                         onChange={(event) => updateDraft(item.claim_record_id, { competitorUrl: event.target.value })}
                         onBlur={() => void saveDraft(item).catch(() => undefined)}
@@ -323,7 +401,7 @@ export function SecondaryResearchView(props: {
                     <span>AN 调研结论</span>
                     <textarea
                       value={draft.conclusion}
-                      disabled={!props.editable || scenario === "submitted"}
+                      disabled={!rowEditable}
                       placeholder="填写到货后的复查结论"
                       onChange={(event) => updateDraft(item.claim_record_id, { conclusion: event.target.value })}
                       onPaste={(event: ClipboardEvent<HTMLTextAreaElement>) => void uploadImages(item, event.clipboardData.files)}
@@ -334,7 +412,7 @@ export function SecondaryResearchView(props: {
                     <span>AO 商品定位</span>
                     <select
                       value={draft.positioning}
-                      disabled={!props.editable || scenario === "submitted"}
+                      disabled={!rowEditable}
                       onChange={(event) => {
                         const nextDraft = { ...draft, positioning: event.target.value as SecondaryResearchDraft["positioning"], directlyEdited: true };
                         updateDraft(item.claim_record_id, { positioning: nextDraft.positioning });
@@ -351,11 +429,11 @@ export function SecondaryResearchView(props: {
                   <div className="research-entry-cell research-image-cell">
                     <span>调研图片</span>
                     <ResearchImageList
-                      editable={props.editable && scenario === "pending"}
+                      editable={rowEditable}
                       images={draft.evidenceImages}
                       onRemove={(image) => void removeImage(item, image)}
                     >
-                      {props.editable && scenario === "pending" && (
+                      {rowEditable && (
                         <label
                           className="research-upload"
                           title="添加调研图片"
@@ -403,7 +481,7 @@ export function SecondaryResearchView(props: {
 
       <div className="research-submitbar">
         <div>
-          <b>{scenario === "submitted" ? "已提交，只读查看" : props.editable ? "草稿自动保存" : "主管只读查看"}</b>
+          <b>{scenario === "submitted" ? correctionClaimId ? "正在纠错，保存后生效" : "已提交，可按行纠错" : props.editable ? "草稿自动保存" : "主管只读查看"}</b>
           <span>同一主 SKU 的子 SKU 必须全部填完整后整组提交；淘汰款与清仓款提交后不进入刊登。</span>
         </div>
         {props.editable && scenario === "pending" && (
@@ -458,7 +536,7 @@ function ResearchImageList({
   );
 }
 
-function ResearchSkuCell({ item }: { item: SecondaryResearchItem }) {
+function ResearchSkuCell({ item, children }: { item: SecondaryResearchItem; children?: ReactNode }) {
   return (
     <div className="research-sku-cell research-sku-content">
       <div className="research-thumb">
@@ -468,6 +546,7 @@ function ResearchSkuCell({ item }: { item: SecondaryResearchItem }) {
         <b>{item.sub_sku}</b>
         <span>{item.sub_sku_name || "未填写子 SKU 名称"}</span>
         <small>{item.reason || "暂无开品理由"}</small>
+        {children && <div className="research-correction-actions">{children}</div>}
       </div>
     </div>
   );

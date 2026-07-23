@@ -3673,6 +3673,17 @@ th {
   -webkit-line-clamp: 2;
 }
 
+.research-correction-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.research-correction-actions .btn {
+  min-height: 26px;
+  padding: 3px 7px;
+}
 .research-thumb {
   display: grid;
   width: 54px;

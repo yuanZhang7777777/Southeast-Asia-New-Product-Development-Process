@@ -104,6 +104,35 @@ def test_batch_creation_adds_multiple_items_and_four_periods_each() -> None:
     assert len(workbench["period_rows"]) == 8
 
 
+def test_listing_batch_rechecks_locked_claim_status_before_creation(monkeypatch) -> None:
+    claim_ids = create_waiting_listing_group("销售A", "MAIN-RACE")
+    with SessionLocal() as db:
+        stale_task = next(task for task in services.list_pending_listing_tasks(db) if task["main_sku"] == "MAIN-RACE")
+        for claim_id in claim_ids:
+            db.get(models.SalesClaimForecast, claim_id).downstream_status = "disabled"
+        db.commit()
+
+        monkeypatch.setattr(services, "list_pending_listing_tasks", lambda _db, today=None: [stale_task])
+        with pytest.raises(ValueError, match="no longer pending"):
+            services.create_listing_batch(
+                db,
+                stale_task["task_key"],
+                [schemas.ListingBatchRow(
+                    shop="Shop Race",
+                    item="ITEM-RACE",
+                    listing_strategy="并发保护验证",
+                    first_period_start="2026-07-16",
+                )],
+                actor_name="销售A",
+                actor_user_id="user-a",
+                actor_is_manager=False,
+                operator_name="销售A",
+                today=date(2026, 7, 20),
+            )
+
+        assert db.query(models.ListingRecord).count() == 0
+
+
 def test_batch_validation_is_atomic_and_returns_row_errors() -> None:
     headers = login("销售A", "operator", "dt-a")
     create_waiting_listing_group("销售A", "MAIN-A")
@@ -234,6 +263,7 @@ def test_later_business_period_reuses_active_items_and_links_new_claims_without_
 
     assert response.status_code == 200
     assert any("listing_record" in statement for statement in statements)
+    assert any("sales_claim_forecast" in statement for statement in statements)
     with SessionLocal() as db:
         listings = db.query(models.ListingRecord).order_by(models.ListingRecord.item).all()
         old_listing = db.get(models.ListingRecord, existing["id"])

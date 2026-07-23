@@ -1,6 +1,6 @@
 import os
 import sys
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 os.environ["DATABASE_URL"] = f"sqlite:///{Path(__file__).with_name('test_secondary_research.db')}"
@@ -316,6 +316,175 @@ def test_group_submit_allows_blank_competitor_url_defaults_al_and_preserves_user
     assert saved_a.secondary_competitor_url is None
     assert before <= saved_a_time <= after
     assert saved_b_time == user_time
+
+
+def test_submitted_secondary_research_correction_preserves_submit_time_and_audits_changes() -> None:
+    opportunity, claim = make_claim("SUB-A", "销售A", downstream_status="waiting_listing")
+    fill_research(claim, "利润款", "原结论")
+    submitted_at = datetime(2026, 7, 12, 15, tzinfo=timezone.utc)
+    claim.secondary_research_submitted_at = submitted_at
+    with SessionLocal() as db:
+        db.add_all([opportunity, claim])
+        db.commit()
+        claim_id = claim.id
+
+        result = services.correct_secondary_research(
+            db,
+            claim_id,
+            schemas.SecondaryResearchDraftUpdate(
+                secondary_conclusion="纠错后结论",
+                product_positioning="稳定款",
+            ),
+            actor_name="销售A",
+            actor_user_id="user-a",
+            manager_access=False,
+            operator_name="销售A",
+        )
+        db.commit()
+
+        saved = db.get(models.SalesClaimForecast, claim_id)
+        audit = db.query(models.AuditLog).filter_by(action="secondary_research.corrected").one()
+
+    assert result["secondary_conclusion"] == "纠错后结论"
+    assert ensure_utc(saved.secondary_research_submitted_at) == submitted_at
+    assert saved.downstream_status == "waiting_listing"
+    assert audit.actor_name == "销售A"
+    assert audit.actor_user_id == "user-a"
+    assert audit.detail["before"]["secondary_conclusion"] == "原结论"
+    assert audit.detail["after"]["product_positioning"] == "稳定款"
+
+
+def test_secondary_research_correction_locks_claim_before_rerouting(monkeypatch) -> None:
+    opportunity, claim = make_claim("SUB-LOCK", "销售A", downstream_status="waiting_listing")
+    fill_research(claim, "利润款", "原结论")
+    claim.secondary_research_submitted_at = datetime(2026, 7, 12, 15, tzinfo=timezone.utc)
+    with SessionLocal() as db:
+        db.add_all([opportunity, claim])
+        db.commit()
+        claim_id = claim.id
+
+        lock_requests: list[bool] = []
+        original = services.secondary_research_claim
+
+        def capture_lock(session, record_id, lock=False):
+            lock_requests.append(lock)
+            return original(session, record_id)
+
+        monkeypatch.setattr(services, "secondary_research_claim", capture_lock)
+        services.correct_secondary_research(
+            db,
+            claim_id,
+            schemas.SecondaryResearchDraftUpdate(product_positioning="淘汰款"),
+            actor_name="销售A",
+            actor_user_id="user-a",
+            manager_access=False,
+            operator_name="销售A",
+        )
+
+    assert lock_requests == [True]
+
+
+def test_secondary_research_correction_permissions_and_existing_listing_never_rewinds() -> None:
+    opportunity, claim = make_claim("SUB-A", "销售A", downstream_status="listing_observation")
+    fill_research(claim, "利润款", "已进入刊登")
+    claim.secondary_research_submitted_at = datetime(2026, 7, 12, 15, tzinfo=timezone.utc)
+    listing = models.ListingRecord(
+        source_group_key="source|period|PH|MAIN-1|销售A",
+        source_claim_ids=[claim.id],
+        source_type=opportunity.source_type,
+        business_period=opportunity.batch,
+        country="PH",
+        site="PH",
+        main_sku="MAIN-1",
+        main_sku_name="洗衣机罩",
+        salesperson_name="销售A",
+        shop="UAT店铺",
+        item="UAT-ITEM-1",
+        listing_strategy="测试",
+        first_period_start=date(2026, 7, 16),
+        first_period_end=date(2026, 7, 22),
+    )
+    with SessionLocal() as db:
+        db.add_all([opportunity, claim, listing])
+        db.commit()
+        claim_id = claim.id
+
+        try:
+            services.correct_secondary_research(
+                db,
+                claim_id,
+                schemas.SecondaryResearchDraftUpdate(product_positioning="淘汰款"),
+                actor_name="销售B",
+                actor_user_id="user-b",
+                manager_access=False,
+                operator_name="销售B",
+            )
+        except PermissionError:
+            pass
+        else:
+            raise AssertionError("another operator must not correct this record")
+
+        result = services.correct_secondary_research(
+            db,
+            claim_id,
+            schemas.SecondaryResearchDraftUpdate(product_positioning="淘汰款"),
+            actor_name="主管A",
+            actor_user_id="manager-a",
+            manager_access=True,
+            operator_name=None,
+        )
+        db.commit()
+
+    assert result["product_positioning"] == "淘汰款"
+    assert result["downstream_status"] == "listing_observation"
+
+
+def test_secondary_research_correction_reroutes_only_before_listing_exists() -> None:
+    opportunity, claim = make_claim("SUB-A", "销售A", downstream_status="disabled")
+    fill_research(claim, "淘汰款", "原判断淘汰")
+    claim.secondary_research_submitted_at = datetime(2026, 7, 12, 15, tzinfo=timezone.utc)
+    with SessionLocal() as db:
+        db.add_all([opportunity, claim])
+        db.commit()
+
+        result = services.correct_secondary_research(
+            db,
+            claim.id,
+            schemas.SecondaryResearchDraftUpdate(
+                secondary_conclusion="纠错为可刊登",
+                product_positioning="利润款",
+            ),
+            actor_name="主管A",
+            actor_user_id="manager-a",
+            manager_access=True,
+            operator_name=None,
+        )
+        db.commit()
+
+    assert result["downstream_status"] == "waiting_listing"
+
+
+def test_operator_can_correct_own_submitted_record_through_http() -> None:
+    opportunity, claim = make_claim("SUB-HTTP", "销售A", downstream_status="waiting_listing")
+    fill_research(claim, "利润款", "原结论")
+    claim.secondary_research_submitted_at = datetime(2026, 7, 12, 15, tzinfo=timezone.utc)
+    with SessionLocal() as db:
+        db.add_all([opportunity, claim])
+        db.commit()
+        claim_id = claim.id
+
+    response = client.patch(
+        f"/secondary-research/{claim_id}/correction",
+        params={"salesperson_name": "销售A"},
+        json={"secondary_conclusion": "接口纠错", "product_positioning": "稳定款"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["secondary_conclusion"] == "接口纠错"
+    with SessionLocal() as db:
+        saved = db.get(models.SalesClaimForecast, claim_id)
+    assert saved.downstream_status == "waiting_listing"
+    assert saved.secondary_research_submitted_at is not None
 
 
 def make_claim(

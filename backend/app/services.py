@@ -1186,6 +1186,66 @@ def update_secondary_research_draft(
     )
     return secondary_research_item(claim, opportunity, secondary_research_peers(db, claim))
 
+def correct_secondary_research(
+    db: Session,
+    claim_record_id: str,
+    payload: schemas.SecondaryResearchDraftUpdate,
+    actor_name: str,
+    actor_user_id: str | None,
+    manager_access: bool,
+    operator_name: str | None,
+) -> dict:
+    claim, opportunity = secondary_research_claim(db, claim_record_id, lock=True)
+    if claim.secondary_research_submitted_at is None:
+        raise ValueError("only submitted secondary research can be corrected")
+    if not manager_access and claim.salesperson_name != operator_name:
+        raise PermissionError("secondary research record does not belong to current operator")
+
+    before: dict[str, object] = {}
+    after: dict[str, object] = {}
+    for field in payload.model_fields_set:
+        old_value = getattr(claim, field)
+        new_value = getattr(payload, field)
+        if old_value == new_value:
+            continue
+        before[field] = old_value.isoformat() if isinstance(old_value, datetime) else deepcopy(old_value)
+        after[field] = new_value.isoformat() if isinstance(new_value, datetime) else deepcopy(new_value)
+        setattr(claim, field, new_value)
+
+    if not _clean_text(claim.secondary_conclusion):
+        raise ValueError("secondary_conclusion is required")
+    if claim.product_positioning not in {"引流款", "利润款", "淘汰款", "稳定款", "清仓款"}:
+        raise ValueError("product_positioning is required")
+    if not before:
+        return secondary_research_item(claim, opportunity, secondary_research_peers(db, claim))
+
+    listing_rows = db.scalars(
+        select(models.ListingRecord).where(
+            models.ListingRecord.main_sku == opportunity.main_sku,
+            models.ListingRecord.salesperson_name == claim.salesperson_name,
+        )
+    ).all()
+    has_listing = any(claim.id in (listing.source_claim_ids or []) for listing in listing_rows)
+    if not has_listing and claim.downstream_status in {CLAIM_WAITING_LISTING, CLAIM_DISABLED}:
+        old_status = claim.downstream_status
+        claim.downstream_status = (
+            CLAIM_DISABLED if claim.product_positioning in {"淘汰款", "清仓款"} else CLAIM_WAITING_LISTING
+        )
+        if old_status != claim.downstream_status:
+            before["downstream_status"] = old_status
+            after["downstream_status"] = claim.downstream_status
+
+    claim.last_updated_at = datetime.now(timezone.utc)
+    audit(
+        db,
+        "secondary_research.corrected",
+        "sales_claim_forecast",
+        claim.id,
+        {"before": before, "after": after},
+        actor_name,
+        actor_user_id,
+    )
+    return secondary_research_item(claim, opportunity, secondary_research_peers(db, claim))
 
 def submit_secondary_research_group(
     db: Session,
@@ -1248,15 +1308,19 @@ def submit_secondary_research_group(
 def secondary_research_claim(
     db: Session,
     claim_record_id: str,
+    lock: bool = False,
 ) -> tuple[models.SalesClaimForecast, models.NewProductOpportunity]:
-    row = db.execute(
+    statement = (
         select(models.SalesClaimForecast, models.NewProductOpportunity)
         .join(
             models.NewProductOpportunity,
             models.NewProductOpportunity.id == models.SalesClaimForecast.opportunity_id,
         )
         .where(models.SalesClaimForecast.id == claim_record_id)
-    ).one_or_none()
+    )
+    if lock:
+        statement = statement.with_for_update(of=models.SalesClaimForecast)
+    row = db.execute(statement).one_or_none()
     if row is None:
         raise LookupError("secondary research record not found")
     return row[0], row[1]
@@ -1475,6 +1539,23 @@ def create_listing_batch(
     if not actor_is_manager and task["salesperson_name"] != (operator_name or actor_name):
         raise PermissionError("listing task does not belong to current operator")
 
+    claim_ids = sorted(set(task["claim_record_ids"]))
+    claims = list(
+        db.scalars(
+            select(models.SalesClaimForecast)
+            .where(models.SalesClaimForecast.id.in_(claim_ids))
+            .order_by(models.SalesClaimForecast.id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+    )
+    if len(claims) != len(claim_ids):
+        raise LookupError("listing task claim record not found")
+    if task.get("requires_confirmation") and any(
+        claim.downstream_status != CLAIM_WAITING_LISTING for claim in claims
+    ):
+        raise ValueError("listing task is no longer pending")
+
     check_day = today or datetime.now(EXCEL_TIMEZONE).date()
     row_errors: list[dict] = []
     cleaned: list[dict] = []
@@ -1546,10 +1627,6 @@ def create_listing_batch(
         row_errors.sort(key=lambda error: (error["row_index"], ("shop", "item", "listing_strategy", "first_period_start").index(error["field"])))
         conflict = any("duplicated" in error["message"] or "already exists" in error["message"] for error in row_errors)
         raise RowValidationError([*row_errors, *reuse_errors], 409 if conflict else 400)
-
-    claims = list(
-        db.scalars(select(models.SalesClaimForecast).where(models.SalesClaimForecast.id.in_(task["claim_record_ids"])))
-    )
 
     created: list[models.ListingRecord] = []
     for values in cleaned:
