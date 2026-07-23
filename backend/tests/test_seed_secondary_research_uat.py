@@ -74,6 +74,7 @@ def test_seed_secondary_research_uat_is_rich_and_idempotent() -> None:
     assert second == expected
     assert opportunity_count == 54
     assert len(claims) == 54
+    assert {claim.source_column for claim in claims} == {"platform"}
     assert len(listings) == 6
     assert all(UAT_SOURCE_FILE in listing.source_group_key for listing in listings)
     assert len(periods) == 18

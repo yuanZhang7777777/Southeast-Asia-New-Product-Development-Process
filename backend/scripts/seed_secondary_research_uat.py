@@ -142,7 +142,7 @@ def build_claim(
         salesperson_name=owner,
         claim_result=CLAIM_RESULT_CLAIM,
         claim_daily_sales=8 + group_number + child_index,
-        source_column="AJ",
+        source_column="platform",
         claim_source="uat_seed",
         first_submitted_at=arrival_at - timedelta(days=20),
         last_updated_at=arrival_at,
