@@ -1,10 +1,10 @@
 # Agent Handoff
 
-> Updated: 2026-07-23 15:50 Asia/Shanghai
+> Updated: 2026-07-23 16:37 Asia/Shanghai
 
 ## Start Here
 
-The canonical base branch is `lxc/integrated-workflow`. The current development/UAT branch is `lxc/uat-usability-fixes`; deployed code commit `29e3a06` contains the compact workbench fixes and the development-only historical-arrival pilot.
+The canonical base branch is `lxc/integrated-workflow`. The current development/UAT branch is `lxc/uat-usability-fixes`; the approved compact-UI implementation baseline is `3929bd3`, while development still deploys code commit `29e3a06`.
 
 Read these files before changing behavior:
 
@@ -15,6 +15,26 @@ Read these files before changing behavior:
 5. `docs/21-后半段需求领导对齐问题清单.md` — later-stage confirmed rules and remaining external inputs.
 
 Do not infer current behavior from old plans or prototypes when they conflict with the confirmed record.
+
+## Immediate Next Task: Compact UI Implementation
+
+The user has approved a second compact-layout pass, but no code for this pass has been merged or deployed. The authoritative rules are `docs/2026-07-09-已确认需求记录.md` lines 126-132 and 178-184.
+
+Implement only these two frontend changes:
+
+1. `刊登与观察 -> 周期观察`: place week/date/status, four read-only metrics, product positioning, optimization action and row actions on one compact row. Completed rows show a one-line optimization summary that expands on demand; pending/correction rows edit inline; week 4 keeps its summary action at the far right. Remove the separate full-width review row.
+2. `二次调研`: use one compact row per child SKU, similar to the operator-claim matrix. Keep image + child SKU, conclusion, positioning, compact competitor/image/peer-record entrances and save state visible. Put `AL 调研时间` under row-level `更多`; put upstream market/pricing/development/cost data under `来源信息` and claim history under `认领记录`. The main filling area must not require page-level horizontal scrolling at 1366 px.
+
+Preserve all existing autosave, submission, correction, permission, audit, metric-read-only and lifecycle behavior. Do not change backend APIs, database schema or business data unless a failing acceptance test proves a frontend-only implementation is impossible.
+
+Expected file scope:
+
+- `frontend/src/ListingObservationView.tsx`
+- `frontend/src/SecondaryResearchView.tsx`
+- existing related CSS in `frontend/src/styles.css` / `frontend/src/listingDensity.css`
+- the smallest relevant assertions in `frontend/tests/listingDensity.test.ts` or existing adjacent tests
+
+Model split requested by the user: use GPT-5.6 Sol for planning and review; delegate code writing to GPT-5.5 with `xhigh` reasoning. Review each bounded UI change before continuing. Run focused tests first, then `npm test` and `npm run build`. Do not deploy until the user separately confirms the reviewed build; never touch production.
 
 ## Environment Boundary
 
@@ -110,9 +130,9 @@ Unique source evidence and the original Spec Kit bundle are frozen under `docs/a
 
 ## Next Session Checklist
 
-1. Confirm the active branch is based on `lxc/integrated-workflow` and inspect `git status` before editing.
-2. Preserve the production/development boundary; normal development and deployment target only `hz-new-product-dev`.
-3. Run backend tests, frontend tests/build and Alembic head verification before every release.
-4. Monitor the next business date's development arrival run; do not replay completed 2026-07-22, and verify any new card goes only to 刘学城 without unintended workflow writes.
-5. Update `docs/02-功能实现状态.md`, `docs/20-项目推进总控.md` and `docs/06-部署与服务器准备.md` when implementation or deployment state changes.
-6. Use `neat-freak` at milestones; update only the active document set and keep `docs/archive/` read-only.
+1. Confirm `lxc/uat-usability-fixes` is clean at or after `3929bd3`; inspect `git status` before editing.
+2. Implement and review the two compact UI changes above without changing business behavior.
+3. Run focused tests, full frontend `npm test`, `npm run build` and `git diff --check`.
+4. Preserve the production/development boundary. If deployment is later approved, target only `hz-new-product-dev`.
+5. After the UI pass, resume the historical-PLM single-task UAT and old-Item weekly-metrics UAT in `docs/20-项目推进总控.md`.
+6. Update only the active document set when implementation or deployment state changes; keep `docs/archive/` read-only and run `neat-freak` at milestones.
