@@ -130,12 +130,26 @@ def _safe_error_fields(value: Any) -> tuple[str, str]:
 
 
 def validate_delivery_response(response: Any) -> None:
-    results = response.get("deliverResults") if isinstance(response, dict) else None
+    payload = response
+    if isinstance(response, dict) and ("success" in response or "result" in response):
+        if response.get("success") is not True:
+            code, message = _safe_error_fields(response)
+            detail = "DingTalk delivery failed: success=false"
+            if code:
+                detail += f" code={code}"
+            if message:
+                detail += f" message={message}"
+            raise RuntimeError(detail)
+        payload = response.get("result")
+        if not isinstance(payload, dict):
+            raise RuntimeError("DingTalk delivery failed: success=true result=missing")
+
+    results = payload.get("deliverResults") if isinstance(payload, dict) else None
     if not isinstance(results, list) or not results:
         shape = "missing" if not isinstance(results, list) else "empty"
         sensitive = {"accesstoken", "userid", "openspaceid", "clientsecret"}
-        fields = sorted(str(key) for key in response if str(key).lower().replace("_", "").replace("-", "") not in sensitive) if isinstance(response, dict) else []
-        code, message = _safe_error_fields(response)
+        fields = sorted(str(key) for key in payload if str(key).lower().replace("_", "").replace("-", "") not in sensitive) if isinstance(payload, dict) else []
+        code, message = _safe_error_fields(payload)
         detail = f"DingTalk delivery failed: failed=unknown results={shape} fields={','.join(fields) or 'none'}"
         if code:
             detail += f" code={code}"

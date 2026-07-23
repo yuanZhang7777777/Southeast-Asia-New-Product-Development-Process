@@ -21,6 +21,7 @@ import {
   observationPeriodDisplay,
   productListingSummary,
   resolveWorkbenchScope,
+  summarizeVisibleObservationPeriods,
   summarySalespersonScope,
   sortObservationRows,
   type ListingDraft,
@@ -243,6 +244,28 @@ test("未来周期即使已有测试数据也隐藏，到期后才显示完整�
   assert.equal(observationPeriodDisplay(futurePendingReview, "2026-07-23"), "ready");
   assert.equal(observationPeriodDisplay(futureCompleted, "2026-07-23"), "ready");
   assert.equal(expectedObservationMetricsDate("2026-07-29"), "2026-07-30");
+});
+
+test("周期摘要只统计当前可见周，未来测试数据不能提前显示首轮完成", () => {
+  const rows = [
+    observationRow({ id: "week-1", week_number: 1, status: "completed", period_start: "2026-07-16", period_end: "2026-07-22" }),
+    observationRow({ id: "week-2", week_number: 2, status: "completed", period_start: "2026-07-23", period_end: "2026-07-29" }),
+    observationRow({ id: "week-3", week_number: 3, status: "completed", period_start: "2026-07-30", period_end: "2026-08-05" }),
+    observationRow({ id: "week-4", week_number: 4, status: "completed", period_start: "2026-08-06", period_end: "2026-08-12" }),
+    observationRow({ id: "week-5", week_number: 5, status: "completed", period_start: "2026-08-13", period_end: "2026-08-19" })
+  ];
+  const visibleOnJuly23 = rows.filter((row) => observationPeriodDisplay(row, "2026-07-23") !== "hidden");
+
+  assert.deepEqual(summarizeVisibleObservationPeriods(visibleOnJuly23), {
+    completedWeeks: 2,
+    totalWeeks: 2,
+    firstRoundCompleted: false
+  });
+  assert.deepEqual(summarizeVisibleObservationPeriods(rows.slice(0, 4)), {
+    completedWeeks: 4,
+    totalWeeks: 4,
+    firstRoundCompleted: true
+  });
 });
 
 test("刊登观察页面使用单表和业务状态筛选且不暴露内部待取数", () => {

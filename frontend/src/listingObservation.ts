@@ -82,6 +82,19 @@ export function observationPeriodDisplay(
   return dayText <= row.period_end ? "in_progress" : "data_pending";
 }
 
+export function summarizeVisibleObservationPeriods(
+  rows: readonly Pick<ObservationPeriodRow, "status" | "week_number">[]
+) {
+  const completedWeekNumbers = new Set(
+    rows.filter((row) => row.status === "completed").map((row) => row.week_number)
+  );
+  return {
+    completedWeeks: rows.filter((row) => row.status === "completed").length,
+    totalWeeks: rows.length,
+    firstRoundCompleted: [1, 2, 3, 4].every((week) => completedWeekNumbers.has(week))
+  };
+}
+
 export function expectedObservationMetricsDate(periodEnd: string) {
   const [year, month, day] = periodEnd.split("-").map(Number);
   const value = new Date(Date.UTC(year, month - 1, day));

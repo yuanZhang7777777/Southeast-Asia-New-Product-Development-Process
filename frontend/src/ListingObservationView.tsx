@@ -39,6 +39,7 @@ import {
   restoreObservationReviewDraft,
   saveListingDrafts,
   saveObservationReviewDraft,
+  summarizeVisibleObservationPeriods,
   summarySalespersonScope,
   sortObservationRows,
   validateListingDrafts,
@@ -728,9 +729,7 @@ export function ListingObservationView(props: {
 
                   {group.listings.map((listing) => {
                     const rows = group.periodRows.filter((row) => row.listing_record_id === listing.id);
-                    const completedWeeks = data.period_rows.filter((row) =>
-                      row.listing_record_id === listing.id && row.status === "completed"
-                    ).length;
+                    const periodSummary = summarizeVisibleObservationPeriods(rows);
                     return (
                       <article className="listing-item-card" key={listing.id}>
                         <header className="listing-item-header">
@@ -741,8 +740,8 @@ export function ListingObservationView(props: {
                           </div>
                           <div className="listing-item-meta">
                             <span>首周 {listing.first_period_start}</span>
-                            <span className="pill gray">{listingStatusLabel(listing)}</span>
-                            <span>已完成 {completedWeeks} 周</span>
+                            <span className="pill gray">{listingStatusLabel(listing, periodSummary.firstRoundCompleted)}</span>
+                            <span>已复盘 {periodSummary.completedWeeks} / {periodSummary.totalWeeks} 周</span>
                           </div>
                           <details className="listing-more-menu">
                             <summary>更多</summary>
@@ -1022,6 +1021,7 @@ export function ListingObservationSummary(props: {
               const periods = sortObservationRows(group.periods.filter((period) =>
                 period.listing_record_id === listing.id && observationPeriodDisplay(period) !== "hidden"
               ));
+              const periodSummary = summarizeVisibleObservationPeriods(periods);
               return (
                 <article className="listing-item-card listing-summary-item" key={listing.id}>
                   <header className="listing-item-header">
@@ -1033,7 +1033,7 @@ export function ListingObservationSummary(props: {
                     <div className="listing-item-meta">
                       <span>负责人 {listing.salesperson_name}</span>
                       <span>首周 {listing.first_period_start}</span>
-                      <span className="pill gray">{listingStatusLabel(listing)}</span>
+                      <span className="pill gray">{listingStatusLabel(listing, periodSummary.firstRoundCompleted)}</span>
                     </div>
                   </header>
                   {periods.length ? (
@@ -1158,10 +1158,10 @@ function periodStatusClass(row: ObservationPeriodRow, listing?: ListingRecord) {
   return "green";
 }
 
-function listingStatusLabel(record: ListingRecord) {
+function listingStatusLabel(record: ListingRecord, visibleFirstRoundCompleted: boolean) {
   if (record.status === "voided") return "已作废";
   if (record.tracking_status === "stopped") return "停止跟踪";
-  if (record.first_round_completed_at) return "首轮观察完成";
+  if (record.first_round_completed_at && visibleFirstRoundCompleted) return "首轮观察完成";
   return "观察中";
 }
 

@@ -137,6 +137,14 @@ def test_validate_delivery_response_accepts_all_success() -> None:
     validate_delivery_response({"deliverResults": [{"success": True}]})
 
 
+def test_validate_delivery_response_accepts_official_wrapped_success() -> None:
+    from app.historical_arrival_watch import validate_delivery_response
+
+    validate_delivery_response({
+        "success": True,
+        "result": {"deliverResults": [{"success": True}]},
+    })
+
 def test_validate_delivery_response_reports_safe_business_failure() -> None:
     from app.historical_arrival_watch import validate_delivery_response
 
