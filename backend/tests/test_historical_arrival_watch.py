@@ -150,6 +150,18 @@ def test_validate_delivery_response_reports_safe_business_failure() -> None:
     assert "private-user-id" not in message
 
 
+def test_validate_delivery_response_reports_only_safe_response_shape() -> None:
+    from app.historical_arrival_watch import validate_delivery_response
+
+    with pytest.raises(RuntimeError) as captured:
+        validate_delivery_response({"processQueryKey": "private-query", "userId": "private-user-id"})
+
+    message = str(captured.value)
+    assert "results=missing" in message
+    assert "fields=processQueryKey" in message
+    assert "private" not in message
+
+
 def test_safe_error_summary_sanitizes_dingtalk_http_body() -> None:
     from app.historical_arrival_watch import safe_error_summary
 
