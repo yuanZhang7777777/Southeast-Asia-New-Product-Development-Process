@@ -161,9 +161,10 @@ export function ListingObservationView(props: {
   useEffect(() => { if (editingListing) editDialog.current?.focus(); }, [editingListing?.record.id]);
   useEffect(() => { if (voidingListing) voidDialog.current?.focus(); }, [voidingListing?.record.id]);
 
-  const effectiveFilters = props.role === "manager"
-    ? filters
-    : { ...filters, salesperson_name: "" };
+  const effectiveFilters = {
+    ...(props.role === "manager" ? filters : { ...filters, salesperson_name: "" }),
+    ...(scenario === "listing" && { shop: "", period_start: "", status: "", week_number: "" as const, product_positioning: "", tracking_status: "" })
+  };
   const groups = useMemo(() => buildListingWorkbenchGroups(
     data.pending_listing_tasks,
     data.listing_records,
@@ -510,6 +511,7 @@ export function ListingObservationView(props: {
       });
       setSelectedPeriods([]);
       props.onStatus(`已提交 ${rows.length} 条周期复盘`);
+      setCorrectingPeriods((current) => current.filter((id) => !rows.some((row) => row.period_id === id)));
       await loadWorkbench();
     } catch (error) {
       if (!isCurrentScope()) return;
@@ -826,7 +828,7 @@ export function ListingObservationView(props: {
                                     </label>
                                     <div className="listing-period-actions">
                                       {row.status === "completed" && !correcting && <button className="btn small" type="button" onClick={() => setCorrectingPeriods((current) => [...current, row.id])}>纠错</button>}
-                                      {correcting && <button className="btn small" type="button" onClick={() => { setCorrectingPeriods((current) => current.filter((id) => id !== row.id)); setSelectedPeriods((current) => current.filter((id) => id !== row.id)); setReviewDrafts((current) => ({ ...current, [row.id]: createObservationReviewDraft(row) })); }}>取消纠错</button>}
+                                      {correcting && <button className="btn small" type="button" onClick={() => { const storage = browserStorage(); if (storage) clearObservationReviewDraft(storage, props.draftUserId, row.id); setCorrectingPeriods((current) => current.filter((id) => id !== row.id)); setSelectedPeriods((current) => current.filter((id) => id !== row.id)); setReviewDrafts((current) => ({ ...current, [row.id]: createObservationReviewDraft(row) })); }}>取消纠错</button>}
                                       <FieldError message={reviewErrors[row.id]?.period_id} />
                                       {row.week_number === 4 && (
                                         <button className="btn small" type="button" onClick={() => openSummary(row.id)}>

@@ -11,7 +11,7 @@ export function filterSecondaryResearchGroups<T extends {
   const query = filters.query?.trim().toLocaleLowerCase();
   return groups.flatMap((group) => {
     if ((filters.country && group.country !== filters.country) || (filters.businessPeriod && group.business_period !== filters.businessPeriod) || (filters.salespersonName && group.salesperson_name !== filters.salespersonName)) return [];
-    const items = group.items.filter((item) => Boolean(item.secondary_research_submitted_at) === (filters.scenario === "submitted"));
+    const items = group.items.filter((item) => (Boolean(item.secondary_research_submitted_at) || item.downstream_status !== "waiting_secondary_research") === (filters.scenario === "submitted"));
     if (!items.length || (query && ![group.main_sku, group.main_sku_name, ...items.flatMap((item) => [item.sub_sku, item.sub_sku_name])].some((value) => value?.toLocaleLowerCase().includes(query)))) return [];
     return [{ ...group, items } as T];
   });

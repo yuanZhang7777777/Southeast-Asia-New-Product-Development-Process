@@ -83,7 +83,7 @@ export function SecondaryResearchView(props: {
     if (props.editable && !props.salespersonName) return;
     setLoading(true);
     try {
-      const result = await api.secondaryResearch(props.editable ? props.salespersonName : "", "__all__");
+      const result = await api.secondaryResearch(props.editable ? props.salespersonName : "", "__all__", "");
       setAllGroups(result);
       replaceDrafts(
         Object.fromEntries(result.flatMap((entry) => entry.items.map((item) => [item.claim_record_id, createSecondaryResearchDraft(item)])))
