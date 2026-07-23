@@ -3,12 +3,61 @@ import test from "node:test";
 
 import {
   createSecondaryResearchDraft,
+  filterSecondaryResearchGroups,
   incompleteSecondaryResearchItems,
   patchSecondaryResearchDraft,
   SECONDARY_RESEARCH_POSITIONINGS,
   SECONDARY_RESEARCH_SKIP_LISTING,
   syncSecondaryResearchDraftPatch
 } from "../src/secondaryResearchDrafts.ts";
+
+test("二次调研按场景和组合条件精确筛选国家及子 SKU", () => {
+  const groups = [
+    {
+      country: "PH",
+      business_period: "开发0710期",
+      salesperson_name: "运营甲",
+      main_sku: "MAIN-PH",
+      main_sku_name: "菲律宾主品",
+      items: [{ sub_sku: "SUB-PH", sub_sku_name: "蓝色", secondary_research_submitted_at: null, downstream_status: "waiting_secondary_research" }]
+    },
+    {
+      country: "TH",
+      business_period: "开发0710期",
+      salesperson_name: "运营乙",
+      main_sku: "MAIN-TH",
+      main_sku_name: "泰国主品",
+      items: [{ sub_sku: "SUB-TH", sub_sku_name: "红色", secondary_research_submitted_at: "2026-07-23T09:00:00Z", downstream_status: "waiting_listing" }]
+    },
+    {
+      country: null,
+      business_period: "开发0710期",
+      salesperson_name: "运营甲",
+      main_sku: "MAIN-NONE",
+      main_sku_name: "无国家主品",
+      items: [{ sub_sku: "SUB-NONE", sub_sku_name: "绿色", secondary_research_submitted_at: null, downstream_status: "waiting_secondary_research" }]
+    }
+  ];
+
+  assert.deepEqual(
+    filterSecondaryResearchGroups(groups, {
+      scenario: "pending",
+      query: "蓝色",
+      country: "PH",
+      businessPeriod: "开发0710期",
+      salespersonName: "运营甲"
+    }).map((group) => group.main_sku),
+    ["MAIN-PH"]
+  );
+  assert.deepEqual(
+    filterSecondaryResearchGroups(groups, { scenario: "submitted" }).map((group) => group.main_sku),
+    ["MAIN-TH"]
+  );
+  assert.deepEqual(
+    filterSecondaryResearchGroups(groups, { scenario: "pending", country: "PH" }).map((group) => group.main_sku),
+    ["MAIN-PH"]
+  );
+});
 
 test("二次调研支持五种定位且只有淘汰款和清仓款跳过刊登", () => {
   assert.deepEqual(SECONDARY_RESEARCH_POSITIONINGS, ["引流款", "利润款", "淘汰款", "稳定款", "清仓款"]);
@@ -97,4 +146,20 @@ test("整组提交只列出缺少 AN/AO 必填项的子 SKU", () => {
   );
 
   assert.deepEqual(missing, ["SUB-B"]);
+});
+
+test("二次调研混合组按场景裁剪条目，已提交条目不会回到待处理", () => {
+  const groups = [{
+    country: "PH",
+    business_period: "开发0710期",
+    salesperson_name: "运营甲",
+    main_sku: "MAIN-1",
+    items: [
+      { sub_sku: "SUB-PENDING", secondary_research_submitted_at: null, downstream_status: "waiting_secondary_research" },
+      { sub_sku: "SUB-DONE", secondary_research_submitted_at: "2026-07-23T09:00:00Z", downstream_status: "waiting_listing" }
+    ]
+  }];
+
+  assert.deepEqual(filterSecondaryResearchGroups(groups, { scenario: "pending" })[0].items.map((item) => item.sub_sku), ["SUB-PENDING"]);
+  assert.deepEqual(filterSecondaryResearchGroups(groups, { scenario: "submitted" })[0].items.map((item) => item.sub_sku), ["SUB-DONE"]);
 });

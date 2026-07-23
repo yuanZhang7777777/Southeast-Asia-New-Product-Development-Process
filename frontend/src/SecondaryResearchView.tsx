@@ -11,6 +11,7 @@ import {
   UploadedEvidenceImage
 } from "./api";
 import {
+  filterSecondaryResearchGroups,
   createSecondaryResearchDraft,
   incompleteSecondaryResearchItems,
   patchSecondaryResearchDraft,
@@ -48,6 +49,10 @@ export function SecondaryResearchView(props: {
   editable: boolean;
   onStatus: (message: string) => void;
 }) {
+  const [scenario, setScenario] = useState<"pending" | "submitted">("pending");
+  const [query, setQuery] = useState("");
+  const [countryFilter, setCountryFilter] = useState("");
+  const [ownerFilter, setOwnerFilter] = useState("");
   const [allGroups, setAllGroups] = useState<SecondaryResearchGroup[]>([]);
   const [periodFilter, setPeriodFilter] = useState("latest");
   const [activeIndex, setActiveIndex] = useState(0);
@@ -63,15 +68,10 @@ export function SecondaryResearchView(props: {
     [allGroups]
   );
   const latestPeriod = periods[0] || "";
-  const groups = useMemo(
-    () => allGroups.filter((entry) => {
-      const period = entry.business_period || "";
-      if (periodFilter === "__all__") return true;
-      if (periodFilter === "latest") return period === latestPeriod;
-      return period === periodFilter;
-    }),
-    [allGroups, latestPeriod, periodFilter]
-  );
+  const groups = useMemo(() => filterSecondaryResearchGroups(allGroups, {
+    scenario, query, country: countryFilter, businessPeriod: periodFilter === "latest" ? latestPeriod : periodFilter === "__all__" ? "" : periodFilter,
+    salespersonName: props.editable ? "" : ownerFilter
+  }), [allGroups, countryFilter, latestPeriod, ownerFilter, periodFilter, props.editable, query, scenario]);
   const group = groups[activeIndex];
 
   function replaceDrafts(next: DraftMap) {
@@ -118,7 +118,7 @@ export function SecondaryResearchView(props: {
   }
 
   async function saveDraft(item: SecondaryResearchItem, draft = drafts[item.claim_record_id]) {
-    if (!props.editable || !draft) return;
+    if (!props.editable || scenario !== "pending" || !draft) return;
     const revision = (saveRevision.current[item.claim_record_id] ?? 0) + 1;
     saveRevision.current[item.claim_record_id] = revision;
     setSaveState((current) => ({ ...current, [item.claim_record_id]: "保存中" }));
@@ -163,7 +163,7 @@ export function SecondaryResearchView(props: {
   }
 
   async function submitGroup() {
-    if (!group) return;
+    if (!group || scenario !== "pending") return;
     const missing = incompleteSecondaryResearchItems(group.items, drafts);
     if (missing.length) {
       props.onStatus(`请先补全：${missing.join("、")}`);
@@ -201,6 +201,14 @@ export function SecondaryResearchView(props: {
 
   return (
     <div className="secondary-workbench">
+      <div className="research-workbench-controls">
+        <div className="research-scenarios"><button className={`btn small ${scenario === "pending" ? "primary" : ""}`} type="button" onClick={() => setScenario("pending")}>待处理</button><button className={`btn small ${scenario === "submitted" ? "primary" : ""}`} type="button" onClick={() => setScenario("submitted")}>我已提交</button></div>
+        <label>关键词<input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="主 / 子 SKU、名称" /></label>
+        <label>国家<select value={countryFilter} onChange={(event) => setCountryFilter(event.target.value)}><option value="">全部</option>{Array.from(new Set(allGroups.map((entry) => entry.country).filter(Boolean))).sort().map((country) => <option value={country!} key={country}>{country}</option>)}</select></label>
+        <label>业务期<select value={periodFilter} onChange={(event) => setPeriodFilter(event.target.value)}><option value="latest">最新期数</option><option value="__all__">全部期数</option>{periods.map((period) => <option value={period} key={period}>{period}</option>)}</select></label>
+        {!props.editable && <label>负责人<select value={ownerFilter} onChange={(event) => setOwnerFilter(event.target.value)}><option value="">全部</option>{Array.from(new Set(allGroups.map((entry) => entry.salesperson_name))).sort().map((owner) => <option value={owner} key={owner}>{owner}</option>)}</select></label>}
+        <button className="btn small" type="button" onClick={() => { setQuery(""); setCountryFilter(""); setOwnerFilter(""); setPeriodFilter("latest"); }}>清空</button>
+      </div>
       <button
         className="research-side-nav previous"
         type="button"
@@ -237,13 +245,9 @@ export function SecondaryResearchView(props: {
           </div>
         </div>
         <div className="research-meta-line">
-          <span>筛选 <select value={periodFilter} onChange={(event) => setPeriodFilter(event.target.value)}>
-            <option value="latest">最新期数</option>
-            <option value="__all__">全部期数</option>
-            {periods.map((period) => <option value={period} key={period}>{period}</option>)}
-          </select></span>
           <span>业务期数 <b>{group.business_period || "-"}</b></span>
-          <span>站点 / 国家 <b>{group.site || group.country || "-"}</b></span>
+          <span>国家 <b>{group.country || "-"}</b></span>
+          <span>站点 <b>{group.site || "-"}</b></span>
           <span>负责人 <b>{group.salesperson_name}</b></span>
           <span>到货时间 <b>{formatDateTime(group.items[0]?.arrival_detected_at)}</b></span>
           <span>类目 <b>{columnValue(group.items[0], "D") || "-"}</b></span>
@@ -289,7 +293,7 @@ export function SecondaryResearchView(props: {
                     <input
                       type="datetime-local"
                       value={draft.researchedAt}
-                      disabled={!props.editable}
+                      disabled={!props.editable || scenario === "submitted"}
                       onChange={(event) => updateDraft(item.claim_record_id, { researchedAt: event.target.value })}
                       onBlur={() => void saveDraft(item).catch(() => undefined)}
                     />
@@ -299,7 +303,7 @@ export function SecondaryResearchView(props: {
                     <div className="research-url-input">
                       <input
                         value={draft.competitorUrl}
-                        disabled={!props.editable}
+                        disabled={!props.editable || scenario === "submitted"}
                         placeholder="粘贴二次调研链接"
                         onChange={(event) => updateDraft(item.claim_record_id, { competitorUrl: event.target.value })}
                         onBlur={() => void saveDraft(item).catch(() => undefined)}
@@ -315,7 +319,7 @@ export function SecondaryResearchView(props: {
                     <span>AN 调研结论</span>
                     <textarea
                       value={draft.conclusion}
-                      disabled={!props.editable}
+                      disabled={!props.editable || scenario === "submitted"}
                       placeholder="填写到货后的复查结论"
                       onChange={(event) => updateDraft(item.claim_record_id, { conclusion: event.target.value })}
                       onPaste={(event: ClipboardEvent<HTMLTextAreaElement>) => void uploadImages(item, event.clipboardData.files)}
@@ -326,7 +330,7 @@ export function SecondaryResearchView(props: {
                     <span>AO 商品定位</span>
                     <select
                       value={draft.positioning}
-                      disabled={!props.editable}
+                      disabled={!props.editable || scenario === "submitted"}
                       onChange={(event) => {
                         const nextDraft = { ...draft, positioning: event.target.value as SecondaryResearchDraft["positioning"], directlyEdited: true };
                         updateDraft(item.claim_record_id, { positioning: nextDraft.positioning });
@@ -343,11 +347,11 @@ export function SecondaryResearchView(props: {
                   <div className="research-entry-cell research-image-cell">
                     <span>调研图片</span>
                     <ResearchImageList
-                      editable={props.editable}
+                      editable={props.editable && scenario === "pending"}
                       images={draft.evidenceImages}
                       onRemove={(image) => void removeImage(item, image)}
                     >
-                      {props.editable && (
+                      {props.editable && scenario === "pending" && (
                         <label
                           className="research-upload"
                           title="添加调研图片"
@@ -395,10 +399,10 @@ export function SecondaryResearchView(props: {
 
       <div className="research-submitbar">
         <div>
-          <b>{props.editable ? "草稿自动保存" : "主管只读查看"}</b>
+          <b>{scenario === "submitted" ? "已提交，只读查看" : props.editable ? "草稿自动保存" : "主管只读查看"}</b>
           <span>同一主 SKU 的子 SKU 必须全部填完整后整组提交；淘汰款与清仓款提交后不进入刊登。</span>
         </div>
-        {props.editable && (
+        {props.editable && scenario === "pending" && (
           <button className="btn primary" type="button" disabled={loading} onClick={() => void submitGroup()}>
             <Send size={16} />提交当前主 SKU
           </button>

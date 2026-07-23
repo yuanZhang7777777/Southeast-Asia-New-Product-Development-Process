@@ -1271,6 +1271,7 @@ def secondary_research_group_key(
             opportunity.source_type or "",
             opportunity.batch or "",
             opportunity.site or "",
+            opportunity.country or "",
             opportunity.main_sku or "",
             claim.salesperson_name or "",
         ]

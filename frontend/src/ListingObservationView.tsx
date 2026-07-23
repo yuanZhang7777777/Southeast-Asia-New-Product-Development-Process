@@ -18,6 +18,7 @@ import {
   defaultNextBusinessPeriodStart,
   expectedObservationMetricsDate,
   filterListingWorkbenchGroups,
+  filterListingWorkbenchGroupsForScenario,
   filterObservationRows,
   formatObservationMetric,
   formatPercent,
@@ -71,6 +72,8 @@ export function ListingObservationView(props: {
 }) {
   const [data, setData] = useState<ListingWorkbenchResponse>(EMPTY_DATA);
   const [filters, setFilters] = useState<WorkbenchFilters>(DEFAULT_FILTERS);
+  const [scenario, setScenario] = useState<"listing" | "observation">("listing");
+  const [correctingPeriods, setCorrectingPeriods] = useState<string[]>([]);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [expandedGroups, setExpandedGroups] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
@@ -167,10 +170,11 @@ export function ListingObservationView(props: {
     data.period_rows,
     defaultNextBusinessPeriodStart()
   ), [data]);
-  const businessGroups = useMemo(
-    () => filterListingWorkbenchGroups(groups, filters.business_status),
-    [filters.business_status, groups]
-  );
+  const scenarioGroups = useMemo(() => filterListingWorkbenchGroupsForScenario(groups, scenario), [groups, scenario]);
+  const businessGroups = useMemo(() => scenario === "listing"
+    ? scenarioGroups
+    : filterListingWorkbenchGroups(scenarioGroups, filters.business_status),
+  [filters.business_status, scenario, scenarioGroups]);
   const hasPeriodFilters = Boolean(
     effectiveFilters.shop
     || effectiveFilters.period_start
@@ -215,7 +219,7 @@ export function ListingObservationView(props: {
     () => new Map(data.listing_records.map((listing) => [listing.id, listing])),
     [data.listing_records]
   );
-  const editableRows = visibleRows.filter((row) => canEditObservationPeriod(row, listingById.get(row.listing_record_id)));
+  const editableRows = visibleRows.filter((row) => canEditObservationPeriod(row, listingById.get(row.listing_record_id), correctingPeriods.includes(row.id)));
   const pendingReviewIds = editableRows.filter((row) => row.status === "pending_review").map((row) => row.id);
   const visibleSelectedIds = visibleSelectedPeriodIds(selectedPeriods, editableRows);
   const allPendingReviewSelected = pendingReviewIds.length > 0 && pendingReviewIds.every((id) => visibleSelectedIds.includes(id));
@@ -564,7 +568,11 @@ export function ListingObservationView(props: {
   }
 
   return (
-    <div className="listing-workbench" ref={workbenchRoot} tabIndex={-1}>
+    <div className={`listing-workbench listing-scenario-${scenario}`} ref={workbenchRoot} tabIndex={-1}>
+      <div className="listing-workbench-scenarios">
+        <button className={`btn small ${scenario === "listing" ? "primary" : ""}`} type="button" onClick={() => { setScenario("listing"); setFilter("business_status", "pending_listing"); }}>刊登任务</button>
+        <button className={`btn small ${scenario === "observation" ? "primary" : ""}`} type="button" onClick={() => { setScenario("observation"); setFilter("business_status", "all"); }}>周期观察</button>
+      </div>
       <div className="listing-workbench-header">
         <div className="listing-filters">
           <label>
@@ -758,9 +766,10 @@ export function ListingObservationView(props: {
                                 );
                               }
                               const draft = reviewDrafts[row.id] || createObservationReviewDraft(row);
-                              const editable = canEditObservationPeriod(row, listing);
+                              const correcting = correctingPeriods.includes(row.id);
+                              const editable = canEditObservationPeriod(row, listing, correcting);
                               return (
-                                <section className="listing-period-card" key={row.id}>
+                                <section className={`listing-period-card ${correcting ? "correction-active" : ""}`} key={row.id}>
                                   <div className="listing-period-overview">
                                     {editable && (
                                       <input
@@ -813,9 +822,11 @@ export function ListingObservationView(props: {
                                           />
                                           <FieldError message={reviewErrors[row.id]?.optimization_action} />
                                         </>
-                                      ) : <span>{draft.optimization_action || "-"}</span>}
+                                      ) : <details><summary>{draft.optimization_action ? "查看优化操作" : "-"}</summary><span>{draft.optimization_action}</span></details>}
                                     </label>
                                     <div className="listing-period-actions">
+                                      {row.status === "completed" && !correcting && <button className="btn small" type="button" onClick={() => setCorrectingPeriods((current) => [...current, row.id])}>纠错</button>}
+                                      {correcting && <button className="btn small" type="button" onClick={() => { setCorrectingPeriods((current) => current.filter((id) => id !== row.id)); setSelectedPeriods((current) => current.filter((id) => id !== row.id)); setReviewDrafts((current) => ({ ...current, [row.id]: createObservationReviewDraft(row) })); }}>取消纠错</button>}
                                       <FieldError message={reviewErrors[row.id]?.period_id} />
                                       {row.week_number === 4 && (
                                         <button className="btn small" type="button" onClick={() => openSummary(row.id)}>
@@ -862,14 +873,14 @@ export function ListingObservationView(props: {
             <textarea
               className={reviewErrors[summaryRow.id]?.four_week_summary ? "listing-error-input" : ""}
               value={(reviewDrafts[summaryRow.id] || createObservationReviewDraft(summaryRow)).four_week_summary}
-              disabled={!canEditObservationPeriod(summaryRow, summaryListing)}
+              disabled={!canEditObservationPeriod(summaryRow, summaryListing, correctingPeriods.includes(summaryRow.id))}
               onChange={(event) => updateReview(summaryRow.id, { four_week_summary: event.target.value })}
               placeholder="总结首轮四周表现、主要问题和后续动作"
             />
             <FieldError message={reviewErrors[summaryRow.id]?.four_week_summary} />
             <div className="listing-dialog-actions">
               <button className="btn primary" type="button" onClick={closeSummary}>
-                {canEditObservationPeriod(summaryRow, summaryListing) ? "保存填写" : "关闭"}
+                {canEditObservationPeriod(summaryRow, summaryListing, correctingPeriods.includes(summaryRow.id)) ? "保存填写" : "关闭"}
               </button>
             </div>
           </div>

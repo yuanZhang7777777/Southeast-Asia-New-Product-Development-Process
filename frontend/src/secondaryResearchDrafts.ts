@@ -2,6 +2,21 @@ export const SECONDARY_RESEARCH_POSITIONINGS = ["引流款", "利润款", "淘�
 export type SecondaryResearchPositioning = "" | typeof SECONDARY_RESEARCH_POSITIONINGS[number];
 export const SECONDARY_RESEARCH_SKIP_LISTING = new Set<SecondaryResearchPositioning>(["淘汰款", "清仓款"]);
 
+export type SecondaryResearchScenario = "pending" | "submitted";
+export type SecondaryResearchFilters = { scenario: SecondaryResearchScenario; query?: string; country?: string; businessPeriod?: string; salespersonName?: string };
+export function filterSecondaryResearchGroups<T extends {
+  country?: string | null; business_period?: string | null; salesperson_name: string; main_sku: string; main_sku_name?: string | null;
+  items: readonly { sub_sku: string; sub_sku_name?: string | null; secondary_research_submitted_at?: string | null; downstream_status: string }[];
+}>(groups: readonly T[], filters: SecondaryResearchFilters): T[] {
+  const query = filters.query?.trim().toLocaleLowerCase();
+  return groups.flatMap((group) => {
+    if ((filters.country && group.country !== filters.country) || (filters.businessPeriod && group.business_period !== filters.businessPeriod) || (filters.salespersonName && group.salesperson_name !== filters.salespersonName)) return [];
+    const items = group.items.filter((item) => Boolean(item.secondary_research_submitted_at) === (filters.scenario === "submitted"));
+    if (!items.length || (query && ![group.main_sku, group.main_sku_name, ...items.flatMap((item) => [item.sub_sku, item.sub_sku_name])].some((value) => value?.toLocaleLowerCase().includes(query)))) return [];
+    return [{ ...group, items } as T];
+  });
+}
+
 export type SecondaryResearchDraft<TImage = Record<string, unknown>> = {
   researchedAt: string;
   competitorUrl: string;

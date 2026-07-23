@@ -33,7 +33,8 @@ import {
 type ListingObservationContract = {
   canEditObservationPeriod: (
     row: Pick<ObservationPeriodRow, "status">,
-    listing?: Pick<ListingRecord, "status">
+    listing?: Pick<ListingRecord, "status">,
+    correcting?: boolean
   ) => boolean;
   createObservationReviewDraft: (row: ObservationPeriodRow) => ObservationReviewDraft;
   productListingSummaryByBusinessPeriod: (
@@ -544,8 +545,9 @@ test("待复盘业务筛选保留命中 Item 全部历史并允许高级周期�
   assert.deepEqual(filterObservationRows(pendingReview[0].periodRows, { status: "completed" }).map((row) => row.id), ["completed"]);
 });
 
-test("已完成和停止后已取数周期可编辑，待取数与作废记录不可编辑", () => {
-  assert.equal(desiredHelpers.canEditObservationPeriod({ status: "completed" }, { status: "active" }), true);
+test("已完成周期需纠错，待复盘周期仍可直接编辑", () => {
+  assert.equal(desiredHelpers.canEditObservationPeriod({ status: "completed" }, { status: "active" }), false);
+  assert.equal(desiredHelpers.canEditObservationPeriod({ status: "completed" }, { status: "active" }, true), true);
   assert.equal(desiredHelpers.canEditObservationPeriod(
     observationRow({ status: "pending_review", tracking_status: "stopped" }),
     listingRecord({ tracking_status: "stopped" })
@@ -882,4 +884,17 @@ test("提交后即使 Storage 删除失败也用组件生命周期墓碑忽略�
   assert.match(listingObservationViewSource, /submittedPeriodDraftKeys\.current\.add\(row\.period_id\)/);
   assert.match(listingObservationViewSource, /submittedListingDraftKeys\.current\.delete\(task\.task_key\)/);
   assert.match(listingObservationViewSource, /submittedPeriodDraftKeys\.current\.delete\(periodId\)/);
+});
+
+test("刊登与观察场景分开，已复盘周期需纠错后才可编辑或选择", () => {
+  const groups = buildListingWorkbenchGroups([pendingTask({ requires_confirmation: true })], [listingRecord({ id: "listing-1" })], [
+    observationRow({ id: "review", listing_record_id: "listing-1", status: "pending_review" }),
+    observationRow({ id: "done", listing_record_id: "listing-1", status: "completed" })
+  ], "2026-07-23");
+  const helpers = listingObservation;
+  assert.deepEqual(helpers.filterListingWorkbenchGroupsForScenario(groups, "listing").map((group) => group.context.task_key), ["task-1"]);
+  assert.deepEqual(helpers.filterListingWorkbenchGroupsForScenario(groups, "observation")[0].periodRows.map((row) => row.id), ["review", "done"]);
+  assert.equal(helpers.canEditObservationPeriod(observationRow({ status: "completed" }), listingRecord(), false), false);
+  assert.equal(helpers.canEditObservationPeriod(observationRow({ status: "completed" }), listingRecord(), true), true);
+  assert.equal(helpers.canEditObservationPeriod(observationRow({ status: "pending_review" }), listingRecord(), false), true);
 });

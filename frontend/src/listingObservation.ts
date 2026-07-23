@@ -175,6 +175,11 @@ export function buildListingWorkbenchGroups(
   });
 }
 
+export function filterListingWorkbenchGroupsForScenario(groups: readonly ListingWorkbenchGroup[], scenario: "listing" | "observation"): ListingWorkbenchGroup[] {
+  if (scenario === "listing") return groups.filter((group) => group.pendingListing).map((group) => ({ ...group, listings: [], periodRows: [] }));
+  return groups.filter((group) => group.listings.length).map((group) => ({ ...group, pendingListing: false }));
+}
+
 export function filterListingWorkbenchGroups(
   groups: readonly ListingWorkbenchGroup[],
   status: WorkbenchBusinessStatus
@@ -223,9 +228,10 @@ export function filterListingWorkbenchGroups(
 
 export function canEditObservationPeriod(
   row: Pick<ObservationPeriodRow, "status">,
-  listing?: Pick<ListingRecord, "status">
+  listing?: Pick<ListingRecord, "status">,
+  correcting = false
 ) {
-  return listing?.status === "active" && row.status !== "pending_data";
+  return listing?.status === "active" && (row.status === "pending_review" || (row.status === "completed" && correcting));
 }
 
 export function createObservationReviewDraft(row: ObservationPeriodRow): ObservationReviewDraft {

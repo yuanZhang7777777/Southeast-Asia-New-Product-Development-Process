@@ -20,4 +20,6 @@ test("listing controls stay compact without stretched inputs or result rows", ()
     densityStyles,
     /@media \(max-width: 560px\)\s*\{[\s\S]*?\.listing-batchbar\s*\{[^}]*flex-direction:\s*column;/
   );
+  assert.match(densityStyles, /\.listing-workbench-scenarios\s*\{[^}]*flex-wrap:\s*wrap;/);
+  assert.match(densityStyles, /\.listing-period-card\.correction-active\s*\{[^}]*border-color:/);
 });

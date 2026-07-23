@@ -1,3 +1,33 @@
+.research-workbench-controls {
+  align-items: end;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.research-workbench-controls label {
+  display: grid;
+  font-size: 12px;
+  gap: 4px;
+}
+
+.listing-workbench-scenarios {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.listing-scenario-listing .listing-batchbar,
+.listing-scenario-observation .pending-listing-tasks,
+.listing-scenario-observation .listing-main-group-header > .btn {
+  display: none;
+}
+
+.listing-period-card.correction-active {
+  border-color: #f59e0b;
+}
+
 .listing-workbench-header {
   gap: 8px;
   padding-bottom: 8px;
