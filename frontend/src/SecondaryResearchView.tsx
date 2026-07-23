@@ -192,9 +192,13 @@ export function SecondaryResearchView(props: {
   if (loading && !group) return <div className="research-empty">正在加载二次调研任务...</div>;
   if (!group) {
     return (
-      <div className="research-empty">
-        <b>当前没有待二次调研的商品</b>
-        <span>PLM 到货匹配成功后，对应运营的主 SKU 会出现在这里。</span>
+      <div className="secondary-workbench">
+        <div className="research-workbench-controls research-empty-controls">
+          <button className={`btn small ${scenario === "pending" ? "primary" : ""}`} type="button" onClick={() => setScenario("pending")}>待处理</button>
+          <button className={`btn small ${scenario === "submitted" ? "primary" : ""}`} type="button" onClick={() => setScenario("submitted")}>我已提交</button>
+          <button className="btn small" type="button" onClick={() => { setQuery(""); setCountryFilter(""); setOwnerFilter(""); setPeriodFilter("latest"); }}>清空筛选</button>
+        </div>
+        <div className="research-empty"><b>{scenario === "submitted" ? "当前筛选下没有已提交记录" : "当前筛选下没有待处理记录"}</b></div>
       </div>
     );
   }

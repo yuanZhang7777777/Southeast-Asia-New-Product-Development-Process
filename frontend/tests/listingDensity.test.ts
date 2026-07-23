@@ -5,6 +5,8 @@ import test from "node:test";
 const mainSource = readFileSync(new URL("../src/main.tsx", import.meta.url), "utf8");
 const densityStyleUrl = new URL("../src/listingDensity.css", import.meta.url);
 const densityStyles = existsSync(densityStyleUrl) ? readFileSync(densityStyleUrl, "utf8") : "";
+const listingSource = readFileSync(new URL("../src/ListingObservationView.tsx", import.meta.url), "utf8");
+const researchSource = readFileSync(new URL("../src/SecondaryResearchView.tsx", import.meta.url), "utf8");
 
 test("listing controls stay compact without stretched inputs or result rows", () => {
   assert.match(mainSource, /import "\.\/listingDensity\.css";/);
@@ -22,4 +24,13 @@ test("listing controls stay compact without stretched inputs or result rows", ()
   );
   assert.match(densityStyles, /\.listing-workbench-scenarios\s*\{[^}]*flex-wrap:\s*wrap;/);
   assert.match(densityStyles, /\.listing-period-card\.correction-active\s*\{[^}]*border-color:/);
+});
+
+test("workbench scenarios keep only useful filters and recover from empty results", () => {
+  assert.match(researchSource, /research-empty-controls/);
+  assert.match(researchSource, /当前筛选下没有已提交记录/);
+  assert.match(listingSource, /scenario === "observation" && advancedOpen/);
+  assert.match(listingSource, /business_status: scenario === "observation" \? "all" : "pending_listing"/);
+  assert.doesNotMatch(listingSource, /group\.context\.country \|\| group\.context\.site/);
+  assert.match(listingSource, /listing-advanced-filters[\s\S]*?业务状态[\s\S]*?店铺/);
 });

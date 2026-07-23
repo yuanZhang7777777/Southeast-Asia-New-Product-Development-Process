@@ -120,21 +120,6 @@ def test_secondary_research_list_groups_my_children_and_shows_peer_records() -> 
     assert groups[0]["items"][0]["peer_records"][0]["secondary_conclusion"] == "其他运营结论"
 
 
-def test_secondary_research_groups_same_site_sku_and_owner_by_structured_country() -> None:
-    opportunity_ph, claim_ph = make_claim("SUB-PH", "销售A", downstream_status="waiting_secondary_research")
-    opportunity_th, claim_th = make_claim("SUB-TH", "销售A", downstream_status="waiting_secondary_research")
-    opportunity_th.country = "TH"
-    opportunity_th.site = "PH"
-    with SessionLocal() as db:
-        db.add_all([opportunity_ph, claim_ph, opportunity_th, claim_th])
-        db.commit()
-
-    groups = client.get("/secondary-research", params={"salesperson_name": "销售A"}).json()
-
-    assert len(groups) == 2
-    assert {group["country"] for group in groups} == {"PH", "TH"}
-
-
 def test_secondary_research_defaults_latest_period_and_supports_history_and_all_periods() -> None:
     old_opportunity, old_claim = make_claim(
         "SUB-OLD",

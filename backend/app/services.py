@@ -1211,7 +1211,6 @@ def submit_secondary_research_group(
             models.NewProductOpportunity.source_type == first_opportunity.source_type,
             models.NewProductOpportunity.batch == first_opportunity.batch,
             models.NewProductOpportunity.site == first_opportunity.site,
-            models.NewProductOpportunity.country == first_opportunity.country,
             models.NewProductOpportunity.main_sku == first_opportunity.main_sku,
         )
     ).all()
@@ -1272,7 +1271,6 @@ def secondary_research_group_key(
             opportunity.source_type or "",
             opportunity.batch or "",
             opportunity.site or "",
-            opportunity.country or "",
             opportunity.main_sku or "",
             claim.salesperson_name or "",
         ]

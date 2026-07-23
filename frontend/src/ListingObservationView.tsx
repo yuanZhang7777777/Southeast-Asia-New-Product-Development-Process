@@ -577,17 +577,6 @@ export function ListingObservationView(props: {
       </div>
       <div className="listing-workbench-header">
         <div className="listing-filters">
-          <label>
-            业务状态
-            <select value={filters.business_status} onChange={(event) => setFilter("business_status", event.target.value as WorkbenchBusinessStatus)}>
-              <option value="all">全部</option>
-              <option value="pending_listing">待刊登</option>
-              <option value="pending_review">待复盘</option>
-              <option value="first_round_completed">首轮观察完成</option>
-              <option value="stopped">停止跟踪</option>
-              <option value="voided">已作废</option>
-            </select>
-          </label>
           <label className="listing-search">
             关键词
             <input value={filters.query} onChange={(event) => setFilter("query", event.target.value)} placeholder="主 SKU / Item / 商品名称" />
@@ -608,24 +597,38 @@ export function ListingObservationView(props: {
               </select>
             </label>
           )}
-          <label>
-            业务周期
-            <input type="date" value={filters.period_start} onChange={(event) => setFilter("period_start", event.target.value)} />
-          </label>
-          <label>
-            店铺
-            <input value={filters.shop} onChange={(event) => setFilter("shop", event.target.value)} placeholder="包含匹配" />
-          </label>
-          <button className="btn" type="button" onClick={() => setFilters(DEFAULT_FILTERS)}>清空筛选</button>
+          {scenario === "observation" && (
+            <label>
+              业务周期
+              <input type="date" value={filters.period_start} onChange={(event) => setFilter("period_start", event.target.value)} />
+            </label>
+          )}
+          <button className="btn" type="button" onClick={() => setFilters({ ...DEFAULT_FILTERS, business_status: scenario === "observation" ? "all" : "pending_listing" })}>清空筛选</button>
           <button className="btn" type="button" onClick={() => void loadWorkbench()} disabled={loading}>
             <RefreshCw size={14} />刷新
           </button>
-          <button className="btn" type="button" onClick={() => setAdvancedOpen((open) => !open)}>
-            高级筛选{advancedOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-          </button>
+          {scenario === "observation" && (
+            <button className="btn" type="button" onClick={() => setAdvancedOpen((open) => !open)}>
+              高级筛选{advancedOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+            </button>
+          )}
         </div>
-        {advancedOpen && (
+        {scenario === "observation" && advancedOpen && (
           <div className="listing-advanced-filters">
+            <label>
+              业务状态
+              <select value={filters.business_status} onChange={(event) => setFilter("business_status", event.target.value as WorkbenchBusinessStatus)}>
+                <option value="all">全部</option>
+                <option value="pending_review">待复盘</option>
+                <option value="first_round_completed">首轮观察完成</option>
+                <option value="stopped">停止跟踪</option>
+                <option value="voided">已作废</option>
+              </select>
+            </label>
+            <label>
+              店铺
+              <input value={filters.shop} onChange={(event) => setFilter("shop", event.target.value)} placeholder="包含匹配" />
+            </label>
             <label>
               周次
               <select value={filters.week_number} onChange={(event) => setFilter("week_number", event.target.value ? Number(event.target.value) : "")}>
@@ -695,7 +698,7 @@ export function ListingObservationView(props: {
                   {expanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
                   <b>{group.context.main_sku}</b>
                   <span>{group.context.main_sku_name || "-"}</span>
-                  <span>{group.context.country || group.context.site || "-"}</span>
+                  <span>{group.context.country || "-"}</span>
                   <span>{group.context.salesperson_name}</span>
                   {group.pendingListing && <span className="pill amber">待刊登</span>}
                   <small>{group.listings.length} 个 Item</small>
