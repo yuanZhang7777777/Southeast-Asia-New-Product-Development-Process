@@ -229,13 +229,15 @@ test("自动保存跳过未修改草稿并按申请串行保存最新版本", as
   assert.match(view, /saveQueue\.enqueue\(/);
 });
 
-test("备货条目上下排列，左侧信息不会被表单高度撑出大块空白", () => {
+test("备货条目默认紧凑且一次只展开一个申请", () => {
   const cardRules = styles.match(/\.stocking-item-card\s*\{([^}]*)\}/g) || [];
   const cardRule = cardRules.at(-1) || "";
-  const contextRule = styles.match(/\.stocking-item-context\s*\{([^}]*)\}/)?.[1] || "";
   assert.match(cardRule, /display:\s*block/);
   assert.doesNotMatch(cardRule, /grid-template-columns/);
-  assert.match(contextRule, /border-bottom/);
+  assert.match(view, /expandedRequestId/);
+  assert.match(view, /填写申请/);
+  assert.match(view, /收起/);
+  assert.match(styles, /\.stocking-request-form-grid\s*,[\s\S]*?grid-template-columns:\s*repeat\(4,/);
 });
 
 test("主管仅提交勾选且去重的申请编号", () => {

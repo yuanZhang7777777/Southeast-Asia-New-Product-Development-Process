@@ -47,12 +47,20 @@ import {
   visibleSelectedPeriodIds,
   WorkbenchBusinessStatus
 } from "./listingObservation";
+import { normalizeSiteText } from "./opportunityGroups";
 
 const EMPTY_DATA: ListingWorkbenchResponse = { pending_listing_tasks: [], listing_records: [], period_rows: [] };
 type WorkbenchFilters = ObservationFilters & { business_status: WorkbenchBusinessStatus };
+export type ListingProductLink = {
+  opportunity_id: string;
+  main_sku: string;
+  country?: string | null;
+  business_period?: string | null;
+  image_url?: string | null;
+};
 
 const DEFAULT_FILTERS: WorkbenchFilters = {
-  business_status: "pending_listing",
+  business_status: "all",
   query: "",
   country: "",
   salesperson_name: "",
@@ -69,11 +77,13 @@ export function ListingObservationView(props: {
   role: "operator" | "manager";
   operatorName: string;
   canManage: boolean;
+  productLinks: ListingProductLink[];
+  onOpenProduct: (opportunityId: string) => void;
   onStatus: (message: string) => void;
 }) {
   const [data, setData] = useState<ListingWorkbenchResponse>(EMPTY_DATA);
   const [filters, setFilters] = useState<WorkbenchFilters>(DEFAULT_FILTERS);
-  const [scenario, setScenario] = useState<"listing" | "observation">("listing");
+  const [scenario, setScenario] = useState<"listing" | "observation">("observation");
   const [correctingPeriods, setCorrectingPeriods] = useState<string[]>([]);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [expandedGroups, setExpandedGroups] = useState<string[]>([]);
@@ -172,6 +182,8 @@ export function ListingObservationView(props: {
     data.period_rows,
     defaultNextBusinessPeriodStart()
   ), [data]);
+  const listingScenarioCount = useMemo(() => filterListingWorkbenchGroupsForScenario(groups, "listing").length, [groups]);
+  const observationScenarioCount = useMemo(() => filterListingWorkbenchGroupsForScenario(groups, "observation").length, [groups]);
   const scenarioGroups = useMemo(() => filterListingWorkbenchGroupsForScenario(groups, scenario), [groups, scenario]);
   const businessGroups = useMemo(() => scenario === "listing"
     ? scenarioGroups
@@ -573,8 +585,8 @@ export function ListingObservationView(props: {
   return (
     <div className={`listing-workbench listing-scenario-${scenario}`} ref={workbenchRoot} tabIndex={-1}>
       <div className="listing-workbench-scenarios">
-        <button className={`btn small ${scenario === "listing" ? "primary" : ""}`} type="button" onClick={() => { setScenario("listing"); setFilter("business_status", "pending_listing"); }}>刊登任务</button>
-        <button className={`btn small ${scenario === "observation" ? "primary" : ""}`} type="button" onClick={() => { setScenario("observation"); setFilter("business_status", "all"); }}>周期观察</button>
+        <button className={`btn small ${scenario === "listing" ? "primary" : ""}`} type="button" onClick={() => { setScenario("listing"); setFilter("business_status", "pending_listing"); }}>刊登任务（{listingScenarioCount}）</button>
+        <button className={`btn small ${scenario === "observation" ? "primary" : ""}`} type="button" onClick={() => { setScenario("observation"); setFilter("business_status", "all"); }}>周期观察（{observationScenarioCount}）</button>
       </div>
       <div className="listing-workbench-header">
         <div className="listing-filters">
@@ -687,23 +699,38 @@ export function ListingObservationView(props: {
           <div className="empty-state">请先选择运营</div>
         ) : visibleGroups.length ? visibleGroups.map((group) => {
           const expanded = expandedGroups.includes(group.context.task_key);
+          const productLink = findListingProductLink(props.productLinks, group.context.main_sku, group.context.country, group.context.business_period);
           return (
             <section className="listing-main-group" key={group.context.task_key}>
               <header className="listing-main-group-header">
-                <button
-                  type="button"
-                  className="listing-group-toggle"
-                  aria-expanded={expanded}
-                  onClick={() => toggleGroup(group.context.task_key)}
-                >
-                  {expanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-                  <b>{group.context.main_sku}</b>
-                  <span>{group.context.main_sku_name || "-"}</span>
+                <div className="listing-group-primary">
+                  <button
+                    type="button"
+                    className="listing-group-toggle"
+                    aria-label={expanded ? `收起 ${group.context.main_sku}` : `展开 ${group.context.main_sku}`}
+                    aria-expanded={expanded}
+                    onClick={() => toggleGroup(group.context.task_key)}
+                  >
+                    {expanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                  </button>
+                  <span className="listing-product-thumb">
+                    {productLink?.image_url ? <img src={productLink.image_url} alt={group.context.main_sku_name || group.context.main_sku} /> : "图"}
+                  </span>
+                  <button
+                    type="button"
+                    className="listing-product-link"
+                    disabled={!productLink}
+                    onClick={() => productLink && props.onOpenProduct(productLink.opportunity_id)}
+                    title={productLink ? "打开商品详情" : "暂无可关联的商品详情"}
+                  >
+                    <b>{group.context.main_sku}</b>
+                    <span>{group.context.main_sku_name || "-"}</span>
+                  </button>
                   <span>{group.context.country || "-"}</span>
                   <span>{group.context.salesperson_name}</span>
                   {group.pendingListing && <span className="pill amber">待刊登</span>}
                   <small>{group.listings.length} 个 Item</small>
-                </button>
+                </div>
                 <button type="button" className="btn small" onClick={() => {
                   setExpandedGroups((current) => current.includes(group.context.task_key)
                     ? current
@@ -1167,6 +1194,16 @@ function listingStatusLabel(record: ListingRecord, visibleFirstRoundCompleted: b
 
 function FieldError({ message }: { message?: string }) {
   return message ? <small className="listing-field-error">{message}</small> : null;
+}
+
+function findListingProductLink(
+  links: readonly ListingProductLink[],
+  mainSku: string,
+  country?: string | null,
+  businessPeriod?: string | null
+) {
+  const sameProduct = links.filter((link) => link.main_sku === mainSku && normalizeSiteText(link.country) === normalizeSiteText(country));
+  return sameProduct.find((link) => businessPeriod && link.business_period === businessPeriod) || sameProduct[0];
 }
 
 function unique(values: string[]) {

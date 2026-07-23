@@ -3999,10 +3999,60 @@ th {
   color: inherit;
   cursor: pointer;
   display: flex;
+  flex: 0 0 auto;
+  padding: 5px;
+}
+
+.listing-group-primary {
+  align-items: center;
+  display: flex;
   flex: 1;
-  gap: 10px;
+  gap: 9px;
   min-width: 0;
+}
+
+.listing-product-thumb {
+  align-items: center;
+  background: linear-gradient(135deg, #eef7ff, #fffbe8);
+  border-radius: 7px;
+  color: #1677ff;
+  display: flex;
+  flex: 0 0 34px;
+  height: 34px;
+  justify-content: center;
+  overflow: hidden;
+  width: 34px;
+}
+
+.listing-product-thumb img {
+  height: 100%;
+  object-fit: cover;
+  width: 100%;
+}
+
+.listing-product-link {
+  background: transparent;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  display: grid;
+  gap: 1px;
+  min-width: 120px;
+  padding: 0;
   text-align: left;
+}
+
+.listing-product-link span {
+  color: #64748b;
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.listing-product-link:disabled {
+  cursor: default;
+  opacity: 1;
 }
 
 .listing-group-toggle b {
@@ -4696,17 +4746,28 @@ th {
   overflow: hidden;
 }
 
-.stocking-item-context,
 .stocking-item-form {
-  display: grid;
   align-content: start;
-  gap: 12px;
-  padding: 14px;
+  display: grid;
+  gap: 10px;
+  padding: 10px 12px 12px;
+}
+
+.stocking-item-form[hidden] {
+  display: none;
 }
 
 .stocking-item-context {
+  align-items: center;
   background: #fafafa;
-  border-bottom: 1px solid var(--line);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  padding: 9px 12px;
+}
+
+.stocking-request-toggle {
+  margin-left: auto;
 }
 
 .stocking-decision-buttons,
@@ -4730,7 +4791,14 @@ th {
 .stocking-request-form-grid,
 .stocking-self-main {
   display: grid;
-  gap: 10px;
+  gap: 8px 10px;
+}
+
+.stocking-request-form-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.stocking-self-main {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 

@@ -4,10 +4,11 @@ export const SECONDARY_RESEARCH_SKIP_LISTING = new Set<SecondaryResearchPosition
 
 export type SecondaryResearchScenario = "pending" | "submitted";
 export type SecondaryResearchFilters = { scenario: SecondaryResearchScenario; query?: string; country?: string; businessPeriod?: string; salespersonName?: string };
-export function filterSecondaryResearchGroups<T extends {
+type SecondaryResearchFilterGroup = {
   country?: string | null; business_period?: string | null; salesperson_name: string; main_sku: string; main_sku_name?: string | null;
   items: readonly { sub_sku: string; sub_sku_name?: string | null; secondary_research_submitted_at?: string | null; downstream_status: string }[];
-}>(groups: readonly T[], filters: SecondaryResearchFilters): T[] {
+};
+export function filterSecondaryResearchGroups<T extends SecondaryResearchFilterGroup>(groups: readonly T[], filters: SecondaryResearchFilters): T[] {
   const query = filters.query?.trim().toLocaleLowerCase();
   return groups.flatMap((group) => {
     if ((filters.country && group.country !== filters.country) || (filters.businessPeriod && group.business_period !== filters.businessPeriod) || (filters.salespersonName && group.salesperson_name !== filters.salespersonName)) return [];
@@ -17,6 +18,18 @@ export function filterSecondaryResearchGroups<T extends {
     if (!items.length || (query && ![group.main_sku, group.main_sku_name, ...items.flatMap((item) => [item.sub_sku, item.sub_sku_name])].some((value) => value?.toLocaleLowerCase().includes(query)))) return [];
     return [{ ...group, items } as T];
   });
+}
+
+export function latestSecondaryResearchPeriod<T extends SecondaryResearchFilterGroup>(
+  groups: readonly T[],
+  scenario: SecondaryResearchScenario,
+  filters: Pick<SecondaryResearchFilters, "country" | "salespersonName"> = {}
+) {
+  const periods = filterSecondaryResearchGroups(groups, { scenario, ...filters })
+    .map((group) => group.business_period || "")
+    .filter(Boolean)
+    .sort();
+  return periods[periods.length - 1] || "";
 }
 
 export type SecondaryResearchDraft<TImage = Record<string, unknown>> = {

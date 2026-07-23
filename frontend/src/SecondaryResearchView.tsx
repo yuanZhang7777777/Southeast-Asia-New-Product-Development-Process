@@ -14,6 +14,7 @@ import {
   filterSecondaryResearchGroups,
   createSecondaryResearchDraft,
   incompleteSecondaryResearchItems,
+  latestSecondaryResearchPeriod,
   patchSecondaryResearchDraft,
   SECONDARY_RESEARCH_POSITIONINGS,
   SECONDARY_RESEARCH_SKIP_LISTING,
@@ -73,7 +74,7 @@ export function SecondaryResearchView(props: {
     () => Array.from(new Set(allGroups.map((entry) => entry.business_period || "").filter(Boolean))).sort().reverse(),
     [allGroups]
   );
-  const latestPeriod = periods[0] || "";
+  const latestPeriod = latestSecondaryResearchPeriod(allGroups, scenario, { country: countryFilter, salespersonName: props.editable ? "" : ownerFilter });
   const groups = useMemo(() => filterSecondaryResearchGroups(allGroups, {
     scenario, query, country: countryFilter, businessPeriod: periodFilter === "latest" ? latestPeriod : periodFilter === "__all__" ? "" : periodFilter,
     salespersonName: props.editable ? "" : ownerFilter
@@ -255,30 +256,23 @@ export function SecondaryResearchView(props: {
     setActiveIndex((current) => Math.min(groups.length - 1, Math.max(0, current + direction)));
   }
 
+  const controls = (
+    <div className={`research-workbench-controls${group ? "" : " research-empty-controls"}`}>
+      <div className="research-scenarios"><button className={`btn small ${scenario === "pending" ? "primary" : ""}`} type="button" onClick={() => setScenario("pending")}>待处理</button><button className={`btn small ${scenario === "submitted" ? "primary" : ""}`} type="button" onClick={() => setScenario("submitted")}>我已提交</button></div>
+      <label>关键词<input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="主 / 子 SKU、名称" /></label>
+      <label>国家<select value={countryFilter} onChange={(event) => setCountryFilter(event.target.value)}><option value="">全部</option>{Array.from(new Set(allGroups.map((entry) => entry.country).filter(Boolean))).sort().map((country) => <option value={country!} key={country}>{country}</option>)}</select></label>
+      <label>业务期<select value={periodFilter} onChange={(event) => setPeriodFilter(event.target.value)}><option value="latest">最新期数</option><option value="__all__">全部期数</option>{periods.map((period) => <option value={period} key={period}>{period}</option>)}</select></label>
+      {!props.editable && <label>负责人<select value={ownerFilter} onChange={(event) => setOwnerFilter(event.target.value)}><option value="">全部</option>{Array.from(new Set(allGroups.map((entry) => entry.salesperson_name))).sort().map((owner) => <option value={owner} key={owner}>{owner}</option>)}</select></label>}
+      <button className="btn small" type="button" onClick={() => { setQuery(""); setCountryFilter(""); setOwnerFilter(""); setPeriodFilter("latest"); }}>清空</button>
+    </div>
+  );
+
   if (loading && !group) return <div className="research-empty">正在加载二次调研任务...</div>;
-  if (!group) {
-    return (
-      <div className="secondary-workbench">
-        <div className="research-workbench-controls research-empty-controls">
-          <button className={`btn small ${scenario === "pending" ? "primary" : ""}`} type="button" onClick={() => setScenario("pending")}>待处理</button>
-          <button className={`btn small ${scenario === "submitted" ? "primary" : ""}`} type="button" onClick={() => setScenario("submitted")}>我已提交</button>
-          <button className="btn small" type="button" onClick={() => { setQuery(""); setCountryFilter(""); setOwnerFilter(""); setPeriodFilter("latest"); }}>清空筛选</button>
-        </div>
-        <div className="research-empty"><b>{scenario === "submitted" ? "当前筛选下没有已提交记录" : "当前筛选下没有待处理记录"}</b></div>
-      </div>
-    );
-  }
+  if (!group) return <div className="secondary-workbench">{controls}<div className="research-empty"><b>{scenario === "submitted" ? "当前筛选下没有已提交记录" : "当前筛选下没有待处理记录"}</b></div></div>;
 
   return (
     <div className="secondary-workbench">
-      <div className="research-workbench-controls">
-        <div className="research-scenarios"><button className={`btn small ${scenario === "pending" ? "primary" : ""}`} type="button" onClick={() => setScenario("pending")}>待处理</button><button className={`btn small ${scenario === "submitted" ? "primary" : ""}`} type="button" onClick={() => setScenario("submitted")}>我已提交</button></div>
-        <label>关键词<input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="主 / 子 SKU、名称" /></label>
-        <label>国家<select value={countryFilter} onChange={(event) => setCountryFilter(event.target.value)}><option value="">全部</option>{Array.from(new Set(allGroups.map((entry) => entry.country).filter(Boolean))).sort().map((country) => <option value={country!} key={country}>{country}</option>)}</select></label>
-        <label>业务期<select value={periodFilter} onChange={(event) => setPeriodFilter(event.target.value)}><option value="latest">最新期数</option><option value="__all__">全部期数</option>{periods.map((period) => <option value={period} key={period}>{period}</option>)}</select></label>
-        {!props.editable && <label>负责人<select value={ownerFilter} onChange={(event) => setOwnerFilter(event.target.value)}><option value="">全部</option>{Array.from(new Set(allGroups.map((entry) => entry.salesperson_name))).sort().map((owner) => <option value={owner} key={owner}>{owner}</option>)}</select></label>}
-        <button className="btn small" type="button" onClick={() => { setQuery(""); setCountryFilter(""); setOwnerFilter(""); setPeriodFilter("latest"); }}>清空</button>
-      </div>
+      {controls}
       <button
         className="research-side-nav previous"
         type="button"

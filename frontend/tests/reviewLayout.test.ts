@@ -130,3 +130,9 @@ test("stock 工作台使用全宽布局", () => {
   assert.match(app, /activeView === "stock"/);
   assert.match(app, /activeView !== "stock"/);
 });
+test("运营配置站点使用动态选项和明确的国家代码标签", () => {
+  assert.match(app, /siteOptions[\s\S]*operatorProfiles/);
+  assert.match(app, /<select value=\{normalizeSiteText\(profile\.key_site\)\}/);
+  assert.match(app, /siteOptionLabel\(site\)/);
+  assert.match(app, /负责站点/);
+});

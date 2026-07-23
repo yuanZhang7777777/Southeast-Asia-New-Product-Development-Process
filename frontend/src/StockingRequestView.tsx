@@ -53,6 +53,7 @@ function OperatorStockingView({ operatorItems, onReload, onStatus }: Props) {
   const [errors, setErrors] = useState<Record<string, StockingDraftErrors>>({});
   const [saveState, setSaveState] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState("");
+  const [expandedRequestId, setExpandedRequestId] = useState<string | null>(null);
   const [saveQueue] = useState(() => new StockingDraftSaveQueue<StockingRequestUpdate>());
 
   useEffect(() => {
@@ -242,6 +243,8 @@ function OperatorStockingView({ operatorItems, onReload, onStatus }: Props) {
                 const isSalesSelf = item.source_type === "sales_self_selection";
                 const decisionReadOnly = !isSalesSelf || Boolean(item.request?.submitted_at) || ["submitted", "exported"].includes(item.request?.status || "");
                 const showRequest = stockingFormVisible(item);
+                const requestKey = item.request_id || item.claim_record_id;
+                const requestExpanded = expandedRequestId === requestKey;
                 return (
                   <article className="stocking-item-card" key={item.claim_record_id}>
                     <div className="stocking-item-context">
@@ -254,8 +257,17 @@ function OperatorStockingView({ operatorItems, onReload, onStatus }: Props) {
                           <button className={item.inventory_available === false && item.needs_stocking === false ? "btn small blue" : "btn small"} disabled={decisionReadOnly || busy !== ""} onClick={() => void updateDecision(item, "pause")}>无库存，不备货</button>
                         </div>
                       ) : <span>主管复核已通过</span>}
+                      {showRequest && draft && (
+                        <button
+                          className="btn small stocking-request-toggle"
+                          type="button"
+                          onClick={() => setExpandedRequestId((current) => current === requestKey ? null : requestKey)}
+                        >
+                          {requestExpanded ? "收起" : readOnly ? "查看申请" : "填写申请"}
+                        </button>
+                      )}
                     </div>
-                    <div className="stocking-item-form">
+                    <div className="stocking-item-form" hidden={showRequest && Boolean(draft) && !requestExpanded}>
                       {showRequest && draft ? (
                         <div className="stocking-request-editor" onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) void autoSaveRequest(item); }}>
                           <div className="stocking-request-form-grid">

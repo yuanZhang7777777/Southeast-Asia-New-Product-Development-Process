@@ -344,6 +344,16 @@ function App() {
   );
   const visibleFlow = useMemo(() => flowItems.filter((item) => item.roles.includes(activeRole)), [activeRole]);
   const groups = useMemo(() => groupOpportunities(opportunities), [opportunities]);
+  const listingProductLinks = useMemo(() => groups.map((group) => {
+    const imageItem = group.items.find((item) => item.image_url) || group.first;
+    return {
+      opportunity_id: imageItem.id,
+      main_sku: group.main_sku,
+      country: normalizeSiteText(group.first.site || group.first.country),
+      business_period: group.first.batch,
+      image_url: imageSrc(imageItem.image_url)
+    };
+  }), [groups]);
   const dashboardGroups = useMemo(() => filterDashboardGroups(groups, dashboardFilters), [groups, dashboardFilters]);
   const dashboardOptions = useMemo(() => buildDashboardOptions(groups), [groups]);
   const poolGroups = useMemo(() => groups.filter((group) => group.items.some((item) => isPoolItem(item, activeRole))), [activeRole, groups]);
@@ -1235,6 +1245,12 @@ function App() {
                 role={activeRole}
                 operatorName={activeOperator}
                 canManage={canManage}
+                productLinks={listingProductLinks}
+                onOpenProduct={(opportunityId) => {
+                  const item = opportunities.find((entry) => entry.id === opportunityId);
+                  if (item) openOpportunityDetail(item);
+                  else setStatusMessage("未找到对应商品详情");
+                }}
                 onStatus={setStatusMessage}
               />
             )}
@@ -2646,7 +2662,10 @@ function AssignView(props: {
     category: categoryFilter,
     operator: operatorFilter
   });
-  const siteOptions = Array.from(new Set(props.assignmentGroups.flatMap((group) => group.items.map((item) => normalizeSiteText(item.site || item.country)).filter(Boolean)))).sort();
+  const siteOptions = Array.from(new Set([
+    ...props.assignmentGroups.flatMap((group) => group.items.map((item) => normalizeSiteText(item.site || item.country)).filter(Boolean)),
+    ...props.operatorProfiles.map((profile) => normalizeSiteText(profile.key_site)).filter(Boolean)
+  ])).sort();
   const categoryOptions = Array.from(new Set(props.assignmentGroups.flatMap((group) => group.items.map((item) => item.category_level1?.trim()).filter((value): value is string => Boolean(value))))).sort();
   const pageItemsList = pageItems(filteredItems, props.list);
   const selectedCount = props.previewItems.filter((item) => props.assignmentDrafts[assignmentItemKey(item)]).length;
@@ -2803,7 +2822,7 @@ function AssignView(props: {
                 <div className="profile-row head">
                   <span>启用</span>
                   <span>运营</span>
-                  <span>重点站点</span>
+                  <span>负责站点</span>
                   <span>重点品类1</span>
                   <span>重点品类2</span>
                   <span>优先级</span>
@@ -2834,7 +2853,10 @@ function AssignView(props: {
                       aria-label={`${profile.operator_name} 是否启用`}
                     />
                     <input value={profile.operator_name} onChange={(event) => patchProfile(profile.id, { operator_name: event.target.value })} />
-                    <input value={profile.key_site || ""} onChange={(event) => patchProfile(profile.id, { key_site: event.target.value })} />
+                    <select value={normalizeSiteText(profile.key_site)} onChange={(event) => patchProfile(profile.id, { key_site: event.target.value })}>
+                      <option value="">请选择</option>
+                      {siteOptions.map((site) => <option key={site} value={site}>{siteOptionLabel(site)}</option>)}
+                    </select>
                     <input value={profile.key_category1 || ""} onChange={(event) => patchProfile(profile.id, { key_category1: event.target.value })} />
                     <input value={profile.key_category2 || ""} onChange={(event) => patchProfile(profile.id, { key_category2: event.target.value })} />
                     <input
@@ -2887,11 +2909,14 @@ function AssignView(props: {
                     onChange={(event) => props.setNewProfile({ ...props.newProfile, operator_name: event.target.value })}
                     placeholder="运营"
                   />
-                  <input
+                  <select
                     value={props.newProfile.key_site || ""}
                     onChange={(event) => props.setNewProfile({ ...props.newProfile, key_site: event.target.value })}
-                    placeholder="站点缩写，如 PH / TH / SG"
-                  />
+                    aria-label="新运营负责站点"
+                  >
+                    <option value="">选择负责站点</option>
+                    {siteOptions.map((site) => <option key={site} value={site}>{siteOptionLabel(site)}</option>)}
+                  </select>
                   <input
                     value={props.newProfile.key_category1 || ""}
                     onChange={(event) => props.setNewProfile({ ...props.newProfile, key_category1: event.target.value })}
@@ -3120,6 +3145,12 @@ function assignmentReasonClass(line: string) {
   if (line.startsWith("无站点匹配") || line.startsWith("品类未匹配")) return "assignment-reason-line miss";
   if (line.startsWith("负载")) return "assignment-reason-line balance";
   return "assignment-reason-line";
+}
+
+function siteOptionLabel(value?: string | null) {
+  const normalized = normalizeSiteText(value);
+  const names: Record<string, string> = { TH: "泰国", VN: "越南", PH: "菲律宾", MY: "马来西亚", SG: "新加坡", ID: "印度尼西亚" };
+  return names[normalized] ? `${names[normalized]}（${normalized}）` : value || "-";
 }
 
 function siteDisplay(value?: string | null) {

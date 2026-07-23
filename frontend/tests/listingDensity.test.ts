@@ -27,10 +27,22 @@ test("listing controls stay compact without stretched inputs or result rows", ()
 });
 
 test("workbench scenarios keep only useful filters and recover from empty results", () => {
-  assert.match(researchSource, /research-empty-controls/);
+  assert.match(researchSource, /const controls = \(/);
+  assert.match(researchSource, /if \(!group\)[\s\S]*?\{controls\}/);
   assert.match(researchSource, /当前筛选下没有已提交记录/);
+  assert.match(researchSource, /latestSecondaryResearchPeriod\(allGroups, scenario/);
   assert.match(listingSource, /scenario === "observation" && advancedOpen/);
+  assert.match(listingSource, /useState<"listing" \| "observation">\("observation"\)/);
+  assert.match(listingSource, /刊登任务（\{listingScenarioCount\}）/);
+  assert.match(listingSource, /周期观察（\{observationScenarioCount\}）/);
   assert.match(listingSource, /business_status: scenario === "observation" \? "all" : "pending_listing"/);
   assert.doesNotMatch(listingSource, /group\.context\.country \|\| group\.context\.site/);
   assert.match(listingSource, /listing-advanced-filters[\s\S]*?业务状态[\s\S]*?店铺/);
+});
+
+test("刊登和观察的 SKU 可进入商品详情且有图时显示缩略图", () => {
+  assert.match(listingSource, /productLinks/);
+  assert.match(listingSource, /onOpenProduct/);
+  assert.match(listingSource, /listing-product-thumb/);
+  assert.match(listingSource, /listing-product-link/);
 });
