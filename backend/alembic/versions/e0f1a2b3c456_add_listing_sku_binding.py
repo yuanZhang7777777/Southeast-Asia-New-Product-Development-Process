@@ -62,6 +62,8 @@ def upgrade() -> None:
             batch_op.add_column(sa.Column("representative_rule", sa.String(length=64), nullable=True))
         if "representative_sub_sku" not in listing_columns:
             batch_op.add_column(sa.Column("representative_sub_sku", sa.String(length=128), nullable=True))
+        batch_op.alter_column("first_period_start", existing_type=sa.Date(), nullable=True)
+        batch_op.alter_column("first_period_end", existing_type=sa.Date(), nullable=True)
         if "uq_listing_record_item" in listing_uniques:
             batch_op.drop_constraint("uq_listing_record_item", type_="unique")
     listing_indexes = {index["name"] for index in sa.inspect(bind).get_indexes("listing_record")}
@@ -82,6 +84,8 @@ def upgrade() -> None:
             batch_op.add_column(sa.Column("record_source", sa.String(length=32), nullable=False, server_default="platform"))
         if "metrics_origin" not in period_columns:
             batch_op.add_column(sa.Column("metrics_origin", sa.String(length=32), nullable=True))
+        batch_op.alter_column("period_start", existing_type=sa.Date(), nullable=True)
+        batch_op.alter_column("period_end", existing_type=sa.Date(), nullable=True)
         if "uq_item_observation_period_week" in period_uniques:
             batch_op.drop_constraint("uq_item_observation_period_week", type_="unique")
         if "uq_item_observation_period_start" in period_uniques:
@@ -134,6 +138,12 @@ def downgrade() -> None:
         "item_observation_period 同起始日多来源行": (
             "SELECT listing_record_id FROM item_observation_period GROUP BY listing_record_id, period_start HAVING count(*) > 1"
         ),
+        "item_observation_period 存在空周窗行": (
+            "SELECT id FROM item_observation_period WHERE period_start IS NULL"
+        ),
+        "listing_record 存在空首周行": (
+            "SELECT id FROM listing_record WHERE first_period_start IS NULL"
+        ),
     }
     conflicts = [label for label, query in blockers.items() if bind.execute(sa.text(query)).first() is not None]
     if conflicts:
@@ -152,6 +162,8 @@ def downgrade() -> None:
             batch_op.drop_constraint("uq_item_observation_period_start", type_="unique")
         batch_op.create_unique_constraint("uq_item_observation_period_week", ["listing_record_id", "week_number"])
         batch_op.create_unique_constraint("uq_item_observation_period_start", ["listing_record_id", "period_start"])
+        batch_op.alter_column("period_start", existing_type=sa.Date(), nullable=False)
+        batch_op.alter_column("period_end", existing_type=sa.Date(), nullable=False)
         if "metrics_origin" in period_columns:
             batch_op.drop_column("metrics_origin")
         if "record_source" in period_columns:
@@ -163,6 +175,8 @@ def downgrade() -> None:
     listing_columns = {column["name"] for column in inspector.get_columns("listing_record")}
     with op.batch_alter_table("listing_record") as batch_op:
         batch_op.create_unique_constraint("uq_listing_record_item", ["item"])
+        batch_op.alter_column("first_period_start", existing_type=sa.Date(), nullable=False)
+        batch_op.alter_column("first_period_end", existing_type=sa.Date(), nullable=False)
         if "representative_sub_sku" in listing_columns:
             batch_op.drop_column("representative_sub_sku")
         if "representative_rule" in listing_columns:

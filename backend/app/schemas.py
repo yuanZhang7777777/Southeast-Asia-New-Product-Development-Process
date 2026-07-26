@@ -625,7 +625,7 @@ class ListingRecordRead(BaseModel):
     shop: str
     item: str
     listing_strategy: str
-    first_period_start: date
+    first_period_start: date | None = None
     business_period: str | None = None
     source_business_periods: list[str] = Field(default_factory=list)
     status: str
@@ -646,8 +646,8 @@ class ObservationPeriodRead(BaseModel):
     shop: str
     item: str
     week_number: int
-    period_start: date
-    period_end: date
+    period_start: date | None = None
+    period_end: date | None = None
     record_source: str = "platform"
     metrics_origin: str | None = None
     business_period: str | None = None
