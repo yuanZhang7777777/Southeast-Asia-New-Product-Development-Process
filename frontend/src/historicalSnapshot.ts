@@ -76,6 +76,142 @@ export function developmentSourceV2Section(item: SnapshotItem, keywords: readonl
   return { businessPeriod: valueText(source.business_period), rows };
 }
 
+export type HistoryCellField = {
+  column: string;
+  label: string;
+  group: string;
+  value: string;
+};
+
+export type HistoryCellSectionKey = "development" | "market" | "pricing" | "cost" | "other";
+
+export type HistoryCellSections = Record<HistoryCellSectionKey, HistoryCellField[]>;
+
+export function isHistorySelection1Item(item: SnapshotItem) {
+  return item.source_type === "history_selection1" || snapshotOf(item).archive_type === "historical_selection1";
+}
+
+// 列位兜底（Z-AN 竞品、AO-AX 定价、AQ-BR 成本等）只对真正是选品1列布局的来源成立；
+// 选品2 等其它布局的同列位含义完全不同（如 AL-AN 是认领区），必须按真实表头取数。
+export function hasSelection1ColumnLayout(item: SnapshotItem) {
+  return item.source_type === "selection1_developer_claim_feedback";
+}
+
+export function isSelection2Item(item: SnapshotItem) {
+  return item.source_type === "selection2_caigen_claim_feedback";
+}
+
+export type Selection2SectionKey = "market" | "pricing" | "cost";
+
+const selection2SectionKeywords: Record<Selection2SectionKey, readonly string[]> = {
+  market: ["低价高消", "最新低价", "最低价链接"],
+  pricing: ["进价", "SP上家", "SP上架", "定价", "销售成本", "利润额", "利润率"],
+  cost: ["海运", "操作费", "费率", "进货运费"]
+};
+
+// 选品2 按自己的真实表头（headers_by_column）挑出板块相关字段；非选品2 来源返回空。
+export function selection2HeaderFields(item: SnapshotItem, section: Selection2SectionKey): HistoryCellField[] {
+  if (!isSelection2Item(item)) return [];
+  const snapshot = snapshotOf(item);
+  const headersByColumn = isRecord(snapshot.headers_by_column) ? snapshot.headers_by_column : {};
+  const fieldsByColumn = isRecord(snapshot.fields_by_column) ? snapshot.fields_by_column : {};
+  const cells = isRecord(snapshot.cells) ? snapshot.cells : {};
+  const keywords = selection2SectionKeywords[section];
+  const rows: HistoryCellField[] = [];
+  const columns = Object.keys(headersByColumn).sort((left, right) => columnNumber(left) - columnNumber(right));
+  for (const column of columns) {
+    const label = headerText(headersByColumn[column]);
+    if (!label || !keywords.some((keyword) => label.includes(keyword))) continue;
+    const value = valueText(fieldsByColumn[column]) || valueText(cells[column]);
+    if (!value) continue;
+    rows.push({ column, label, group: "", value });
+  }
+  return rows;
+}
+
+function headerText(value: unknown) {
+  if (Array.isArray(value)) return value.map(valueText).filter(Boolean).join(" / ");
+  return valueText(value);
+}
+
+// 选品1历史档案：把 fields_by_cell（{列字母: {header, group, value}}）按 R1 分组名归入详情板块。
+// 旧世代（generation=old）行分组可能缺失，缺失或未识别分组落入 other（基础信息底部折叠区）。
+export function historyFieldsByCellSections(item: SnapshotItem): HistoryCellSections | null {
+  if (!isHistorySelection1Item(item)) return null;
+  const cells = snapshotOf(item).fields_by_cell;
+  if (!isRecord(cells)) return null;
+  const sections: HistoryCellSections = { development: [], market: [], pricing: [], cost: [], other: [] };
+  const columns = Object.keys(cells).sort((left, right) => columnNumber(left) - columnNumber(right));
+  for (const column of columns) {
+    const cell = cells[column];
+    if (!isRecord(cell)) continue;
+    const value = valueText(cell.value);
+    if (!value) continue;
+    const group = valueText(cell.group);
+    const label = valueText(cell.header) || group || column;
+    sections[historyGroupSection(group)].push({ column, label, group, value });
+  }
+  if (!Object.values(sections).some((rows) => rows.length)) return null;
+  return sections;
+}
+
+function historyGroupSection(group: string): HistoryCellSectionKey {
+  if (!group) return "other";
+  if (group.includes("询价")) return "development";
+  if (group.includes("调研") || group.includes("竞品")) return "market";
+  if (group.includes("定价") || group.includes("利润") || group.includes("汇总")) return "pricing";
+  if (group.includes("核") || group.includes("成本")) return "cost";
+  return "other";
+}
+
+export type HistoryMarketView = {
+  competitors: StructuredCompetitorRow[];
+  extras: HistoryCellField[];
+};
+
+// 市场调研字段里按顺序识别 链接(URL 值)→售价→月销 三元组渲染竞品行；识别不了的字段留在 extras 走通用标签值列表。
+export function historyMarketView(fields: HistoryCellField[]): HistoryMarketView {
+  const competitors: StructuredCompetitorRow[] = [];
+  const extras: HistoryCellField[] = [];
+  let current: StructuredCompetitorRow | null = null;
+  for (const field of fields) {
+    if (/^https?:\/\//i.test(field.value)) {
+      current = {
+        label: historyCompetitorLabel(field.label, field.column),
+        linkColumn: field.column,
+        priceColumn: "—",
+        salesColumn: "—",
+        link: field.value,
+        price: "",
+        sales: ""
+      };
+      competitors.push(current);
+      continue;
+    }
+    if (current && !current.price && /售价|单价/.test(field.label)) {
+      current.price = field.value;
+      current.priceColumn = field.column;
+      continue;
+    }
+    if (current && !current.sales && /月销/.test(field.label)) {
+      current.sales = field.value;
+      current.salesColumn = field.column;
+      continue;
+    }
+    current = null;
+    extras.push(field);
+  }
+  return { competitors, extras };
+}
+
+function historyCompetitorLabel(label: string, column: string) {
+  return label.replace(/链接\d*/g, "").trim() || column;
+}
+
+function columnNumber(column: string) {
+  return column.split("").reduce((total, char) => total * 26 + char.charCodeAt(0) - 64, 0);
+}
+
 function competitorEntryRows(value: unknown, fromMarketSource: boolean): StructuredCompetitorRow[] {
   if (!Array.isArray(value)) return [];
   return value

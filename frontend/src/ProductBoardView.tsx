@@ -1,8 +1,9 @@
 import { ChevronDown, ChevronRight, ClipboardPen, Search, X } from "lucide-react";
 import { Fragment, useEffect, useMemo, useState } from "react";
 
-import { API_BASE, api, getAuthToken, ProductBoardGroup } from "./api";
+import { api, ProductBoardGroup } from "./api";
 import { formatBusinessNumber } from "./businessFormat";
+import { productImageSrc } from "./imageSource";
 import {
   buildProductBoardRows,
   filterProductBoardRows,
@@ -216,7 +217,7 @@ function ChildSkuTable({ row, onOpenDetail }: { row: ProductBoardRow; onOpenDeta
 }
 
 function ProductBoardThumb({ url, name }: { url?: string | null; name: string }) {
-  const src = imageSrc(url);
+  const src = productImageSrc(url);
   const [open, setOpen] = useState(false);
   return (
     <>
@@ -250,13 +251,4 @@ function buildOptions(rows: ProductBoardRow[]) {
     statuses: unique(rows.flatMap((row) => row.statuses)),
     sites: unique(rows.map((row) => row.site || row.country).filter(Boolean) as string[])
   };
-}
-
-function imageSrc(url?: string | null) {
-  if (!url) return "";
-  if (url.startsWith("/uploaded-sources/")) return `${API_BASE}${url}`;
-  if (url.startsWith("https://hz-sea-np-flow-prod.oss-cn-shanghai.aliyuncs.com/")) {
-    return `${API_BASE}/claims/evidence-images/proxy?url=${encodeURIComponent(url)}&token=${encodeURIComponent(getAuthToken())}`;
-  }
-  return url;
 }

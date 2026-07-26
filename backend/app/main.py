@@ -18,6 +18,7 @@ from app.routers import (
     health,
     listing_workbench,
     market_monitor,
+    media,
     notifications,
     opportunities,
     product_board,
@@ -66,6 +67,7 @@ app.include_router(secondary_research.router)
 app.include_router(listing_workbench.router)
 app.include_router(stocking.router)
 app.include_router(market_monitor.router)
+app.include_router(media.router)
 app.include_router(arrival.router)
 app.include_router(notifications.router)
 app.include_router(admin.router)

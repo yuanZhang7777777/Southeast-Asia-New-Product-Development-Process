@@ -2,7 +2,17 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-import { developmentSourceV2Section, isHistoricalArchiveItem, snapshotDirectColumnText, structuredCompetitorRows } from "../src/historicalSnapshot.ts";
+import {
+  developmentSourceV2Section,
+  hasSelection1ColumnLayout,
+  historyFieldsByCellSections,
+  historyMarketView,
+  isHistoricalArchiveItem,
+  isHistorySelection1Item,
+  selection2HeaderFields,
+  snapshotDirectColumnText,
+  structuredCompetitorRows
+} from "../src/historicalSnapshot.ts";
 
 const appSource = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
 
@@ -139,6 +149,190 @@ test("商品详情成本参数与开发询价模块接入 v2 段并标注三国�
   assert.match(appSource, /developmentSourceV2Section\(activeChild, \["成本"\]\)/);
   assert.match(appSource, /developmentSourceV2Section\(activeChild, \["询价", "规格"\]\)/);
   assert.match(appSource, /三国表·\{archiveSection\.businessPeriod\}/);
-  assert.match(appSource, /archiveSection \? \(\s*<ArchiveSegmentTable section=\{archiveSection\} \/>\s*\) : \(\s*<ColumnRangeTable item=\{activeChild\} columns=\{costParameterColumns\} \/>/);
-  assert.match(appSource, /archiveSection \? \(\s*<ArchiveSegmentTable section=\{archiveSection\} \/>\s*\) : \(\s*<DetailFieldGrid item=\{activeChild\} specs=\{developmentFieldSpecs\} \/>/);
+  assert.match(
+    appSource,
+    /archiveSection \? \(\s*<ArchiveSegmentTable section=\{archiveSection\} \/>\s*\) : selection2Rows\.length \? \(\s*<ArchiveSegmentTable section=\{\{ businessPeriod: "", rows: selection2Rows \}\} \/>\s*\) : historyRows\.length \? \(\s*<ArchiveSegmentTable section=\{\{ businessPeriod: "", rows: historyRows \}\} \/>\s*\) : \(\s*<ColumnRangeTable item=\{activeChild\} columns=\{costParameterColumns\} \/>/
+  );
+  assert.match(
+    appSource,
+    /archiveSection \? \(\s*<ArchiveSegmentTable section=\{archiveSection\} \/>\s*\) : historyRows\.length \? \(\s*<ArchiveSegmentTable section=\{\{ businessPeriod: "", rows: historyRows \}\} \/>\s*\) : \(\s*<DetailFieldGrid item=\{activeChild\} specs=\{developmentFieldSpecs\} \/>/
+  );
+});
+
+const historySelection1NewGenItem = {
+  source_type: "history_selection1",
+  snapshot: {
+    archive_type: "historical_selection1",
+    business_period: "开发0623期",
+    fields_by_cell: {
+      A: { header: "开品周期", group: "开品周期", value: "6.24-6.30" },
+      N: { header: "产品规格", group: "开发询价", value: "箱规：42*32*28CM 50pcs" },
+      Q: { header: "供应商链接", group: "开发询价", value: "https://detail.1688.com/offer/1" },
+      AA: { header: "最低价链接", group: "Shopee菲律宾市场调研", value: "https://shopee.ph/lowest" },
+      AB: { header: "售价1(PHP）", group: "Shopee菲律宾市场调研", value: 331 },
+      AC: { header: "月销1", group: "Shopee菲律宾市场调研", value: 2 },
+      AM: { header: "新晋链接", group: "Shopee菲律宾市场调研", value: "https://shopee.ph/new" },
+      AN: { header: "售价3(PHP）", group: "Shopee菲律宾市场调研", value: 429 },
+      AO: { header: "月销3", group: "Shopee菲律宾市场调研", value: 499 },
+      AP: { header: "参考单销", group: "Shopee菲律宾市场调研", value: 6.68 },
+      AX: { header: "稳定期总成本（PHP）", group: "Shopee菲律宾成本", value: 280.6 },
+      BP: { header: "总预估单销", group: "汇总", value: 0 },
+      BU: { header: "1pc空运头程费", group: "海空判断", value: 3.79 },
+      BZ: { header: "采购   核价人", group: "供应链核/报价", value: "核价员A" },
+      CA: { header: "核价意见", group: "供应链核/报价", value: "" }
+    }
+  }
+};
+
+const historySelection1OldGenItem = {
+  source_type: "history_selection1",
+  snapshot: {
+    archive_type: "historical_selection1",
+    generation: "old",
+    fields_by_cell: {
+      N: { header: "竞品单价\n（链接1）\n(比索）", group: "竞品单价\n（链接1）\n(比索）", value: 120 },
+      O: { header: "竞品月销\n（链接1）", group: "竞品月销\n（链接1）", value: 30 },
+      P: { header: "参考定价   （比索）", group: "参考定价   （比索）", value: 130 },
+      Q: { header: "国内参考链接", group: "开发询价", value: "https://detail.1688.com/offer/1" },
+      R: { header: "供应商名称", group: "开发询价", value: "唐山盈好" },
+      S: { header: "备注", group: null, value: "旧世代无分组" }
+    }
+  }
+};
+
+test("选品1历史新世代 fields_by_cell 按 R1 分组归入板块且列序稳定", () => {
+  assert.equal(isHistorySelection1Item(historySelection1NewGenItem), true);
+  const sections = historyFieldsByCellSections(historySelection1NewGenItem);
+  assert.ok(sections);
+  assert.deepEqual(sections.development.map((field) => field.column), ["N", "Q"]);
+  assert.deepEqual(sections.market.map((field) => field.column), ["AA", "AB", "AC", "AM", "AN", "AO", "AP"]);
+  assert.deepEqual(sections.pricing.map((field) => field.column), ["BP"]);
+  assert.deepEqual(sections.cost.map((field) => field.column), ["AX", "BZ"]);
+  assert.deepEqual(sections.other.map((field) => field.column), ["A", "BU"]);
+  // 空值（CA）跳过，数字 0（BP）保留。
+  assert.equal(sections.pricing[0].value, "0");
+  assert.deepEqual(sections.development[0], { column: "N", label: "产品规格", group: "开发询价", value: "箱规：42*32*28CM 50pcs" });
+});
+
+test("选品1历史旧世代（部分无分组）按竞品/定价/询价关键字归类，无分组落其他", () => {
+  const sections = historyFieldsByCellSections(historySelection1OldGenItem);
+  assert.ok(sections);
+  assert.deepEqual(sections.market.map((field) => field.column), ["N", "O"]);
+  assert.deepEqual(sections.pricing.map((field) => field.column), ["P"]);
+  assert.deepEqual(sections.development.map((field) => field.column), ["Q", "R"]);
+  assert.deepEqual(sections.other.map((field) => field.column), ["S"]);
+  assert.deepEqual(sections.cost, []);
+});
+
+test("市场调研派生识别 链接/售价/月销 三元组为竞品行，识别不了的留通用列表", () => {
+  const sections = historyFieldsByCellSections(historySelection1NewGenItem);
+  assert.ok(sections);
+  const view = historyMarketView(sections.market);
+  assert.deepEqual(view.competitors, [
+    { label: "最低价", linkColumn: "AA", priceColumn: "AB", salesColumn: "AC", link: "https://shopee.ph/lowest", price: "331", sales: "2" },
+    { label: "新晋", linkColumn: "AM", priceColumn: "AN", salesColumn: "AO", link: "https://shopee.ph/new", price: "429", sales: "499" }
+  ]);
+  assert.deepEqual(view.extras.map((field) => field.column), ["AP"]);
+});
+
+test("旧世代市场调研无链接值时全部走通用标签值列表", () => {
+  const sections = historyFieldsByCellSections(historySelection1OldGenItem);
+  assert.ok(sections);
+  const view = historyMarketView(sections.market);
+  assert.deepEqual(view.competitors, []);
+  assert.deepEqual(view.extras.map((field) => field.column), ["N", "O"]);
+});
+
+test("非选品1历史来源不产生 fields_by_cell 派生数据", () => {
+  assert.equal(historyFieldsByCellSections(selection1Item), null);
+  assert.equal(historyFieldsByCellSections(archiveMarketItem), null);
+  assert.equal(historyFieldsByCellSections({ source_type: "history_selection1", snapshot: {} }), null);
+});
+
+const selection2Item = {
+  source_type: "selection2_caigen_claim_feedback",
+  snapshot: {
+    headers_by_column: {
+      H: ["进价"],
+      L: ["海运"],
+      Q: ["销售成本（比索）"],
+      T: ["推广期SP利润率"],
+      U: ["稳定期SP利润率"],
+      X: ["审核"],
+      Y: ["低价高消链接"],
+      Z: ["低价高消链接数据"],
+      AA: ["最新低价链接"],
+      AB: ["最低价链接"],
+      AL: ["开发表格认领情况--主销售员"],
+      AM: ["是否认领"],
+      AN: ["认领单销"]
+    },
+    cells: {
+      H: 12.2,
+      L: 1.2,
+      Q: 125.57,
+      T: -3.7,
+      U: 0.1046,
+      X: "竟对月销400左右",
+      Y: "https://shopee.ph/cheap-hot",
+      AA: "https://shopee.ph/newest-low",
+      AL: "陆伟豪",
+      AM: "是",
+      AN: 0.5
+    }
+  }
+};
+
+test("选品2 不具备选品1列布局，Z-AN/AO-AX/AQ-BR 列位兜底一律禁用", () => {
+  assert.equal(hasSelection1ColumnLayout(selection2Item), false);
+  assert.equal(hasSelection1ColumnLayout({ source_type: "selection1_developer_claim_feedback" }), true);
+  assert.equal(hasSelection1ColumnLayout({ source_type: "history_selection1" }), false);
+  // detailFieldValue 的列位兜底按 source_type 限定；ColumnRangeTable 同样只对选品1列布局出行。
+  assert.match(appSource, /if \(hasSelection1ColumnLayout\(item\)\) return snapshotColumnText\(item, fallbackColumn\);\s*\n\s*return historicalDevelopmentColumnText\(item, fallbackColumn\);/);
+  assert.match(appSource, /const rows = !hasSelection1ColumnLayout\(props\.item\)\s*\n\s*\? \[\]/);
+  assert.match(appSource, /hasSelection1ColumnLayout\(activeChild\) && costParameterColumns\.some/);
+});
+
+test("选品2 市场调研按真实表头取 低价高消/最新低价/最低价链接，认领区 AL-AN 绝不出现在竞品行", () => {
+  const rows = selection2HeaderFields(selection2Item, "market");
+  assert.deepEqual(rows.map((row) => row.column), ["Y", "AA"]);
+  assert.deepEqual(rows[0], { column: "Y", label: "低价高消链接", group: "", value: "https://shopee.ph/cheap-hot" });
+  // AL=人名 / AM=是 / AN=0.5 的认领区单元格不进入市场调研板块。
+  const values = rows.map((row) => row.value);
+  assert.ok(!values.includes("陆伟豪"));
+  assert.ok(!values.includes("是"));
+  assert.ok(!values.includes("0.5"));
+  assert.ok(!rows.some((row) => ["AL", "AM", "AN"].includes(row.column)));
+});
+
+test("选品2 价格参考/成本参数按真实表头取 H~U 的进价/定价/利润率与费用列", () => {
+  const pricing = selection2HeaderFields(selection2Item, "pricing");
+  assert.deepEqual(pricing.map((row) => [row.column, row.label]), [
+    ["H", "进价"],
+    ["Q", "销售成本（比索）"],
+    ["T", "推广期SP利润率"],
+    ["U", "稳定期SP利润率"]
+  ]);
+  const cost = selection2HeaderFields(selection2Item, "cost");
+  assert.deepEqual(cost.map((row) => [row.column, row.label]), [["L", "海运"]]);
+  // 非选品2 来源不产生表头派生。
+  assert.deepEqual(selection2HeaderFields(selection1Item, "market"), []);
+  assert.deepEqual(selection2HeaderFields(historySelection1NewGenItem, "market"), []);
+});
+
+test("商品详情各板块以既有数据优先、fields_by_cell 派生补位并标注选品1历史", () => {
+  assert.match(appSource, /const historySections = historyFieldsByCellSections\(activeChild\);/);
+  assert.match(appSource, /historyRows\.length > 0 && <span className="tag">选品1历史<\/span>/);
+  assert.match(appSource, /historyMarket && <span className="tag">选品1历史<\/span>/);
+  // 选品2 表头派生在市场调研/价格参考/成本参数板块补位并带标注。
+  assert.match(appSource, /selection2Rows\.length > 0 && <span className="tag">选品2表头<\/span>/);
+  assert.match(appSource, /competitorRows\(activeChild\)\.length \? \[\] : selection2HeaderFields\(activeChild, "market"\)/);
+  assert.match(appSource, /pricingRows\(activeChild\)\.length \? \[\] : selection2HeaderFields\(activeChild, "pricing"\)/);
+  assert.match(appSource, /!archiveSection && !hasColumnRows \? selection2HeaderFields\(activeChild, "cost"\) : \[\]/);
+  assert.match(appSource, /其他源表字段（\{historySections\.other\.length\}）<span className="tag">选品1历史<\/span>/);
+  // 已有结构化/表头数据的板块不再重复渲染派生数据。
+  assert.match(appSource, /!archiveSection && !detailFieldRows\(activeChild, developmentFieldSpecs\)\.length\s*\? historySections\?\.development \?\? \[\]/);
+  assert.match(appSource, /!competitorRows\(activeChild\)\.length && historySections\?\.market\.length/);
+  assert.match(appSource, /pricingRows\(activeChild\)\.length \? \[\] : historySections\?\.pricing \?\? \[\]/);
+  assert.match(appSource, /!archiveSection && !hasColumnRows \? historySections\?\.cost \?\? \[\] : \[\]/);
 });

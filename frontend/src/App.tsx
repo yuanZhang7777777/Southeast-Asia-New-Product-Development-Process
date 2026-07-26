@@ -58,7 +58,19 @@ import { ClaimDraftState, claimSubmissionState, createClaimDraft, createClaimDra
 import { applyBoardReassignment, boardGroupSummary, canReassignBoardRow } from "./assignmentBoard";
 import { filterAssignmentItems, groupOperatorProfilesBySite, moveOperatorWithinSite, reorderOperatorWithinSite, sortOperatorProfiles } from "./assignmentFilters";
 import { competitorGroupForColumn, competitorGroupForLabel } from "./competitorGroups";
-import { developmentSourceV2Section, DevelopmentSourceV2Section, isHistoricalArchiveItem, snapshotDirectColumnText, structuredCompetitorRows } from "./historicalSnapshot";
+import {
+  developmentSourceV2Section,
+  DevelopmentSourceV2Section,
+  hasSelection1ColumnLayout,
+  historyFieldsByCellSections,
+  historyMarketView,
+  isHistoricalArchiveItem,
+  selection2HeaderFields,
+  snapshotDirectColumnText,
+  structuredCompetitorRows,
+  StructuredCompetitorRow
+} from "./historicalSnapshot";
+import { productImageSrc } from "./imageSource";
 import {
   EMPTY_DASHBOARD_COUNTS,
   HomeMetricItem,
@@ -384,7 +396,7 @@ function App() {
       main_sku: group.main_sku,
       country: normalizeSiteText(group.first.site || group.first.country),
       business_period: group.first.batch,
-      image_url: imageSrc(imageItem.image_url)
+      image_url: productImageSrc(imageItem.image_url)
     };
   }), [groups]);
   const dashboardGroups = useMemo(() => filterDashboardGroups(groups, dashboardFilters), [groups, dashboardFilters]);
@@ -2031,6 +2043,8 @@ function ProductDetailView(props: {
   const item = group.first;
   const activeChild = group.items.find((child) => child.id === props.activeChildId) || group.items[0] || item;
   const imageItem = activeChild.image_url ? activeChild : group.items.find((child) => child.image_url) || item;
+  // 选品1历史档案（fields_by_cell）按分组派生的板块补位数据；已有结构化数据的板块不重复渲染。
+  const historySections = historyFieldsByCellSections(activeChild);
   const [activeSection, setActiveSection] = useState<DetailSectionKey>("core");
   const [editingItem, setEditingItem] = useState<Opportunity | null>(null);
   const [editDraft, setEditDraft] = useState<SkuEditDraft>(() => skuEditDraft(item));
@@ -2175,47 +2189,104 @@ function ProductDetailView(props: {
               <div className="detail-pane">
                 <h3>基础信息（A-L）</h3>
                 <DetailFieldGrid item={activeChild} specs={coreFieldSpecs} />
+                {historySections && historySections.other.length > 0 && (
+                  <details className="source-parameter-editor">
+                    <summary>
+                      其他源表字段（{historySections.other.length}）<span className="tag">选品1历史</span>
+                    </summary>
+                    <ArchiveSegmentTable section={{ businessPeriod: "", rows: historySections.other }} />
+                  </details>
+                )}
               </div>
             )}
             {activeSection === "development" && (() => {
               const archiveSection = developmentSourceV2Section(activeChild, ["询价", "规格"]);
+              const historyRows =
+                !archiveSection && !detailFieldRows(activeChild, developmentFieldSpecs).length
+                  ? historySections?.development ?? []
+                  : [];
               return (
                 <div className="detail-pane">
                   <h3>
                     开发询价（M-Y）
                     {archiveSection && <span className="tag">三国表·{archiveSection.businessPeriod}</span>}
+                    {historyRows.length > 0 && <span className="tag">选品1历史</span>}
                   </h3>
                   {archiveSection ? (
                     <ArchiveSegmentTable section={archiveSection} />
+                  ) : historyRows.length ? (
+                    <ArchiveSegmentTable section={{ businessPeriod: "", rows: historyRows }} />
                   ) : (
                     <DetailFieldGrid item={activeChild} specs={developmentFieldSpecs} />
                   )}
                 </div>
               );
             })()}
-            {activeSection === "market" && (
-              <div className="detail-pane">
-                <h3>市场调研（表头匹配，历史 Z-AN 兜底）</h3>
-                <CompetitorTable item={activeChild} />
-              </div>
-            )}
-            {activeSection === "pricing" && (
-              <div className="detail-pane">
-                <h3>价格 / 毛利参考（表头匹配，历史 AO-AV 兜底）</h3>
-                <PricingGrid item={activeChild} />
-                {!pricingRows(activeChild).length && <p className="muted detail-empty">暂无价格 / 毛利参考字段。</p>}
-              </div>
-            )}
+            {activeSection === "market" && (() => {
+              const selection2Rows = competitorRows(activeChild).length ? [] : selection2HeaderFields(activeChild, "market");
+              const historyMarket =
+                !competitorRows(activeChild).length && historySections?.market.length
+                  ? historyMarketView(historySections.market)
+                  : null;
+              return (
+                <div className="detail-pane">
+                  <h3>
+                    市场调研（表头匹配，历史 Z-AN 兜底）
+                    {selection2Rows.length > 0 && <span className="tag">选品2表头</span>}
+                    {historyMarket && <span className="tag">选品1历史</span>}
+                  </h3>
+                  {selection2Rows.length ? (
+                    <ArchiveSegmentTable section={{ businessPeriod: "", rows: selection2Rows }} />
+                  ) : historyMarket ? (
+                    <>
+                      {historyMarket.competitors.length > 0 && <CompetitorTable item={activeChild} rows={historyMarket.competitors} />}
+                      {historyMarket.extras.length > 0 && <ArchiveSegmentTable section={{ businessPeriod: "", rows: historyMarket.extras }} />}
+                    </>
+                  ) : (
+                    <CompetitorTable item={activeChild} />
+                  )}
+                </div>
+              );
+            })()}
+            {activeSection === "pricing" && (() => {
+              const selection2Rows = pricingRows(activeChild).length ? [] : selection2HeaderFields(activeChild, "pricing");
+              const historyRows = pricingRows(activeChild).length ? [] : historySections?.pricing ?? [];
+              return (
+                <div className="detail-pane">
+                  <h3>
+                    价格 / 毛利参考（表头匹配，历史 AO-AV 兜底）
+                    {selection2Rows.length > 0 && <span className="tag">选品2表头</span>}
+                    {historyRows.length > 0 && <span className="tag">选品1历史</span>}
+                  </h3>
+                  <PricingGrid item={activeChild} />
+                  {selection2Rows.length > 0 && <ArchiveSegmentTable section={{ businessPeriod: "", rows: selection2Rows }} />}
+                  {historyRows.length > 0 && <ArchiveSegmentTable section={{ businessPeriod: "", rows: historyRows }} />}
+                  {!pricingRows(activeChild).length && !historyRows.length && !selection2Rows.length && (
+                    <p className="muted detail-empty">暂无价格 / 毛利参考字段。</p>
+                  )}
+                </div>
+              );
+            })()}
             {activeSection === "cost" && (() => {
               const archiveSection = developmentSourceV2Section(activeChild, ["成本"]);
+              const hasColumnRows =
+                hasSelection1ColumnLayout(activeChild) && costParameterColumns.some((column) => snapshotDirectColumnText(activeChild, column));
+              const selection2Rows = !archiveSection && !hasColumnRows ? selection2HeaderFields(activeChild, "cost") : [];
+              const historyRows = !archiveSection && !hasColumnRows ? historySections?.cost ?? [] : [];
               return (
                 <div className="detail-pane">
                   <h3>
                     成本参数（AQ-BR）
                     {archiveSection && <span className="tag">三国表·{archiveSection.businessPeriod}</span>}
+                    {selection2Rows.length > 0 && <span className="tag">选品2表头</span>}
+                    {historyRows.length > 0 && <span className="tag">选品1历史</span>}
                   </h3>
                   {archiveSection ? (
                     <ArchiveSegmentTable section={archiveSection} />
+                  ) : selection2Rows.length ? (
+                    <ArchiveSegmentTable section={{ businessPeriod: "", rows: selection2Rows }} />
+                  ) : historyRows.length ? (
+                    <ArchiveSegmentTable section={{ businessPeriod: "", rows: historyRows }} />
                   ) : (
                     <ColumnRangeTable item={activeChild} columns={costParameterColumns} />
                   )}
@@ -2439,13 +2510,16 @@ function ArchiveSegmentTable(props: { section: DevelopmentSourceV2Section }) {
 }
 
 function ColumnRangeTable(props: { item: Opportunity; columns: string[] }) {
-  const rows = props.columns
-    .map((column) => ({
-      column,
-      label: headerLabel(props.item, column),
-      value: snapshotDirectColumnText(props.item, column)
-    }))
-    .filter((row) => row.value);
+  // AQ-BR 列位只在选品1列布局下有成本参数含义；其它来源不做位置兜底。
+  const rows = !hasSelection1ColumnLayout(props.item)
+    ? []
+    : props.columns
+        .map((column) => ({
+          column,
+          label: headerLabel(props.item, column),
+          value: snapshotDirectColumnText(props.item, column)
+        }))
+        .filter((row) => row.value);
   if (!rows.length) {
     return (
       <p className="muted detail-empty">
@@ -2477,8 +2551,8 @@ function ColumnRangeTable(props: { item: Opportunity; columns: string[] }) {
   );
 }
 
-function CompetitorTable(props: { item: Opportunity }) {
-  const rows = competitorRows(props.item);
+function CompetitorTable(props: { item: Opportunity; rows?: StructuredCompetitorRow[] }) {
+  const rows = props.rows || competitorRows(props.item);
   if (!rows.length) {
     return (
       <p className="muted detail-empty">
@@ -2631,7 +2705,9 @@ function detailFieldValue(item: Opportunity, aliases: readonly string[], fallbac
     const text = valueText(value);
     if (text) return text;
   }
-  return snapshotColumnText(item, fallbackColumn);
+  // 列位兜底只对选品1列布局启用；选品2 等其它布局同列位含义不同（AL-AN 是认领区），不做位置兜底。
+  if (hasSelection1ColumnLayout(item)) return snapshotColumnText(item, fallbackColumn);
+  return historicalDevelopmentColumnText(item, fallbackColumn);
 }
 
 function headerLabel(item: Opportunity, column: string) {
@@ -2755,7 +2831,7 @@ function reviewStatusLabel(value?: string | null) {
 }
 
 function ProductThumb(props: { item?: Opportunity | null; small?: boolean }) {
-  const src = imageSrc(props.item?.image_url);
+  const src = productImageSrc(props.item?.image_url);
   const className = props.small ? "thumb small" : "thumb";
   const [open, setOpen] = useState(false);
   const alt = props.item?.sub_sku_name || props.item?.main_sku_name || props.item?.sub_sku || "商品图片";
