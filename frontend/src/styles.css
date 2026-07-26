@@ -1363,6 +1363,17 @@ textarea {
   max-width: 100%;
 }
 
+.country-input {
+  display: flex;
+  gap: 6px;
+}
+
+.country-input select,
+.country-input input {
+  flex: 1;
+  min-width: 0;
+}
+
 .assignment-workload-toggle {
   align-self: flex-start;
   margin: 4px 0;

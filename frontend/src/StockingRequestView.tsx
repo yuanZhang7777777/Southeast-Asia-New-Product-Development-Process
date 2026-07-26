@@ -28,6 +28,34 @@ import {
 
 type RoleKey = "operator" | "manager";
 type DecisionKey = "stock" | "inventory" | "pause";
+
+const COUNTRY_OPTIONS = ["菲律宾", "泰国", "越南"];
+
+function CountryInput({ value, disabled, onChange }: { value: string; disabled?: boolean; onChange: (next: string) => void }) {
+  const [custom, setCustom] = useState(() => value !== "" && !COUNTRY_OPTIONS.includes(value));
+  return (
+    <div className="country-input">
+      <select
+        value={custom ? "__custom__" : value}
+        disabled={disabled}
+        onChange={(event) => {
+          if (event.target.value === "__custom__") {
+            setCustom(true);
+            onChange("");
+          } else {
+            setCustom(false);
+            onChange(event.target.value);
+          }
+        }}
+      >
+        <option value="">请选择国家</option>
+        {COUNTRY_OPTIONS.map((country) => <option key={country} value={country}>{country}</option>)}
+        <option value="__custom__">自定义…</option>
+      </select>
+      {custom && <input value={value} disabled={disabled} placeholder="自定义国家" onChange={(event) => onChange(event.target.value)} />}
+    </div>
+  );
+}
 type SelfChild = { sub_sku: string; sub_sku_name: string; decision: DecisionKey };
 
 type Props = {
@@ -154,8 +182,14 @@ function OperatorStockingView({ operatorItems, onReload, onStatus }: Props) {
     setBusy(`volume:${item.request_id}`);
     try {
       const [preview] = await api.volumePreview([item.sub_sku]);
-      patchDraft(item.request_id, { length_cm: null, width_cm: null, height_cm: null, unit_volume: preview?.unit_volume || null, unit_volume_source: preview?.status === "resolved" ? "erp" : null });
-      onStatus(!preview || preview.status === "manual_required" ? "未取得体积，请手填" : "体积查询完成");
+      patchDraft(item.request_id, {
+        length_cm: preview?.length_cm ?? null,
+        width_cm: preview?.width_cm ?? null,
+        height_cm: preview?.height_cm ?? null,
+        unit_volume: preview?.unit_volume || null,
+        unit_volume_source: preview?.status === "resolved" ? "erp" : null
+      });
+      onStatus(!preview || preview.status === "manual_required" ? "未取得体积，请手填" : "已从 ERP 取得长宽高与体积");
     } catch (error) {
       onStatus(error instanceof Error ? error.message : "未取得体积，请手填");
     } finally {
@@ -280,7 +314,7 @@ function OperatorStockingView({ operatorItems, onReload, onStatus }: Props) {
                             <Field label="单个体积（自动）" error={itemErrors.unit_volume}><div className="stocking-volume-field"><input type="number" value={draft.unit_volume ?? ""} readOnly /><button className="btn small" type="button" disabled={readOnly || busy !== ""} onClick={() => void previewVolume(item)}><RefreshCw size={13} />ERP 查询</button></div></Field>
                             <Field label="备货单销" error={itemErrors.daily_sales}><input type="number" min="0" step="0.01" value={draft.daily_sales ?? ""} disabled={readOnly} onChange={(event) => patchDraft(item.request_id!, { daily_sales: numberOrNull(event.target.value) })} /></Field>
                             <Field label="备货数量（自动）"><input value={draft.daily_sales ? stockingQuantity(draft.daily_sales) : ""} readOnly /></Field>
-                            <Field label="备货国家" error={itemErrors.country}><input value={draft.country} disabled={readOnly} onChange={(event) => patchDraft(item.request_id!, { country: event.target.value })} /></Field>
+                            <Field label="备货国家" error={itemErrors.country}><CountryInput value={draft.country} disabled={readOnly} onChange={(next) => patchDraft(item.request_id!, { country: next })} /></Field>
                             <Field label="备货仓库（可空）"><input value={draft.warehouse || ""} disabled={readOnly} onChange={(event) => patchDraft(item.request_id!, { warehouse: event.target.value })} /></Field>
                             {draft.request_type === "replenishment" && <Field label="补货原因" error={itemErrors.reason} wide><textarea value={draft.reason || ""} disabled={readOnly} onChange={(event) => patchDraft(item.request_id!, { reason: event.target.value })} /></Field>}
                           </div>
@@ -308,7 +342,7 @@ function OperatorStockingView({ operatorItems, onReload, onStatus }: Props) {
             <div className="stocking-self-main">
               <Field label="主 SKU"><input value={selfForm.main_sku} onChange={(event) => setSelfForm({ ...selfForm, main_sku: event.target.value })} /></Field>
               <Field label="主 SKU 名称"><input value={selfForm.main_sku_name} onChange={(event) => setSelfForm({ ...selfForm, main_sku_name: event.target.value })} /></Field>
-              <Field label="国家"><input value={selfForm.country} onChange={(event) => setSelfForm({ ...selfForm, country: event.target.value })} /></Field>
+              <Field label="国家"><CountryInput value={selfForm.country} onChange={(next) => setSelfForm({ ...selfForm, country: next })} /></Field>
             </div>
             <div className="stocking-self-children">
               {selfForm.children.map((child, index) => (

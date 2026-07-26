@@ -121,6 +121,9 @@ export type SalesSelfSelectionPayload = {
 export type VolumePreviewItem = {
   sub_sku: string;
   unit_volume?: number | null;
+  length_cm?: number | null;
+  width_cm?: number | null;
+  height_cm?: number | null;
   status: "resolved" | "manual_required";
 };
 

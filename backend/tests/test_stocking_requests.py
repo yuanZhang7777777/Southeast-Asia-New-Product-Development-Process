@@ -678,8 +678,11 @@ def test_decision_can_resume_paused_claim_and_volume_preview_uses_erp_resolver(m
         json={"inventory_available": False, "needs_stocking": True},
     )
     monkeypatch.setattr(
-        "app.routers.stocking.erp_product_list.fetch_product_volumes",
-        lambda skus, settings: {skus[0]: 0.000132916, skus[1]: None},
+        "app.routers.stocking.erp_product_list.fetch_product_details",
+        lambda skus, settings: {
+            skus[0]: {"unit_volume": 0.000132916, "length_cm": 10.1, "width_cm": 9.4, "height_cm": 1.4},
+            skus[1]: None,
+        },
     )
     preview = client.post(
         "/stocking/volume-preview",
