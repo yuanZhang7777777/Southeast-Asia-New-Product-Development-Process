@@ -33,7 +33,7 @@ SOURCE_TYPE = "history_finebi"
 RECORD_SOURCE = "history_finebi"
 BUSINESS_PERIOD = "历史归档"
 EXCLUDED_PERIODS = ("0723-0729",)
-APPLY_ALLOWED_ENVS = {"local", "test", "testing", "dev", "development", "uat"}
+from app.historical_archive_import import APPLY_ALLOWED_ENVS
 PERIOD_FILE_PATTERN = re.compile(r"(\d{4}-\d{4})\.xlsx$")
 KEY_COLUMNS = ("ITEMID", "主SKU", "店铺")
 METRIC_COLUMNS = ("总收入", "订单量", "一次毛利")

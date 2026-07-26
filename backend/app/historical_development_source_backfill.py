@@ -17,7 +17,7 @@ from app.config import get_settings
 from app.field_mapping import normalize_header
 from app.selection1_importer import number_value, text_value
 
-APPLY_ALLOWED_ENVS = {"local", "test", "testing", "dev", "development", "uat"}
+from app.historical_archive_import import APPLY_ALLOWED_ENVS
 HISTORICAL_ARCHIVE_SOURCE_TYPE = "historical_market_monitor_archive"
 MAX_SOURCE_COLUMN = 50
 COUNTRY_ALIASES = {"菲律宾": "PH", "PH": "PH", "泰国": "TH", "TH": "TH", "越南": "VN", "VN": "VN"}
