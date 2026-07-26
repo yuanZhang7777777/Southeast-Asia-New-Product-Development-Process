@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 from collections import Counter
 from dataclasses import dataclass
@@ -25,7 +26,21 @@ def business_period_from_bucket(bucket: object) -> str | None:
     match = BUSINESS_PERIOD_PATTERN.search(str(bucket or ""))
     return f"开发{match.group(1)}期" if match else None
 PENDING_SECONDARY_STATUSES = {"已到货待补二次调研", "已刊登但二次调研缺失"}
-APPLY_ALLOWED_ENVS = {"local", "test", "testing", "dev", "development", "uat"}
+def _apply_allowed_envs() -> set[str]:
+    # 生产补数需逐次显式解锁：运行时设 APPLY_ALLOWED_ENVS_EXTRA=production（用户 2026-07-27 授权迁生产）。
+    extra = {part.strip().lower() for part in os.getenv("APPLY_ALLOWED_ENVS_EXTRA", "").split(",") if part.strip()}
+    return {"local", "test", "testing", "dev", "development", "uat"} | extra
+
+
+class _ApplyAllowedEnvs:
+    def __contains__(self, env: object) -> bool:
+        return env in _apply_allowed_envs()
+
+    def __iter__(self):
+        return iter(sorted(_apply_allowed_envs()))
+
+
+APPLY_ALLOWED_ENVS = _ApplyAllowedEnvs()
 REVIEW_HEADERS = [
     "归类状态",
     "建议动作",
