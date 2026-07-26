@@ -11,6 +11,7 @@ def preview_main_sku_assignment_groups(
     opportunities: list[Any],
     profiles: list[Any],
     initial_loads: dict[str, int] | None = None,
+    initial_last_assigned: dict[str, Any] | None = None,
 ) -> list[schemas.AssignmentPreviewItem]:
     enabled_profiles = [profile for profile in profiles if getattr(profile, "enabled", True)]
     if not enabled_profiles:
@@ -28,13 +29,21 @@ def preview_main_sku_assignment_groups(
         ].append(opportunity)
 
     initial_loads = initial_loads or {}
+    initial_last_assigned = initial_last_assigned or {}
     loads = {getattr(profile, "operator_name"): int(initial_loads.get(getattr(profile, "operator_name"), 0)) for profile in enabled_profiles}
+    recency = {
+        getattr(profile, "operator_name"): _recency_value(initial_last_assigned.get(getattr(profile, "operator_name")))
+        for profile in enabled_profiles
+    }
+    next_recency = max([value for value in recency.values() if value != float("-inf")], default=0.0) + 1.0
     output: list[schemas.AssignmentPreviewItem] = []
     for (_source_type, _batch, main_sku, _site), items in sorted(grouped.items(), key=lambda pair: (-len(pair[1]), pair[0][2], pair[0][3])):
-        chosen, reason = _choose_profile(items, enabled_profiles, loads)
+        chosen, reason = _choose_profile(items, enabled_profiles, loads, recency)
         count = len(items)
         if chosen is not None:
             loads[chosen.operator_name] += 1
+            recency[chosen.operator_name] = next_recency
+            next_recency += 1.0
         output.append(
             schemas.AssignmentPreviewItem(
                 main_sku=main_sku,
@@ -47,7 +56,7 @@ def preview_main_sku_assignment_groups(
     return output
 
 
-def _choose_profile(items: list[Any], profiles: list[Any], loads: dict[str, int]) -> tuple[Any | None, str]:
+def _choose_profile(items: list[Any], profiles: list[Any], loads: dict[str, int], recency: dict[str, float]) -> tuple[Any | None, str]:
     site = _first_text(items, "site") or _first_text(items, "country")
     category = _first_text(items, "category_level1")
     category_level2 = _first_text(items, "category_level2")
@@ -63,6 +72,7 @@ def _choose_profile(items: list[Any], profiles: list[Any], loads: dict[str, int]
             (
                 loads[getattr(profile, "operator_name")],
                 category_priority,
+                recency[getattr(profile, "operator_name")],
                 -_int_attr(profile, "assignment_priority"),
                 _int_attr(profile, "display_order"),
                 getattr(profile, "operator_name"),
@@ -71,7 +81,7 @@ def _choose_profile(items: list[Any], profiles: list[Any], loads: dict[str, int]
             )
         )
 
-    best_load, best_category_priority, _priority, _order, _name, chosen, best_category_rank = min(scored)
+    best_load, best_category_priority, _recency, _priority, _order, _name, chosen, best_category_rank = min(scored)
     site_loads = [load for load, *_rest in scored]
     reason = _reason(best_category_rank)
     if best_category_priority != 2 and len(set(site_loads)) > 1 and best_load == min(site_loads):
@@ -167,3 +177,15 @@ def _int_attr(item: Any, field: str) -> int:
         return int(getattr(item, field, 0) or 0)
     except (TypeError, ValueError):
         return 0
+
+
+def _recency_value(value: Any) -> float:
+    """Sortable last-assigned marker: never assigned sorts first (earliest)."""
+    if value is None:
+        return float("-inf")
+    if isinstance(value, (int, float)):
+        return float(value)
+    try:
+        return value.timestamp()
+    except (AttributeError, TypeError, ValueError, OverflowError, OSError):
+        return float("-inf")

@@ -235,6 +235,33 @@ class TaskRead(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class AssignmentBoardRow(BaseModel):
+    task_id: str
+    opportunity_id: str
+    batch: str | None = None
+    site: str | None = None
+    category_level1: str | None = None
+    main_sku: str
+    main_sku_name: str | None = None
+    sub_sku: str
+    sub_sku_name: str | None = None
+    assignee_name: str | None = None
+    task_status: str
+    opportunity_status: str
+    assigned_at: datetime | None = None
+
+
+class AssignmentBoardGroup(BaseModel):
+    batch: str
+    rows: list[AssignmentBoardRow] = Field(default_factory=list)
+
+
+class AssignmentBoardResponse(BaseModel):
+    batches: list[str] = Field(default_factory=list)
+    assignees: list[str] = Field(default_factory=list)
+    groups: list[AssignmentBoardGroup] = Field(default_factory=list)
+
+
 class ClaimCreate(BaseModel):
     opportunity_id: str
     salesperson_name: str

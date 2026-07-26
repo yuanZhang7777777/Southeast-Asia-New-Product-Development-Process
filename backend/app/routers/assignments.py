@@ -23,6 +23,15 @@ def preview(payload: schemas.AssignmentPreviewRequest, db: Session = Depends(get
     return schemas.AssignmentPreviewResponse(items=services.preview_assignments(opportunities, payload.candidates, profiles, db=db))
 
 
+@router.get("/board", response_model=schemas.AssignmentBoardResponse)
+def board(
+    batch: str | None = None,
+    assignee_name: str | None = None,
+    db: Session = Depends(get_db),
+) -> schemas.AssignmentBoardResponse:
+    return services.list_assignment_board(db, batch=batch, assignee_name=assignee_name)
+
+
 @router.post("/confirm", response_model=list[schemas.TaskRead])
 def confirm(
     payload: schemas.AssignmentConfirmRequest,

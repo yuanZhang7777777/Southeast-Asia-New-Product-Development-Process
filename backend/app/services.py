@@ -590,8 +590,15 @@ def preview_assignments(
                     enabled=True,
                 )
             )
-    initial_loads = _pending_assignment_group_loads(db, {getattr(profile, "operator_name", None) for profile in candidate_profiles}) if db else {}
-    return assignment_rules.preview_main_sku_assignment_groups(opportunities, candidate_profiles, initial_loads=initial_loads)
+    candidate_names = {getattr(profile, "operator_name", None) for profile in candidate_profiles}
+    initial_loads = _pending_assignment_group_loads(db, candidate_names) if db else {}
+    initial_last_assigned = _last_assignment_times(db, candidate_names) if db else {}
+    return assignment_rules.preview_main_sku_assignment_groups(
+        opportunities,
+        candidate_profiles,
+        initial_loads=initial_loads,
+        initial_last_assigned=initial_last_assigned,
+    )
 
 
 def _pending_assignment_group_loads(db: Session, operator_names: set[str | None]) -> dict[str, int]:
@@ -622,6 +629,81 @@ def _pending_assignment_group_loads(db: Session, operator_names: set[str | None]
             continue
         groups[assignee_name].add((source_type, batch, main_sku, normalize_site_code(site or country) or ""))
     return {name: len(keys) for name, keys in groups.items()}
+
+
+def _last_assignment_times(db: Session, operator_names: set[str | None]) -> dict[str, datetime]:
+    names = {name for name in operator_names if name}
+    if not names:
+        return {}
+    rows = db.execute(
+        select(models.FlowTask.assignee_name, func.max(models.FlowTask.created_at))
+        .where(
+            models.FlowTask.task_type == "sales_claim",
+            models.FlowTask.assignee_name.in_(names),
+        )
+        .group_by(models.FlowTask.assignee_name)
+    ).all()
+    return {name: latest for name, latest in rows if name and latest is not None}
+
+
+def list_assignment_board(
+    db: Session,
+    batch: str | None = None,
+    assignee_name: str | None = None,
+) -> schemas.AssignmentBoardResponse:
+    rows = db.execute(
+        select(models.FlowTask, models.NewProductOpportunity)
+        .join(models.FlowInstance, models.FlowTask.flow_instance_id == models.FlowInstance.id)
+        .join(models.NewProductOpportunity, models.FlowInstance.opportunity_id == models.NewProductOpportunity.id)
+        .where(
+            models.FlowTask.task_type == "sales_claim",
+            models.NewProductOpportunity.current_status != OPPORTUNITY_DISABLED,
+        )
+        .order_by(models.FlowTask.created_at.desc())
+    ).all()
+    latest_rows: list[schemas.AssignmentBoardRow] = []
+    seen_opportunity_ids: set[str] = set()
+    for task, opportunity in rows:
+        if opportunity.id in seen_opportunity_ids:
+            continue
+        seen_opportunity_ids.add(opportunity.id)
+        latest_rows.append(
+            schemas.AssignmentBoardRow(
+                task_id=task.id,
+                opportunity_id=opportunity.id,
+                batch=(opportunity.batch or opportunity.source_sheet or "").strip() or None,
+                site=opportunity.site or opportunity.country,
+                category_level1=opportunity.category_level1,
+                main_sku=opportunity.main_sku,
+                main_sku_name=opportunity.main_sku_name,
+                sub_sku=opportunity.sub_sku,
+                sub_sku_name=opportunity.sub_sku_name,
+                assignee_name=task.assignee_name,
+                task_status=task.status,
+                opportunity_status=opportunity.current_status,
+                assigned_at=task.created_at,
+            )
+        )
+    batches: list[str] = []
+    for row in latest_rows:
+        period = row.batch or ""
+        if period not in batches:
+            batches.append(period)
+    assignees = sorted({row.assignee_name for row in latest_rows if row.assignee_name})
+    filtered = [
+        row
+        for row in latest_rows
+        if (not batch or (row.batch or "") == batch) and (not assignee_name or row.assignee_name == assignee_name)
+    ]
+    grouped: dict[str, list[schemas.AssignmentBoardRow]] = defaultdict(list)
+    for row in filtered:
+        grouped[row.batch or ""].append(row)
+    groups = [
+        schemas.AssignmentBoardGroup(batch=period, rows=sorted(grouped[period], key=lambda row: (row.main_sku, row.sub_sku)))
+        for period in batches
+        if period in grouped
+    ]
+    return schemas.AssignmentBoardResponse(batches=batches, assignees=assignees, groups=groups)
 
 
 def confirm_assignment(

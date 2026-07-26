@@ -34,6 +34,8 @@ import { formatBusinessNumber, formatBusinessValue } from "./businessFormat";
 import {
   API_BASE,
   api,
+  AssignmentBoardResponse,
+  AssignmentBoardRow,
   AssignmentPreviewItem,
   AuthSession,
   AvailableStockingItem,
@@ -53,6 +55,7 @@ import {
 } from "./api";
 import { AdminConsoleView } from "./AdminConsoleView";
 import { ClaimDraftState, claimSubmissionState, createClaimDraft, createClaimDraftFromLatest, formatRejectReason, parseClaimEvidenceImages, parseRejectReason, patchClaimDraftGroup, REJECT_REASON_OPTIONS } from "./claimDrafts";
+import { applyBoardReassignment, boardGroupSummary, canReassignBoardRow } from "./assignmentBoard";
 import { filterAssignmentItems, groupOperatorProfilesBySite, moveOperatorWithinSite, reorderOperatorWithinSite, sortOperatorProfiles } from "./assignmentFilters";
 import { competitorGroupForColumn, competitorGroupForLabel } from "./competitorGroups";
 import { developmentSourceV2Section, DevelopmentSourceV2Section, isHistoricalArchiveItem, snapshotDirectColumnText, structuredCompetitorRows } from "./historicalSnapshot";
@@ -187,7 +190,7 @@ const viewMeta: Record<ViewKey, { title: string; desc: string }> = {
   dashboard: { title: "商品看板", desc: "按主 SKU 分组查看全部商品当前状态，展开可看子 SKU 状态。" },
   source: { title: "源表导入", desc: "第一版只导入两张内部反馈表，写入平台数据库，不提供在线表自动写回入口。" },
   pool: { title: "新品机会池", desc: "默认按状态优先展示主 SKU 分组；展开后查看子 SKU 明细和来源追溯。" },
-  assign: { title: "分配台", desc: "主管按主 SKU 整组生成推荐，可逐行调整最终分配；系统先按站点过滤，再按当前负载均衡，负载相同时看重点品类和优先级。" },
+  assign: { title: "分配台", desc: "主管按主 SKU 整组生成推荐，可逐行调整最终分配；系统先按站点过滤，再按当前负载均衡，负载相同时先看重点品类，再轮到最久未被分配的运营。切到“按期分配结果”可查看每期分给谁并改派。" },
   claim: { title: "运营认领", desc: "分配任务必须认领或不认领；财根机会池允许其他运营自认领，人数不限。" },
   review: { title: "主管复核", desc: "主管只能通过、确认不认领或退回补充，不允许代改运营填写内容。" },
   stock: { title: "导出中心", desc: "只导出 Excel。按子 SKU 明细出行，同一子 SKU 被不同运营认领时另起一行。" },
@@ -2822,6 +2825,7 @@ function AssignView(props: {
   const [siteFilter, setSiteFilter] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("");
   const [operatorFilter, setOperatorFilter] = useState("");
+  const [assignTab, setAssignTab] = useState<"pending" | "board">("pending");
   const [draggedProfileId, setDraggedProfileId] = useState<string | null>(null);
   const [dragOverProfileId, setDragOverProfileId] = useState<string | null>(null);
   useEffect(() => {
@@ -2871,7 +2875,16 @@ function AssignView(props: {
 
   return (
     <div className="assign-layout">
-      <section className="info assignment-table-panel">
+      <div className="assign-tabbar">
+        <button className={assignTab === "pending" ? "btn small primary" : "btn small"} type="button" onClick={() => setAssignTab("pending")}>
+          待分配
+        </button>
+        <button className={assignTab === "board" ? "btn small primary" : "btn small"} type="button" onClick={() => setAssignTab("board")}>
+          按期分配结果
+        </button>
+      </div>
+      {assignTab === "board" && <AssignmentBoardPanel operatorProfiles={props.operatorProfiles} />}
+      <section className="info assignment-table-panel" style={{ display: assignTab === "board" ? "none" : undefined }}>
         <div className="assignment-commandbar">
           <div className="assignment-command-title">
             <h3>待分配主 SKU</h3>
@@ -3133,6 +3146,182 @@ function AssignView(props: {
         </div>
       )}
     </div>
+  );
+}
+
+function AssignmentBoardPanel(props: { operatorProfiles: OperatorAssignmentProfile[] }) {
+  const [board, setBoard] = useState<AssignmentBoardResponse | null>(null);
+  const [batchFilter, setBatchFilter] = useState("");
+  const [assigneeFilter, setAssigneeFilter] = useState("");
+  const [reloadNonce, setReloadNonce] = useState(0);
+  const [boardLoading, setBoardLoading] = useState(false);
+  const [boardMessage, setBoardMessage] = useState("");
+  const [reassignDrafts, setReassignDrafts] = useState<Record<string, string>>({});
+  const [busyTaskId, setBusyTaskId] = useState("");
+  const defaultBatchApplied = useRef(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    setBoardLoading(true);
+    api
+      .assignmentBoard({ batch: batchFilter || undefined, assignee_name: assigneeFilter || undefined })
+      .then((result) => {
+        if (cancelled) return;
+        setBoard(result);
+        if (!defaultBatchApplied.current) {
+          defaultBatchApplied.current = true;
+          if (result.batches[0]) setBatchFilter(result.batches[0]);
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) setBoardMessage(error instanceof Error ? error.message : "分配结果加载失败");
+      })
+      .finally(() => {
+        if (!cancelled) setBoardLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [assigneeFilter, batchFilter, reloadNonce]);
+
+  const enabledProfiles = sortOperatorProfiles(props.operatorProfiles).filter((profile) => profile.enabled);
+  const profileGroups = groupOperatorProfilesBySite(enabledProfiles);
+  const groups = board?.groups || [];
+  const summary = boardGroupSummary(groups);
+
+  async function reassign(row: AssignmentBoardRow) {
+    const assignee = reassignDrafts[row.task_id] || "";
+    if (!assignee || assignee === row.assignee_name) {
+      setBoardMessage("请先在改派列选择一个不同的运营");
+      return;
+    }
+    setBusyTaskId(row.task_id);
+    try {
+      await api.assignmentReassign({ task_id: row.task_id, assignee_name: assignee, reason: "主管分配台改派" });
+      setBoard((current) => (current ? { ...current, groups: applyBoardReassignment(current.groups, row.task_id, assignee) } : current));
+      setReassignDrafts((current) => {
+        const next = { ...current };
+        delete next[row.task_id];
+        return next;
+      });
+      setBoardMessage(`已把 ${row.sub_sku} 改派给 ${assignee}`);
+    } catch (error) {
+      setBoardMessage(error instanceof Error ? error.message : "改派失败");
+    } finally {
+      setBusyTaskId("");
+    }
+  }
+
+  return (
+    <section className="info assignment-table-panel">
+      <div className="assignment-commandbar">
+        <div className="assignment-command-title">
+          <h3>按期分配结果</h3>
+          <span className="tag">共 {summary.total} 个子 SKU</span>
+          <span className="tag">待认领 {summary.pending}</span>
+          <span className="tag">涉及运营 {summary.assignees} 人</span>
+        </div>
+        <select className="assignment-compact-select" aria-label="按业务期数筛选分配结果" value={batchFilter} onChange={(event) => setBatchFilter(event.target.value)}>
+          <option value="">全部期数</option>
+          {(board?.batches || []).map((batch) => (
+            <option key={batch || "__none"} value={batch}>{batch || "未指定期数"}</option>
+          ))}
+        </select>
+        <select className="assignment-compact-select" aria-label="按受派运营筛选分配结果" value={assigneeFilter} onChange={(event) => setAssigneeFilter(event.target.value)}>
+          <option value="">全部运营</option>
+          {(board?.assignees || []).map((name) => (
+            <option key={name} value={name}>{name}</option>
+          ))}
+        </select>
+        <button className="btn small" type="button" onClick={() => setReloadNonce((nonce) => nonce + 1)}>
+          <RefreshCw size={14} />
+          刷新
+        </button>
+      </div>
+      {boardMessage && <div className={boardMessage.includes("失败") ? "notice toast red" : "notice toast"}>{boardMessage}</div>}
+      {boardLoading && !board ? (
+        <p className="muted">分配结果加载中...</p>
+      ) : !groups.length ? (
+        <EmptySmall text="当前筛选条件下没有分配记录。" />
+      ) : (
+        groups.map((group) => (
+          <div className="assignment-board-group" key={group.batch || "__none"}>
+            <div className="assignment-board-group-head">
+              <b>{group.batch || "未指定期数"}</b>
+              <span className="tag">{group.rows.length} 个子 SKU</span>
+            </div>
+            <div className="assignment-table-scroll">
+              <div className="assignment-board-table">
+                <div className="assignment-board-row head">
+                  <span>商品</span>
+                  <span>站点 / 类目</span>
+                  <span>受派运营</span>
+                  <span>状态</span>
+                  <span>分配时间</span>
+                  <span>改派</span>
+                </div>
+                {group.rows.map((row) => {
+                  const status = statusMeta[row.opportunity_status] || { label: row.opportunity_status, klass: "gray" };
+                  return (
+                    <div className="assignment-board-row" key={row.task_id}>
+                      <div className="assignment-board-cell">
+                        <b>{row.main_sku}</b>
+                        <p className="muted">子 SKU {row.sub_sku}{row.sub_sku_name ? ` · ${row.sub_sku_name}` : ""}</p>
+                        {row.main_sku_name && <p className="muted">{row.main_sku_name}</p>}
+                      </div>
+                      <div className="assignment-board-cell">
+                        <span className="tag">{row.site || "-"}</span>
+                        <span className="tag">{row.category_level1 || "-"}</span>
+                      </div>
+                      <div className="assignment-board-cell">
+                        <b>{row.assignee_name || "未分配"}</b>
+                      </div>
+                      <div className="assignment-board-cell">
+                        <span className={`pill ${status.klass}`}>{status.label}</span>
+                      </div>
+                      <div className="assignment-board-cell">{formatDateTime(row.assigned_at)}</div>
+                      <div className="assignment-board-cell assignment-board-reassign">
+                        {canReassignBoardRow(row) ? (
+                          <>
+                            <select
+                              aria-label={`改派 ${row.sub_sku}`}
+                              className="assignment-select"
+                              value={reassignDrafts[row.task_id] || ""}
+                              onChange={(event) => setReassignDrafts((current) => ({ ...current, [row.task_id]: event.target.value }))}
+                            >
+                              <option value="">选择运营</option>
+                              {profileGroups.map((profileGroup) => (
+                                <optgroup key={profileGroup.site} label={profileGroup.site}>
+                                  {profileGroup.items.map((profile) => (
+                                    <option disabled={profile.operator_name === row.assignee_name} key={profile.id} value={profile.operator_name}>
+                                      {profile.operator_name}
+                                    </option>
+                                  ))}
+                                </optgroup>
+                              ))}
+                            </select>
+                            <button
+                              className="btn small"
+                              disabled={!reassignDrafts[row.task_id] || busyTaskId === row.task_id}
+                              type="button"
+                              onClick={() => void reassign(row)}
+                            >
+                              确认改派
+                            </button>
+                          </>
+                        ) : (
+                          <span className="muted">已完成认领，不可改派</span>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        ))
+      )}
+    </section>
   );
 }
 

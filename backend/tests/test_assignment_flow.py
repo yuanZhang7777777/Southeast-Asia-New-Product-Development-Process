@@ -172,6 +172,37 @@ def test_preview_assignments_counts_existing_pending_main_sku_groups() -> None:
     assert preview[0].suggested_assignee == "Operator B"
 
 
+def test_preview_assignments_prefers_least_recently_assigned_on_equal_load() -> None:
+    from datetime import datetime, timezone
+
+    with SessionLocal() as db:
+        earlier_group = add_opportunity(db, "MAIN-EARLY", "SUB-001", "BATCH-1")
+        later_group = add_opportunity(db, "MAIN-LATE", "SUB-002", "BATCH-1")
+        incoming = add_opportunity(db, "MAIN-NEW", "SUB-003", "BATCH-1")
+        tasks_b = services.confirm_assignment(
+            db,
+            schemas.AssignmentConfirmRequest(opportunity_ids=[earlier_group.id], assignee_name="Operator B"),
+        )
+        tasks_a = services.confirm_assignment(
+            db,
+            schemas.AssignmentConfirmRequest(opportunity_ids=[later_group.id], assignee_name="Operator A"),
+        )
+        db.flush()
+        for task in tasks_b:
+            task.created_at = datetime(2026, 7, 1, tzinfo=timezone.utc)
+        for task in tasks_a:
+            task.created_at = datetime(2026, 7, 20, tzinfo=timezone.utc)
+        db.commit()
+        profiles = [
+            SimpleNamespace(operator_name="Operator A", key_site="PH", key_category1="家居厨卫", key_category2="", enabled=True),
+            SimpleNamespace(operator_name="Operator B", key_site="PH", key_category1="家居厨卫", key_category2="", enabled=True),
+        ]
+
+        preview = services.preview_assignments([incoming], ["Operator A", "Operator B"], profiles, db=db)
+
+    assert preview[0].suggested_assignee == "Operator B"
+
+
 def add_opportunity(db, main_sku: str, sub_sku: str, batch: str) -> models.NewProductOpportunity:
     opportunity = models.NewProductOpportunity(
         source_type="selection1_developer_claim_feedback",

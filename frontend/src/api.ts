@@ -235,6 +235,33 @@ export type AssignmentPreviewItem = {
   opportunity_ids: string[];
 };
 
+export type AssignmentBoardRow = {
+  task_id: string;
+  opportunity_id: string;
+  batch?: string | null;
+  site?: string | null;
+  category_level1?: string | null;
+  main_sku: string;
+  main_sku_name?: string | null;
+  sub_sku: string;
+  sub_sku_name?: string | null;
+  assignee_name?: string | null;
+  task_status: string;
+  opportunity_status: string;
+  assigned_at?: string | null;
+};
+
+export type AssignmentBoardGroup = {
+  batch: string;
+  rows: AssignmentBoardRow[];
+};
+
+export type AssignmentBoardResponse = {
+  batches: string[];
+  assignees: string[];
+  groups: AssignmentBoardGroup[];
+};
+
 export type NotificationLog = {
   id: string;
   dedupe_key: string;
@@ -715,6 +742,10 @@ export const api = {
     }),
   assignmentConfirm: (opportunity_ids: string[], assignee_name: string) =>
     request<Task[]>("/assignments/confirm", { method: "POST", body: JSON.stringify({ opportunity_ids, assignee_name }) }),
+  assignmentBoard: (filter?: { batch?: string; assignee_name?: string }) =>
+    request<AssignmentBoardResponse>(`/assignments/board${query(filter)}`),
+  assignmentReassign: (payload: { task_id: string; assignee_name: string; reason: string }) =>
+    request<Task>("/assignments/reassign", { method: "POST", body: JSON.stringify(payload) }),
   tasks: (assigneeName = "") => request<Task[]>(`/tasks/my${assigneeName ? `?assignee_name=${encodeURIComponent(assigneeName)}` : ""}`),
   claim: (payload: unknown) => request<{ message: string; id: string }>("/claims", { method: "POST", body: JSON.stringify(payload) }),
   uploadClaimEvidence: (opportunityId: string, file: File) => {

@@ -319,6 +319,91 @@ def test_assignment_rules_keep_category_and_priority_within_one_group_of_fair_lo
     }
 
 
+def test_assignment_rules_pick_lowest_outstanding_load_among_eligible() -> None:
+    from app.assignment_rules import preview_main_sku_assignment_groups
+
+    profiles = [
+        SimpleNamespace(operator_name="负载2", key_site="PH", key_category1="Home", key_category2="", enabled=True),
+        SimpleNamespace(operator_name="负载0", key_site="PH", key_category1="Home", key_category2="", enabled=True),
+        SimpleNamespace(operator_name="负载1", key_site="PH", key_category1="Home", key_category2="", enabled=True),
+    ]
+
+    suggestions = preview_main_sku_assignment_groups(
+        [opportunity("MAIN-LOAD", "SUB-1", "PH", "Home")],
+        profiles,
+        initial_loads={"负载2": 2, "负载0": 0, "负载1": 1},
+    )
+
+    assert suggestions[0].suggested_assignee == "负载0"
+
+
+def test_assignment_rules_rotate_six_products_evenly_across_three_candidates() -> None:
+    from app.assignment_rules import preview_main_sku_assignment_groups
+
+    profiles = [
+        SimpleNamespace(operator_name="甲", key_site="PH", key_category1="Home", key_category2="", enabled=True),
+        SimpleNamespace(operator_name="乙", key_site="PH", key_category1="Home", key_category2="", enabled=True),
+        SimpleNamespace(operator_name="丙", key_site="PH", key_category1="Home", key_category2="", enabled=True),
+    ]
+    opportunities = [opportunity(f"MAIN-{index}", f"SUB-{index}", "PH", "Home") for index in range(6)]
+
+    suggestions = preview_main_sku_assignment_groups(opportunities, profiles)
+
+    loads = {profile.operator_name: 0 for profile in profiles}
+    for item in suggestions:
+        loads[item.suggested_assignee] += 1
+    assert loads == {"甲": 2, "乙": 2, "丙": 2}
+
+
+def test_assignment_rules_never_pick_ineligible_candidates() -> None:
+    from app.assignment_rules import preview_main_sku_assignment_groups
+
+    profiles = [
+        SimpleNamespace(operator_name="站点不符零负载", key_site="TH", key_category1="Home", key_category2="", enabled=True),
+        SimpleNamespace(operator_name="停用零负载", key_site="PH", key_category1="Home", key_category2="", enabled=False),
+        SimpleNamespace(operator_name="合格高负载", key_site="PH", key_category1="Home", key_category2="", enabled=True),
+    ]
+    opportunities = [opportunity(f"MAIN-{index}", f"SUB-{index}", "PH", "Home") for index in range(4)]
+
+    suggestions = preview_main_sku_assignment_groups(
+        opportunities,
+        profiles,
+        initial_loads={"合格高负载": 9},
+    )
+
+    assert all(item.suggested_assignee == "合格高负载" for item in suggestions)
+
+
+def test_assignment_rules_tie_break_by_earliest_last_assigned_then_name() -> None:
+    from app.assignment_rules import preview_main_sku_assignment_groups
+
+    profiles = [
+        SimpleNamespace(operator_name="A-最近才分过", key_site="PH", key_category1="Home", key_category2="", enabled=True),
+        SimpleNamespace(operator_name="B-很久没分过", key_site="PH", key_category1="Home", key_category2="", enabled=True),
+        SimpleNamespace(operator_name="C-从未分过", key_site="PH", key_category1="Home", key_category2="", enabled=True),
+    ]
+
+    suggestions = preview_main_sku_assignment_groups(
+        [opportunity("MAIN-TIE", "SUB-1", "PH", "Home")],
+        profiles,
+        initial_last_assigned={"A-最近才分过": 200.0, "B-很久没分过": 100.0},
+    )
+
+    assert suggestions[0].suggested_assignee == "C-从未分过"
+
+    suggestions = preview_main_sku_assignment_groups(
+        [opportunity("MAIN-TIE", "SUB-1", "PH", "Home")],
+        profiles,
+        initial_last_assigned={"A-最近才分过": 200.0, "B-很久没分过": 100.0, "C-从未分过": 300.0},
+    )
+
+    assert suggestions[0].suggested_assignee == "B-很久没分过"
+
+    suggestions = preview_main_sku_assignment_groups([opportunity("MAIN-TIE", "SUB-1", "PH", "Home")], profiles)
+
+    assert suggestions[0].suggested_assignee == "A-最近才分过"
+
+
 def opportunity(main_sku: str, sub_sku: str, site: str, category: str) -> SimpleNamespace:
     return SimpleNamespace(
         id=sub_sku,

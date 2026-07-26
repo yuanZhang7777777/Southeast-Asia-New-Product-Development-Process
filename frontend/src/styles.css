@@ -1654,6 +1654,76 @@ textarea {
   white-space: normal;
 }
 
+.assign-tabbar {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.assignment-board-group {
+  margin-bottom: 12px;
+}
+
+.assignment-board-group-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.assignment-board-table {
+  min-width: 980px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+  background: #fff;
+}
+
+.assignment-board-row {
+  display: grid;
+  grid-template-columns: minmax(220px, 1.3fr) minmax(120px, 0.7fr) minmax(110px, 0.6fr) minmax(120px, 0.7fr) minmax(120px, 0.6fr) minmax(230px, 1fr);
+  border-top: 1px solid var(--line);
+}
+
+.assignment-board-row:first-child {
+  border-top: 0;
+}
+
+.assignment-board-row.head {
+  min-height: 34px;
+  background: #f6f8fb;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.assignment-board-row.head span,
+.assignment-board-cell {
+  min-width: 0;
+  padding: 10px;
+  border-left: 1px solid var(--line);
+}
+
+.assignment-board-row.head span:first-child,
+.assignment-board-cell:first-child {
+  border-left: 0;
+}
+
+.assignment-board-cell p {
+  margin: 4px 0 0;
+}
+
+.assignment-board-cell .tag + .tag {
+  margin-left: 4px;
+}
+
+.assignment-board-reassign {
+  display: grid;
+  align-content: start;
+  gap: 6px;
+}
+
 .assignment-preview-list {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
