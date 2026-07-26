@@ -11,7 +11,13 @@ import app.scheduler as scheduler
 from app import models
 from app.config import Settings
 from app.db import Base, SessionLocal, engine
-from app.scheduler import daily_notification_due, dingtalk_user_sync_due, manager_notification_due, plm_sync_due
+from app.scheduler import (
+    daily_notification_due,
+    dingtalk_user_sync_due,
+    listing_reminder_due,
+    manager_notification_due,
+    plm_sync_due,
+)
 
 
 def test_plm_sync_runs_once_after_0800_beijing() -> None:
@@ -37,6 +43,60 @@ def test_daily_notification_due_runs_once_after_0900_beijing() -> None:
     assert not daily_notification_due(before, None)
     assert daily_notification_due(due, None)
     assert not daily_notification_due(due, "2026-07-13")
+
+
+def test_listing_reminder_due_runs_once_after_0900_beijing() -> None:
+    before = datetime(2026, 7, 13, 8, 59, tzinfo=ZoneInfo("Asia/Shanghai"))
+    due = datetime(2026, 7, 13, 9, 0, tzinfo=ZoneInfo("Asia/Shanghai"))
+
+    assert not listing_reminder_due(before, None)
+    assert listing_reminder_due(due, None)
+    assert not listing_reminder_due(due, "2026-07-13")
+
+
+def test_listing_reminder_job_marker_prevents_same_day_rerun() -> None:
+    Base.metadata.drop_all(bind=engine)
+    Base.metadata.create_all(bind=engine)
+
+    assert scheduler.load_last_completed_date(scheduler.JOB_LISTING_REMINDER) is None
+    scheduler.record_job_run(scheduler.JOB_LISTING_REMINDER, "2026-07-13", {"listing_reminder": 2})
+
+    restored = scheduler.load_last_completed_date(scheduler.JOB_LISTING_REMINDER)
+    assert restored == "2026-07-13"
+    assert not listing_reminder_due(datetime(2026, 7, 13, 11, 0, tzinfo=ZoneInfo("Asia/Shanghai")), restored)
+    assert listing_reminder_due(datetime(2026, 7, 14, 9, 0, tzinfo=ZoneInfo("Asia/Shanghai")), restored)
+
+
+def test_listing_reminder_job_sends_operator_cards(monkeypatch) -> None:
+    calls: list[str] = []
+
+    class FakeSession:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def commit(self) -> None:
+            calls.append("commit")
+
+    received: dict[str, str] = {}
+
+    def fake_send(_db, _settings, _sender, reminder_date: str):
+        calls.append("listing_reminder")
+        received["reminder_date"] = reminder_date
+        return [object(), object()]
+
+    monkeypatch.setattr(scheduler, "SessionLocal", lambda: FakeSession())
+    monkeypatch.setattr(scheduler, "DingTalkCardSender", lambda _config: object())
+    monkeypatch.setattr(scheduler, "send_operator_listing_reminder_cards", fake_send)
+
+    settings = Settings(dingtalk_card_autosend_enabled=True)
+    now = datetime(2026, 7, 13, 9, 0, tzinfo=ZoneInfo("Asia/Shanghai"))
+
+    assert scheduler.run_listing_reminder_jobs(settings, now) == {"listing_reminder": 2}
+    assert calls == ["listing_reminder", "commit"]
+    assert received["reminder_date"] == "2026-07-13"
 
 
 def test_manager_notification_due_runs_once_after_1000_beijing_daily() -> None:

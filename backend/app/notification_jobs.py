@@ -12,6 +12,11 @@ from app import models, schemas, services
 from app.config import Settings
 from app.dingtalk_card_sender import ArrivalCard, ArrivalCardItem, DingTalkCardSender
 from app.plm_download import BEIJING
+from app.workflow_status import (
+    CLAIM_RESULT_CLAIM,
+    CLAIM_WAITING_LISTING,
+    CLAIM_WAITING_SECONDARY_RESEARCH,
+)
 
 
 MANAGER_ROLES = ("manager", "super_admin")
@@ -19,6 +24,8 @@ TEST_RECEIVER_ROLES = ("operator", "sales", "supervisor", "manager", "super_admi
 ELIMINATION_POSITIONING = "淘汰款"
 ELIMINATION_CARD_TITLE = "淘汰款提醒"
 ELIMINATION_MARKED_TITLE = "淘汰款已汇总"
+LISTING_REMINDER_CARD_TITLE = "已到货新品催办"
+LISTING_REMINDER_TIP_LIMIT = 5
 
 
 @dataclass(frozen=True)
@@ -27,6 +34,14 @@ class _ArrivalGroup:
     salesperson_name: str
     new_items: list[ArrivalCardItem]
     old_items: list[ArrivalCardItem]
+
+
+@dataclass(frozen=True)
+class _ListingReminderGroup:
+    salesperson_name: str
+    waiting_listing_count: int
+    waiting_secondary_count: int
+    items: list[tuple[str, str]]
 
 
 @dataclass(frozen=True)
@@ -70,6 +85,46 @@ def send_arrival_daily_cards(
                 action_url=services.dingtalk_action_url(settings, "operator"),
             )
         )
+    return logs
+
+
+def send_operator_listing_reminder_cards(
+    db: Session,
+    settings: Settings,
+    sender: DingTalkCardSender,
+    reminder_date: str,
+) -> list[models.NotificationLog]:
+    if not settings.dingtalk_card_autosend_enabled:
+        return []
+    logs: list[models.NotificationLog] = []
+    groups = _listing_reminder_groups(db)
+    test_mapping = _test_receiver_mapping(db, settings) if groups else None
+    for group in groups:
+        if group.waiting_listing_count == 0 and group.waiting_secondary_count == 0:
+            continue
+        dedupe_key = f"dingtalk_card:listing-reminder:{reminder_date}:{group.salesperson_name}"
+        mapping = test_mapping or services.dingtalk_mapping_for_name(db, group.salesperson_name, ("operator", "sales"))
+        if mapping is None or not mapping.dingtalk_user_id:
+            logs.append(services.skipped_dingtalk_notification(db, dedupe_key, group.salesperson_name, "skipped_no_receiver"))
+            continue
+        total = group.waiting_listing_count + group.waiting_secondary_count
+        payload = schemas.DingTalkNewProductTodoCardRequest(
+            receiver_dingtalk_user_id=mapping.dingtalk_user_id,
+            receiver_name=group.salesperson_name,
+            receiver_role="operator",
+            subject_name=group.salesperson_name,
+            left_count=group.waiting_listing_count,
+            right_count=group.waiting_secondary_count,
+            action_url=services.dingtalk_action_url(settings, "operator"),
+            out_track_id=dedupe_key,
+            dedupe_key=dedupe_key,
+            card_title=LISTING_REMINDER_CARD_TITLE,
+            summary_text=f"你有 {total} 个已到货新品待跟进刊登",
+            left_label="待刊登",
+            right_label="待二调",
+            tip_text=_listing_reminder_tip(group.items),
+        )
+        logs.append(services.send_dingtalk_new_product_todo_card(db, payload, sender))
     return logs
 
 
@@ -153,6 +208,58 @@ def _arrival_groups(db: Session, arrival_date: str) -> list[_ArrivalGroup]:
         )
         for name in names
     ]
+
+
+def _listing_reminder_groups(db: Session) -> list[_ListingReminderGroup]:
+    arrival_exists = (
+        select(models.ArrivalRecord.id)
+        .where(models.ArrivalRecord.claim_record_id == models.SalesClaimForecast.id)
+        .exists()
+    )
+    rows = db.execute(
+        select(models.SalesClaimForecast, models.NewProductOpportunity)
+        .join(models.NewProductOpportunity, models.SalesClaimForecast.opportunity_id == models.NewProductOpportunity.id)
+        .where(
+            models.SalesClaimForecast.claim_result == CLAIM_RESULT_CLAIM,
+            models.SalesClaimForecast.source_column == "platform",
+            models.SalesClaimForecast.downstream_status.in_((CLAIM_WAITING_LISTING, CLAIM_WAITING_SECONDARY_RESEARCH)),
+            arrival_exists,
+        )
+        .order_by(
+            models.SalesClaimForecast.salesperson_name,
+            models.NewProductOpportunity.main_sku,
+            models.NewProductOpportunity.sub_sku,
+        )
+    ).all()
+    listing_counts: dict[str, int] = defaultdict(int)
+    secondary_counts: dict[str, int] = defaultdict(int)
+    items: dict[str, dict[str, str]] = defaultdict(dict)
+    for claim, opportunity in rows:
+        salesperson = (claim.salesperson_name or "").strip()
+        main_sku = (opportunity.main_sku or "").strip()
+        if not salesperson or not main_sku:
+            continue
+        if claim.downstream_status == CLAIM_WAITING_LISTING:
+            listing_counts[salesperson] += 1
+        else:
+            secondary_counts[salesperson] += 1
+        items[salesperson].setdefault(main_sku, opportunity.main_sku_name or opportunity.sub_sku_name or "")
+    return [
+        _ListingReminderGroup(
+            salesperson_name=name,
+            waiting_listing_count=listing_counts[name],
+            waiting_secondary_count=secondary_counts[name],
+            items=list(items[name].items()),
+        )
+        for name in sorted(items)
+    ]
+
+
+def _listing_reminder_tip(items: list[tuple[str, str]]) -> str:
+    parts = [f"{main_sku}|{name}" if name else main_sku for main_sku, name in items[:LISTING_REMINDER_TIP_LIMIT]]
+    text = "、".join(parts)
+    extra = len(items) - LISTING_REMINDER_TIP_LIMIT
+    return f"{text} +{extra}" if extra > 0 else text
 
 
 def _arrival_items(values: dict[str, dict[str, set[str] | str]]) -> list[ArrivalCardItem]:

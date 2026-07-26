@@ -18,8 +18,15 @@ from app.notification_jobs import (  # noqa: E402
     send_arrival_daily_cards,
     send_daily_elimination_summary,
     send_daily_manager_review_summary,
+    send_operator_listing_reminder_cards,
 )
-from app.workflow_status import OPPORTUNITY_CLAIM_REJECTED, OPPORTUNITY_CLAIM_SUBMITTED  # noqa: E402
+from app.workflow_status import (  # noqa: E402
+    CLAIM_DISABLED,
+    CLAIM_WAITING_LISTING,
+    CLAIM_WAITING_SECONDARY_RESEARCH,
+    OPPORTUNITY_CLAIM_REJECTED,
+    OPPORTUNITY_CLAIM_SUBMITTED,
+)
 
 
 def setup_function() -> None:
@@ -626,6 +633,150 @@ def test_elimination_daily_summary_retries_failed_manager_card() -> None:
         assert db.query(models.NotificationLog).filter_by(message_title="淘汰款已汇总").count() == 1
 
 
+def _seed_arrived_claim(
+    db,
+    claim_id: str,
+    salesperson: str,
+    main_sku: str,
+    sub_sku: str,
+    downstream_status: str,
+    product_name: str | None = None,
+    with_arrival: bool = True,
+    claim_result: str = "claim",
+    source_column: str = "platform",
+) -> None:
+    opportunity_id = f"op-{claim_id}"
+    db.add(
+        models.NewProductOpportunity(
+            id=opportunity_id,
+            source_type="test",
+            main_sku=main_sku,
+            sub_sku=sub_sku,
+            main_sku_name=product_name,
+        )
+    )
+    db.add(
+        models.SalesClaimForecast(
+            id=claim_id,
+            opportunity_id=opportunity_id,
+            salesperson_name=salesperson,
+            claim_result=claim_result,
+            source_column=source_column,
+            downstream_status=downstream_status,
+        )
+    )
+    if with_arrival:
+        db.add(
+            models.ArrivalRecord(
+                opportunity_id=opportunity_id,
+                claim_record_id=claim_id,
+                salesperson_name=salesperson,
+            )
+        )
+
+
+def test_listing_reminder_cards_count_statuses_and_dedupe_per_operator_per_day() -> None:
+    settings = Settings(dingtalk_card_autosend_enabled=True, platform_base_url="https://np.example")
+    sender = FakeSender()
+    with SessionLocal() as db:
+        db.add(models.RoleMapping(name="销售A", role="operator", dingtalk_user_id="dt-sales-a", enabled=True))
+        db.add(models.RoleMapping(name="销售B", role="operator", dingtalk_user_id="dt-sales-b", enabled=True))
+        _seed_arrived_claim(db, "claim-l1", "销售A", "MAIN-1", "SUB-1", CLAIM_WAITING_LISTING, product_name="新品一")
+        _seed_arrived_claim(db, "claim-l2", "销售A", "MAIN-1", "SUB-2", CLAIM_WAITING_LISTING, product_name="新品一")
+        _seed_arrived_claim(db, "claim-s1", "销售A", "MAIN-2", "SUB-3", CLAIM_WAITING_SECONDARY_RESEARCH, product_name="新品二")
+        _seed_arrived_claim(db, "claim-x1", "销售B", "MAIN-5", "SUB-6", CLAIM_WAITING_LISTING, source_column="excel")
+        _seed_arrived_claim(db, "claim-x2", "销售B", "MAIN-6", "SUB-7", CLAIM_WAITING_LISTING, claim_result="reject")
+        db.flush()
+
+        first = send_operator_listing_reminder_cards(db, settings, sender, "2026-07-27")
+        second = send_operator_listing_reminder_cards(db, settings, sender, "2026-07-27")
+
+        assert [log.dedupe_key for log in first] == ["dingtalk_card:listing-reminder:2026-07-27:销售A"]
+        assert [log.dedupe_key for log in second] == [log.dedupe_key for log in first]
+        assert len(sender.todo_cards) == 1
+        card = sender.todo_cards[0]
+        assert card.receiver_dingtalk_user_id == "dt-sales-a"
+        assert card.left_count == 2
+        assert card.right_count == 1
+        assert card.card_title == "已到货新品催办"
+        assert card.left_label == "待刊登"
+        assert card.right_label == "待二调"
+        assert card.tip_text == "MAIN-1|新品一、MAIN-2|新品二"
+        assert card.action_url == "https://np.example/?from=ding&role=operator"
+        db.flush()
+        log = db.query(models.NotificationLog).one()
+        assert log.send_status == "sent"
+        assert log.message_title == "已到货新品催办"
+        assert log.receiver_name == "销售A"
+        audit = db.query(models.AuditLog).filter_by(action="notification.dingtalk_card_sent", entity_id=log.id).one()
+        assert audit.detail["left_count"] == 2
+        assert audit.detail["right_count"] == 1
+        assert audit.detail["send_status"] == "sent"
+
+        third = send_operator_listing_reminder_cards(db, settings, sender, "2026-07-28")
+
+        assert [log.dedupe_key for log in third] == ["dingtalk_card:listing-reminder:2026-07-28:销售A"]
+        assert len(sender.todo_cards) == 2
+
+
+def test_listing_reminder_cards_send_nothing_when_no_qualifying_claims() -> None:
+    settings = Settings(dingtalk_card_autosend_enabled=True, platform_base_url="https://np.example")
+    sender = FakeSender()
+    with SessionLocal() as db:
+        db.add(models.RoleMapping(name="销售B", role="operator", dingtalk_user_id="dt-sales-b", enabled=True))
+        _seed_arrived_claim(db, "claim-n1", "销售B", "MAIN-1", "SUB-1", CLAIM_WAITING_LISTING, with_arrival=False)
+        _seed_arrived_claim(db, "claim-n2", "销售B", "MAIN-2", "SUB-2", CLAIM_DISABLED)
+        _seed_arrived_claim(db, "claim-n3", "销售B", "MAIN-3", "SUB-3", "listing_observation")
+        db.flush()
+
+        assert send_operator_listing_reminder_cards(db, settings, sender, "2026-07-27") == []
+        assert sender.todo_cards == []
+        assert db.query(models.NotificationLog).count() == 0
+
+
+def test_listing_reminder_tip_limits_to_five_main_skus_with_overflow() -> None:
+    settings = Settings(dingtalk_card_autosend_enabled=True, platform_base_url="https://np.example")
+    sender = FakeSender()
+    with SessionLocal() as db:
+        db.add(models.RoleMapping(name="销售A", role="operator", dingtalk_user_id="dt-sales-a", enabled=True))
+        for index in range(1, 8):
+            _seed_arrived_claim(
+                db,
+                f"claim-{index}",
+                "销售A",
+                f"MAIN-{index}",
+                f"SUB-{index}",
+                CLAIM_WAITING_LISTING,
+                product_name=f"新品{index}",
+            )
+        db.flush()
+
+        send_operator_listing_reminder_cards(db, settings, sender, "2026-07-27")
+
+        assert len(sender.todo_cards) == 1
+        card = sender.todo_cards[0]
+        assert card.left_count == 7
+        assert card.right_count == 0
+        assert card.tip_text == "MAIN-1|新品1、MAIN-2|新品2、MAIN-3|新品3、MAIN-4|新品4、MAIN-5|新品5 +2"
+
+
+def test_listing_reminder_cards_log_skip_when_operator_has_no_dingtalk_mapping() -> None:
+    settings = Settings(dingtalk_card_autosend_enabled=True)
+    sender = FakeSender()
+    with SessionLocal() as db:
+        _seed_arrived_claim(db, "claim-nomap", "销售C", "MAIN-9", "SUB-9", CLAIM_WAITING_SECONDARY_RESEARCH)
+        db.flush()
+
+        logs = send_operator_listing_reminder_cards(db, settings, sender, "2026-07-27")
+
+        assert len(logs) == 1
+        assert logs[0].send_status == "skipped_no_receiver"
+        assert logs[0].dedupe_key == "dingtalk_card:listing-reminder:2026-07-27:销售C"
+        assert sender.todo_cards == []
+        db.flush()
+        assert db.query(models.AuditLog).filter_by(action="notification.dingtalk_card_skipped").count() == 1
+
+
 def test_daily_manager_review_summary_runs_on_any_day() -> None:
     settings = Settings(dingtalk_card_autosend_enabled=True, platform_base_url="https://np.example")
     sender = FakeSender()
@@ -668,5 +819,6 @@ def test_notification_jobs_do_not_send_when_autosend_disabled() -> None:
         assert send_daily_elimination_summary(db, settings, sender, "2026-07-13") == []
         assert send_daily_manager_review_summary(db, settings, sender, datetime(2026, 7, 16, 10, 0, tzinfo=ZoneInfo("Asia/Shanghai"))) == []
         assert send_arrival_daily_cards(db, settings, sender, "2026-07-12") == []
+        assert send_operator_listing_reminder_cards(db, settings, sender, "2026-07-27") == []
         assert sender.todo_cards == []
         assert sender.arrival_cards == []

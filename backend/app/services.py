@@ -4243,6 +4243,7 @@ def send_dingtalk_new_product_todo_card(
     sender: DingTalkCardSender,
 ) -> models.NotificationLog:
     dedupe_key = payload.dedupe_key or f"dingtalk_card:{payload.receiver_role}:{payload.out_track_id}"
+    message_title = payload.card_title or "新品待办"
     existing = db.scalar(select(models.NotificationLog).where(models.NotificationLog.dedupe_key == dedupe_key))
     if existing and existing.send_status == "sent":
         return existing
@@ -4251,15 +4252,16 @@ def send_dingtalk_new_product_todo_card(
             dedupe_key=dedupe_key,
             receiver_name=payload.receiver_name,
             channel="dingtalk_card",
-            message_title="新品待办",
+            message_title=message_title,
             send_status="pending",
             provider_message_id=payload.out_track_id,
         )
         db.add(item)
+        db.flush()
     else:
         item = existing
         item.receiver_name = payload.receiver_name
-        item.message_title = "新品待办"
+        item.message_title = message_title
         item.send_status = "pending"
         item.provider_message_id = payload.out_track_id
     try:
@@ -4272,6 +4274,11 @@ def send_dingtalk_new_product_todo_card(
                 action_url=payload.action_url,
                 out_track_id=payload.out_track_id,
                 subject_name=payload.subject_name or payload.receiver_name or "",
+                card_title=payload.card_title or "",
+                summary_text=payload.summary_text or "",
+                left_label=payload.left_label or "",
+                right_label=payload.right_label or "",
+                tip_text=payload.tip_text or "",
             )
         )
     except Exception as exc:

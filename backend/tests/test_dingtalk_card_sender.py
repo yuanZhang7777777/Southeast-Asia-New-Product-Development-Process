@@ -85,6 +85,33 @@ def test_operator_card_uses_confirmed_template_and_labels() -> None:
     }
 
 
+def test_new_product_todo_params_allow_custom_text_overrides() -> None:
+    params = build_new_product_todo_params(
+        role="operator",
+        left_count=2,
+        right_count=1,
+        action_url="https://example.com/?from=ding&role=operator",
+        subject_name="销售A",
+        card_title="已到货新品催办",
+        summary_text="你有 3 个已到货新品待跟进刊登",
+        left_label="待刊登",
+        right_label="待二调",
+        tip_text="MAIN-1|新品一、MAIN-2|新品二",
+    )
+
+    assert params == {
+        "card_title": "已到货新品催办",
+        "summary_text": "你有 3 个已到货新品待跟进刊登",
+        "left_label": "待刊登",
+        "left_count": "2",
+        "right_label": "待二调",
+        "right_count": "1",
+        "tip_text": "MAIN-1|新品一、MAIN-2|新品二",
+        "action_text": "立即处理",
+        "action_url": "https://example.com/?from=ding&role=operator",
+    }
+
+
 def test_supervisor_card_uses_confirmed_template_and_labels() -> None:
     params = build_new_product_todo_params(
         role="supervisor",

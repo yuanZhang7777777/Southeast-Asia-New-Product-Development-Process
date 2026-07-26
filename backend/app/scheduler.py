@@ -12,6 +12,7 @@ from app.notification_jobs import (
     send_arrival_daily_cards,
     send_daily_elimination_summary,
     send_daily_manager_review_summary,
+    send_operator_listing_reminder_cards,
 )
 from app.plm_download import BEIJING, download_plm_export, previous_beijing_date
 
@@ -25,6 +26,7 @@ CHECK_SECONDS = 30
 JOB_PLM_SYNC = "plm_sync"
 JOB_DAILY_NOTIFICATION = "daily_notification"
 JOB_MANAGER_NOTIFICATION = "manager_notification"
+JOB_LISTING_REMINDER = "listing_reminder"
 
 
 def load_last_completed_date(job_name: str) -> str | None:
@@ -77,6 +79,10 @@ def daily_notification_due(now: datetime, completed_date: str | None) -> bool:
     return current.hour >= OPERATOR_NOTIFICATION_HOUR and completed_date != today
 
 
+def listing_reminder_due(now: datetime, completed_date: str | None) -> bool:
+    return daily_notification_due(now, completed_date)
+
+
 def manager_notification_due(now: datetime, completed_date: str | None) -> bool:
     current = now if now.tzinfo else now.replace(tzinfo=BEIJING)
     current = current.astimezone(BEIJING)
@@ -118,6 +124,17 @@ def run_daily_notification_jobs(settings: Settings, now: datetime) -> dict[str, 
     return {"arrival": len(arrival_logs)}
 
 
+def run_listing_reminder_jobs(settings: Settings, now: datetime) -> dict[str, int]:
+    sender = DingTalkCardSender(DingTalkCardConfig.from_settings(settings))
+    current = now if now.tzinfo else now.replace(tzinfo=BEIJING)
+    current = current.astimezone(BEIJING)
+    reminder_date = current.date().isoformat()
+    with SessionLocal() as db:
+        reminder_logs = send_operator_listing_reminder_cards(db, settings, sender, reminder_date)
+        db.commit()
+    return {"listing_reminder": len(reminder_logs)}
+
+
 def run_manager_notification_jobs(settings: Settings, now: datetime) -> dict[str, int]:
     sender = DingTalkCardSender(DingTalkCardConfig.from_settings(settings))
     current = now if now.tzinfo else now.replace(tzinfo=BEIJING)
@@ -139,6 +156,7 @@ def main() -> None:
     print(f"scheduler started for {settings.app_env}; plm_sync={settings.plm_sync_enabled}", flush=True)
     completed_date: str | None = load_last_completed_date(JOB_PLM_SYNC)
     daily_notification_completed_date: str | None = load_last_completed_date(JOB_DAILY_NOTIFICATION)
+    listing_reminder_completed_date: str | None = load_last_completed_date(JOB_LISTING_REMINDER)
     manager_notification_completed_date: str | None = load_last_completed_date(JOB_MANAGER_NOTIFICATION)
     dingtalk_user_synced_at: datetime | None = None
     retry_after = 0.0
@@ -170,6 +188,14 @@ def main() -> None:
                 print(f"daily_notification_jobs_completed report={report}", flush=True)
             except Exception as exc:
                 print(f"daily_notification_jobs_failed error={exc}", flush=True)
+        if listing_reminder_due(now, listing_reminder_completed_date):
+            try:
+                report = run_listing_reminder_jobs(settings, now)
+                listing_reminder_completed_date = now.date().isoformat()
+                record_job_run(JOB_LISTING_REMINDER, listing_reminder_completed_date, dict(report))
+                print(f"listing_reminder_jobs_completed report={report}", flush=True)
+            except Exception as exc:
+                print(f"listing_reminder_jobs_failed error={exc}", flush=True)
         if manager_notification_due(now, manager_notification_completed_date):
             try:
                 report = run_manager_notification_jobs(settings, now)

@@ -50,6 +50,11 @@ class NewProductTodoCard:
     action_url: str
     out_track_id: str
     subject_name: str = ""
+    card_title: str = ""
+    summary_text: str = ""
+    left_label: str = ""
+    right_label: str = ""
+    tip_text: str = ""
 
 
 @dataclass(frozen=True)
@@ -82,12 +87,17 @@ def build_new_product_todo_params(
     right_count: int,
     action_url: str,
     subject_name: str = "",
+    card_title: str = "",
+    summary_text: str = "",
+    left_label: str = "",
+    right_label: str = "",
+    tip_text: str = "",
 ) -> dict[str, str]:
     total = left_count + right_count
     if role == "operator":
-        card_title = f"{subject_name}的新品待办" if subject_name else "新品待办"
-        return {
-            "card_title": card_title,
+        default_title = f"{subject_name}的新品待办" if subject_name else "新品待办"
+        params = {
+            "card_title": default_title,
             "summary_text": f"你有 {total} 项新品事项待处理",
             "left_label": "待认领",
             "left_count": str(left_count),
@@ -97,8 +107,8 @@ def build_new_product_todo_params(
             "action_text": "立即处理",
             "action_url": action_url,
         }
-    if role == "supervisor":
-        return {
+    elif role == "supervisor":
+        params = {
             "card_title": "主管新品待办",
             "summary_text": f"你有 {total} 项主管事项待处理",
             "left_label": "认领待复核",
@@ -109,7 +119,17 @@ def build_new_product_todo_params(
             "action_text": "进入主管处理",
             "action_url": action_url,
         }
-    raise ValueError("receiver_role must be operator or supervisor")
+    else:
+        raise ValueError("receiver_role must be operator or supervisor")
+    overrides = {
+        "card_title": card_title,
+        "summary_text": summary_text,
+        "left_label": left_label,
+        "right_label": right_label,
+        "tip_text": tip_text,
+    }
+    params.update({key: value for key, value in overrides.items() if value})
+    return params
 
 
 def build_arrival_card_params(
@@ -213,6 +233,11 @@ class DingTalkCardSender:
             right_count=card.right_count,
             action_url=card.action_url,
             subject_name=card.subject_name,
+            card_title=card.card_title,
+            summary_text=card.summary_text,
+            left_label=card.left_label,
+            right_label=card.right_label,
+            tip_text=card.tip_text,
         )
         robot_code = self.config.robot_code or self.config.client_id
         last_message = card_params["summary_text"]
