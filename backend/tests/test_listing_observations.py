@@ -1429,6 +1429,78 @@ def test_apply_week_metrics_skips_stopped_listing() -> None:
     assert notification_count == 0
 
 
+def test_workbench_hides_history_archive_unless_requested() -> None:
+    headers = login("主管B", "manager", "dt-b")
+    with SessionLocal() as db:
+        history = seeded_history_listing("销售A")
+        db.add(history)
+        db.add(seeded_listing("销售A", date(2026, 7, 16)))
+        db.commit()
+        history_id = history.id
+
+    default_view = client.get("/listing-workbench", headers=headers).json()
+    assert [item["main_sku"] for item in default_view["listing_records"]] == ["MAIN-SEED"]
+    assert default_view["listing_records"][0]["is_history"] is False
+    assert default_view["listing_records"][0]["bound_main_skus"] == []
+    assert {row["record_source"] for row in default_view["period_rows"]} == {"platform"}
+
+    with_history = client.get("/listing-workbench?include_history=true", headers=headers).json()
+    history_records = [item for item in with_history["listing_records"] if item["is_history"]]
+    assert [item["id"] for item in history_records] == [history_id]
+    assert history_records[0]["main_sku"] == "MAIN-HIST-A"
+    assert history_records[0]["is_shared_item"] is True
+    assert history_records[0]["bound_main_skus"] == ["MAIN-HIST-A", "MAIN-HIST-B"]
+    assert {row["record_source"] for row in with_history["period_rows"]} == {"platform", "history_finebi"}
+
+
+def test_workbench_business_period_dropdown_filters_listings_and_tasks() -> None:
+    headers = login("销售A", "operator", "dt-a")
+    create_waiting_listing_group("销售A", "MAIN-A", business_period="开发0710期")
+    create_waiting_listing_group("销售A", "MAIN-B", business_period="开发0711期")
+    listing = create_listing(headers, "ITEM-BP-A", "开发0710期")
+
+    workbench = client.get("/listing-workbench", headers=headers).json()
+    assert workbench["available_business_periods"] == ["开发0710期", "开发0711期"]
+
+    matched = client.get(
+        "/listing-workbench", headers=headers, params={"business_period": "开发0710期"}
+    ).json()
+    assert matched["available_business_periods"] == ["开发0710期", "开发0711期"]
+    assert [item["id"] for item in matched["listing_records"]] == [listing["id"]]
+    assert {task["business_period"] for task in matched["pending_listing_tasks"]} == {"开发0710期"}
+    assert {row["listing_record_id"] for row in matched["period_rows"]} == {listing["id"]}
+
+    other = client.get(
+        "/listing-workbench", headers=headers, params={"business_period": "开发0711期"}
+    ).json()
+    assert [task["main_sku"] for task in other["pending_listing_tasks"]] == ["MAIN-B"]
+    assert other["listing_records"] == []
+    assert other["period_rows"] == []
+
+
+def test_listing_summary_matches_history_item_via_bound_main_sku() -> None:
+    with SessionLocal() as db:
+        history = seeded_history_listing("销售A")
+        db.add(history)
+        legacy = seeded_listing("销售A", date(2026, 7, 16))
+        legacy.main_sku = "MAIN-HIST-B"
+        db.add(legacy)
+        db.commit()
+        history_id = history.id
+        legacy_id = legacy.id
+
+    with SessionLocal() as db:
+        bound_summary = services.listing_summary(db, "MAIN-HIST-B")
+        representative_summary = services.listing_summary(db, "MAIN-HIST-A")
+
+    assert {item["id"] for item in bound_summary["listing_records"]} == {history_id, legacy_id}
+    history_read = next(item for item in bound_summary["listing_records"] if item["id"] == history_id)
+    assert history_read["main_sku"] == "MAIN-HIST-A"
+    assert history_read["bound_main_skus"] == ["MAIN-HIST-A", "MAIN-HIST-B"]
+    assert {row["listing_record_id"] for row in bound_summary["period_rows"]} == {history_id, legacy_id}
+    assert [item["id"] for item in representative_summary["listing_records"]] == [history_id]
+
+
 _for_update_capture_handlers: dict[int, object] = {}
 
 
@@ -1553,6 +1625,39 @@ def observation_row(headers: dict[str, str], listing_id: str, week_number: int) 
 def listing_source_claim_ids(listing_id: str) -> list[str]:
     with SessionLocal() as db:
         return list(db.get(models.ListingRecord, listing_id).source_claim_ids)
+
+
+def seeded_history_listing(owner: str) -> models.ListingRecord:
+    listing = models.ListingRecord(
+        id=models.new_id(),
+        source_group_key="history:Shop History:90001",
+        source_claim_ids=[],
+        source_type="history_finebi",
+        main_sku="MAIN-HIST-A",
+        salesperson_name=owner,
+        shop="Shop History",
+        item="90001",
+        listing_strategy="历史档案",
+        first_period_start=date(2026, 4, 2),
+        first_period_end=date(2026, 4, 8),
+        is_shared_item=True,
+        representative_rule="lexical_first",
+    )
+    listing.periods.append(
+        models.ItemObservationPeriod(
+            id=models.new_id(),
+            week_number=1,
+            period_start=date(2026, 4, 2),
+            period_end=date(2026, 4, 8),
+            status="completed",
+            record_source="history_finebi",
+        )
+    )
+    for bound_main_sku in ("MAIN-HIST-B", "MAIN-HIST-A"):
+        listing.bindings.append(
+            models.ListingSkuBinding(id=models.new_id(), main_sku=bound_main_sku, binding_source="history_finebi")
+        )
+    return listing
 
 
 def seeded_listing(owner: str, first_period_start: date) -> models.ListingRecord:

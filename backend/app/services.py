@@ -1880,12 +1880,21 @@ def listing_source_context(
                     periods_by_listing[listing_id].add(value)
                 if value := _clean_text(product_positioning):
                     positions_by_listing[listing_id].add(value)
+    bound_skus_by_listing: dict[str, set[str]] = defaultdict(set)
+    if listings:
+        for listing_id, bound_main_sku in db.execute(
+            select(models.ListingSkuBinding.listing_record_id, models.ListingSkuBinding.main_sku).where(
+                models.ListingSkuBinding.listing_record_id.in_([listing.id for listing in listings])
+            )
+        ):
+            bound_skus_by_listing[listing_id].add(bound_main_sku)
     return {
         listing.id: {
             "source_business_periods": sorted(periods_by_listing[listing.id]),
             "secondary_positioning": next(iter(positions_by_listing[listing.id]))
             if len(positions_by_listing[listing.id]) == 1
             else None,
+            "bound_main_skus": sorted(bound_skus_by_listing[listing.id]),
         }
         for listing in listings
     }
@@ -1935,6 +1944,8 @@ def listing_record_read(item: models.ListingRecord, source_context: dict | None 
         "is_shared_item": item.is_shared_item,
         "representative_rule": item.representative_rule,
         "representative_sub_sku": item.representative_sub_sku,
+        "is_history": item.source_type == "history_finebi",
+        "bound_main_skus": source_context.get("bound_main_skus", []),
     }
 
 
@@ -1987,6 +1998,7 @@ def list_listing_workbench(
     week_number: int | None = None,
     product_positioning: str | None = None,
     tracking_status: str | None = None,
+    business_period: str | None = None,
     include_history: bool = False,
 ) -> dict:
     pending = list_pending_listing_tasks(db, owner)
@@ -2019,6 +2031,13 @@ def list_listing_workbench(
             or text.lower() in (task["main_sku_name"] or "").lower()
         ]
     listings = list(db.scalars(statement.order_by(models.ListingRecord.created_at.desc())))
+    available_business_periods = sorted({
+        *(item.business_period for item in listings if item.business_period),
+        *(task["business_period"] for task in pending if task["business_period"]),
+    })
+    if business_period:
+        listings = [item for item in listings if item.business_period == business_period]
+        pending = [task for task in pending if task["business_period"] == business_period]
     listing_ids = [item.id for item in listings]
     period_statement = select(models.ItemObservationPeriod).where(
         models.ItemObservationPeriod.listing_record_id.in_(listing_ids)
@@ -2052,6 +2071,7 @@ def list_listing_workbench(
     positioning_defaults = observation_positioning_defaults(db, [item.id for item in listings], source_context)
     return {
         "pending_listing_tasks": pending if view in {"all", "pending_listing"} else [],
+        "available_business_periods": available_business_periods,
         "listing_records": [listing_record_read(item, source_context[item.id]) for item in listings],
         "period_rows": [
             observation_period_read(
@@ -2066,8 +2086,17 @@ def list_listing_workbench(
 
 def listing_summary(db: Session, main_sku: str, owner: str | None = None, country: str | None = None) -> dict:
     result = list_listing_workbench(db, owner=owner, country=country, include_history=True)
+    bound_listing_ids = set(
+        db.scalars(
+            select(models.ListingSkuBinding.listing_record_id).where(
+                models.ListingSkuBinding.main_sku == main_sku
+            )
+        )
+    )
     listing_ids = {
-        item["id"] for item in result["listing_records"] if item["main_sku"] == main_sku
+        item["id"]
+        for item in result["listing_records"]
+        if item["main_sku"] == main_sku or item["id"] in bound_listing_ids
     }
     return {
         "pending_listing_tasks": [],

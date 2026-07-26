@@ -76,6 +76,14 @@ test("普通待刊登任务继续使用既有刊登工作台", () => {
   assert.match(listingObservationViewSource, /pending_listing_tasks/);
   assert.doesNotMatch(listingObservationViewSource, /stocking_paused/);
 });
+
+test("工作台提供含历史档案开关与业务周期期数下拉", () => {
+  assert.match(listingObservationViewSource, /include_history: true/);
+  assert.match(listingObservationViewSource, /含历史档案/);
+  assert.match(listingObservationViewSource, /data\.available_business_periods/);
+  assert.match(listingObservationViewSource, /setFilter\("business_period", event\.target\.value\)/);
+  assert.doesNotMatch(listingObservationViewSource, /type="date" value=\{filters\.period_start\}/);
+});
 const listingStylesSource = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");
 
 test("只有普通运营会被登录身份锁定当前运营", () => {
@@ -603,6 +611,29 @@ test("商品详情只读汇总严格匹配主 SKU 和国家", () => {
   assert.deepEqual(productListingSummary(data, "MAIN-A", "PH"), {
     listings: [data.listing_records[0]],
     periods: [data.period_rows[0]]
+  });
+});
+
+test("商品详情只读汇总通过绑定主 SKU 命中共享 Item 并保留旧记录字段匹配", () => {
+  const data = {
+    pending_listing_tasks: [],
+    listing_records: [
+      { id: "listing-shared", main_sku: "MAIN-A", country: "PH", bound_main_skus: ["MAIN-A", "MAIN-B"] },
+      { id: "listing-legacy", main_sku: "MAIN-B", country: "PH" },
+      { id: "listing-other-country", main_sku: "MAIN-C", country: "VN", bound_main_skus: ["MAIN-B", "MAIN-C"] },
+      { id: "listing-unbound", main_sku: "MAIN-C", country: "PH", bound_main_skus: ["MAIN-C"] }
+    ],
+    period_rows: [
+      { id: "period-shared", listing_record_id: "listing-shared" },
+      { id: "period-legacy", listing_record_id: "listing-legacy" },
+      { id: "period-other-country", listing_record_id: "listing-other-country" },
+      { id: "period-unbound", listing_record_id: "listing-unbound" }
+    ]
+  };
+
+  assert.deepEqual(productListingSummary(data, "MAIN-B", "PH"), {
+    listings: [data.listing_records[0], data.listing_records[1]],
+    periods: [data.period_rows[0], data.period_rows[1]]
   });
 });
 

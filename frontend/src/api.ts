@@ -464,6 +464,9 @@ export type ListingRecord = {
   status: "active" | "voided";
   tracking_status: ListingTrackingStatus;
   first_round_completed_at?: string | null;
+  is_shared_item?: boolean;
+  is_history?: boolean;
+  bound_main_skus?: string[];
 };
 
 export type ObservationPeriodRow = {
@@ -494,6 +497,7 @@ export type ObservationPeriodRow = {
 
 export type ListingWorkbenchResponse = {
   pending_listing_tasks: PendingListingTask[];
+  available_business_periods?: string[];
   listing_records: ListingRecord[];
   period_rows: ObservationPeriodRow[];
 };
@@ -510,6 +514,8 @@ export type ListingWorkbenchFilter = {
   product_positioning?: ProductPositioning | "";
   tracking_status?: ListingTrackingStatus | "";
   only_my_tasks?: boolean;
+  include_history?: boolean;
+  business_period?: string;
 };
 
 export type ManualListingContext = {

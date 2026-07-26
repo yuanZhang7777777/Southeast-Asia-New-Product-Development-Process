@@ -5576,3 +5576,33 @@ p.admin-password-warning {
   color: #dc2626;
   font-weight: 700;
 }
+
+.listing-include-history {
+  align-items: center !important;
+  display: flex !important;
+  gap: 7px;
+  min-height: 36px;
+}
+
+.listing-include-history input {
+  min-height: auto;
+}
+
+.listing-archive-info {
+  align-items: baseline;
+  color: #475569;
+  display: flex;
+  flex-wrap: wrap;
+  font-size: 12px;
+  gap: 10px;
+  padding: 6px 12px 0;
+}
+
+.listing-archive-note {
+  color: #94a3b8;
+}
+
+.listing-bound-sku-current {
+  color: #1d4ed8;
+  font-weight: 700;
+}

@@ -634,6 +634,8 @@ class ListingRecordRead(BaseModel):
     is_shared_item: bool = False
     representative_rule: str | None = None
     representative_sub_sku: str | None = None
+    is_history: bool = False
+    bound_main_skus: list[str] = Field(default_factory=list)
 
 
 class ObservationPeriodRead(BaseModel):
@@ -666,6 +668,7 @@ class ObservationPeriodRead(BaseModel):
 
 class ListingWorkbenchRead(BaseModel):
     pending_listing_tasks: list[PendingListingTaskRead]
+    available_business_periods: list[str] = Field(default_factory=list)
     listing_records: list[ListingRecordRead]
     period_rows: list[ObservationPeriodRead]
 

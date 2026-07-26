@@ -53,7 +53,7 @@ import {
 import { normalizeSiteText } from "./opportunityGroups";
 
 const EMPTY_DATA: ListingWorkbenchResponse = { pending_listing_tasks: [], listing_records: [], period_rows: [] };
-type WorkbenchFilters = ObservationFilters & { business_status: WorkbenchBusinessStatus };
+type WorkbenchFilters = ObservationFilters & { business_status: WorkbenchBusinessStatus; business_period: string };
 export type ListingProductLink = {
   opportunity_id: string;
   main_sku: string;
@@ -75,6 +75,7 @@ type ManualListingErrors = Partial<Record<keyof ManualListingDraft, string>>;
 
 const DEFAULT_FILTERS: WorkbenchFilters = {
   business_status: "all",
+  business_period: "",
   query: "",
   country: "",
   salesperson_name: "",
@@ -97,6 +98,7 @@ export function ListingObservationView(props: {
 }) {
   const [data, setData] = useState<ListingWorkbenchResponse>(EMPTY_DATA);
   const [filters, setFilters] = useState<WorkbenchFilters>(DEFAULT_FILTERS);
+  const [includeHistory, setIncludeHistory] = useState(false);
   const [scenario, setScenario] = useState<"listing" | "observation">("observation");
   const [correctingPeriods, setCorrectingPeriods] = useState<string[]>([]);
   const [expandedGroups, setExpandedGroups] = useState<string[]>([]);
@@ -143,6 +145,8 @@ export function ListingObservationView(props: {
     try {
       const response = await api.listingWorkbench({
         view: "all",
+        ...(includeHistory && { include_history: true }),
+        ...(filters.business_period && { business_period: filters.business_period }),
         ...scope
       });
       if (!isCurrent()) return;
@@ -188,7 +192,7 @@ export function ListingObservationView(props: {
 
   useEffect(() => {
     void loadWorkbench();
-  }, [props.role, props.canManage, props.operatorName, props.draftUserId]);
+  }, [props.role, props.canManage, props.operatorName, props.draftUserId, includeHistory, filters.business_period]);
 
   useEffect(() => { if (summaryPeriodId) summaryDialog.current?.focus(); }, [summaryPeriodId]);
   useEffect(() => { if (manualListing) manualListingDialog.current?.focus(); }, [manualListing]);
@@ -728,7 +732,10 @@ export function ListingObservationView(props: {
             <>
               <label>
                 业务周期
-                <input type="date" value={filters.period_start} onChange={(event) => setFilter("period_start", event.target.value)} />
+                <select value={filters.business_period} onChange={(event) => setFilter("business_period", event.target.value)}>
+                  <option value="">全部</option>
+                  {(data.available_business_periods || []).map((period) => <option value={period} key={period}>{period}</option>)}
+                </select>
               </label>
               <label>
                 业务状态
@@ -774,6 +781,14 @@ export function ListingObservationView(props: {
                   <option value="active">正常跟踪</option>
                   <option value="stopped">停止跟踪</option>
                 </select>
+              </label>
+              <label className="listing-include-history">
+                <input
+                  type="checkbox"
+                  checked={includeHistory}
+                  onChange={(event) => setIncludeHistory(event.target.checked)}
+                />
+                含历史档案
               </label>
             </>
           )}
@@ -912,6 +927,8 @@ export function ListingObservationView(props: {
                           <div className="listing-item-meta">
                             <span>首周 {listing.first_period_start}</span>
                             <span className="pill gray">{itemStatus}</span>
+                            {listing.is_history && <span className="pill gray listing-history-pill">历史档案</span>}
+                            {listing.is_shared_item && <span className="pill blue">共享·{(listing.bound_main_skus || []).length} SKU</span>}
                             <span>已复盘 {periodSummary.completedWeeks} / {periodSummary.totalWeeks} 周</span>
                           </div>
                           <details className="listing-more-menu">
@@ -924,6 +941,7 @@ export function ListingObservationView(props: {
                             </div>
                           </details>
                         </header>
+                        <ListingItemArchiveInfo listing={listing} currentSku={group.context.main_sku} />
 
                         {rows.length ? (
                           <div className="listing-period-list">
@@ -1239,8 +1257,11 @@ export function ListingObservationSummary(props: {
                       <span>负责人 {listing.salesperson_name}</span>
                       <span>首周 {listing.first_period_start}</span>
                       <span className="pill gray">{itemStatus}</span>
+                      {listing.is_history && <span className="pill gray listing-history-pill">历史档案</span>}
+                      {listing.is_shared_item && <span className="pill blue">共享·{(listing.bound_main_skus || []).length} SKU</span>}
                     </div>
                   </header>
+                  <ListingItemArchiveInfo listing={listing} currentSku={props.mainSku} />
                   {periods.length ? (
                     <div className="listing-period-list">
                       {periods.map((period) => {
@@ -1368,6 +1389,27 @@ function periodStatusClass(row: ObservationPeriodRow, listing?: ListingRecord) {
   if (row.status === "pending_review") return "amber";
   if (listing?.tracking_status === "stopped" || row.tracking_status === "stopped") return "gray";
   return "green";
+}
+
+function ListingItemArchiveInfo({ listing, currentSku }: { listing: ListingRecord; currentSku: string }) {
+  if (!listing.is_shared_item && !listing.is_history) return null;
+  const boundSkus = listing.bound_main_skus || [];
+  return (
+    <div className="listing-archive-info">
+      {listing.is_shared_item && boundSkus.length > 0 && (
+        <span className="listing-bound-skus">
+          绑定主 SKU：
+          {boundSkus.map((sku, index) => (
+            <span key={sku}>
+              {index > 0 && "，"}
+              <span className={sku === currentSku ? "listing-bound-sku-current" : ""}>{sku}</span>
+            </span>
+          ))}
+        </span>
+      )}
+      <small className="listing-archive-note">以下为该 Item（店铺+Item）汇总数据，非本 SKU 单独业绩</small>
+    </div>
+  );
 }
 
 function FieldError({ message }: { message?: string }) {

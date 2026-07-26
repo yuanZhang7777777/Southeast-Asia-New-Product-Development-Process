@@ -28,7 +28,9 @@ def get_listing_workbench(
     week_number: int | None = None,
     product_positioning: str | None = None,
     tracking_status: str | None = None,
+    business_period: str | None = None,
     only_my_tasks: bool = Query(default=False),
+    include_history: bool = Query(default=False),
     db: Session = Depends(get_db),
     auth: AuthContext | None = Depends(require_roles("operator", "manager")),
 ) -> dict:
@@ -49,6 +51,8 @@ def get_listing_workbench(
             week_number=week_number,
             product_positioning=product_positioning,
             tracking_status=tracking_status,
+            business_period=business_period,
+            include_history=include_history,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

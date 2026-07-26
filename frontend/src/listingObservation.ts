@@ -443,7 +443,7 @@ export function hasFetchedMetrics(rows: readonly { status: string }[]) {
 }
 
 export function productListingSummary<
-  TListing extends { id: string; main_sku: string; country?: string | null },
+  TListing extends { id: string; main_sku: string; country?: string | null; bound_main_skus?: readonly string[] },
   TPeriod extends { listing_record_id: string }
 >(
   data: { listing_records: readonly TListing[]; period_rows: readonly TPeriod[] },
@@ -451,7 +451,8 @@ export function productListingSummary<
   country?: string | null
 ) {
   const listings = data.listing_records.filter((listing) =>
-    listing.main_sku === mainSku && (!country || listing.country === country)
+    (listing.main_sku === mainSku || listing.bound_main_skus?.includes(mainSku))
+    && (!country || listing.country === country)
   );
   const listingIds = new Set(listings.map((listing) => listing.id));
   return { listings, periods: data.period_rows.filter((period) => listingIds.has(period.listing_record_id)) };
