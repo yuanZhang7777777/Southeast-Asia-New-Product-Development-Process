@@ -473,3 +473,13 @@ class AuditLog(TimestampMixin, Base):
     entity_type: Mapped[str] = mapped_column(String(128))
     entity_id: Mapped[str | None] = mapped_column(String(36))
     detail: Mapped[dict] = mapped_column(JSON, default=dict)
+
+
+class SchedulerJobRun(TimestampMixin, Base):
+    __tablename__ = "scheduler_job_run"
+    __table_args__ = (UniqueConstraint("job_name", "run_date", name="uq_scheduler_job_run"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    job_name: Mapped[str] = mapped_column(String(64))
+    run_date: Mapped[str] = mapped_column(String(10))
+    report: Mapped[dict] = mapped_column(JSON, default=dict)

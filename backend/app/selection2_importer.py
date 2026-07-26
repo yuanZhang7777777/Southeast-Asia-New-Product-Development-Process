@@ -163,9 +163,8 @@ def upsert_opportunity(
     existing = db.scalar(
         select(models.NewProductOpportunity).where(
             models.NewProductOpportunity.source_type == SOURCE_TYPE,
-            models.NewProductOpportunity.source_file == source_file,
             models.NewProductOpportunity.source_sheet == source_sheet,
-            models.NewProductOpportunity.source_row == source_row,
+            models.NewProductOpportunity.sub_sku == parsed["main"]["sub_sku"],
         )
     )
     data = {

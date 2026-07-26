@@ -62,6 +62,26 @@ def test_selection2_import_is_idempotent_and_keeps_multi_sales_feedback(tmp_path
     ]
 
 
+def test_selection2_reupload_with_new_file_name_updates_in_place(tmp_path: Path) -> None:
+    first_path = tmp_path / "abc123-选品2.xlsx"
+    second_path = tmp_path / "def456-选品2.xlsx"
+    build_selection2_fixture(first_path)
+    build_selection2_fixture(second_path)
+
+    first = client.post("/opportunities/import/selection2", json={"source_file": str(first_path), "source_sheet": "5.26期"})
+    second = client.post("/opportunities/import/selection2", json={"source_file": str(second_path), "source_sheet": "5.26期"})
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert first.json()["created_count"] == 1
+    assert second.json()["created_count"] == 0
+    assert second.json()["updated_count"] == 1
+
+    with SessionLocal() as db:
+        opportunity = db.query(models.NewProductOpportunity).one()
+    assert opportunity.source_file == second_path.name
+
+
 def test_selection2_upload_import_uses_browser_file(tmp_path: Path) -> None:
     workbook_path = tmp_path / "selection2_upload.xlsx"
     build_selection2_fixture(workbook_path)

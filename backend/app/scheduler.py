@@ -1,6 +1,9 @@
 import time
 from datetime import datetime
 
+from sqlalchemy import select
+
+from app import models
 from app.config import Settings, get_settings
 from app.db import SessionLocal
 from app.dingtalk_card_sender import DingTalkCardConfig, DingTalkCardSender
@@ -18,6 +21,42 @@ OPERATOR_NOTIFICATION_HOUR = 9
 MANAGER_NOTIFICATION_HOUR = 10
 RETRY_SECONDS = 300
 CHECK_SECONDS = 30
+
+JOB_PLM_SYNC = "plm_sync"
+JOB_DAILY_NOTIFICATION = "daily_notification"
+JOB_MANAGER_NOTIFICATION = "manager_notification"
+
+
+def load_last_completed_date(job_name: str) -> str | None:
+    try:
+        with SessionLocal() as db:
+            return db.scalar(
+                select(models.SchedulerJobRun.run_date)
+                .where(models.SchedulerJobRun.job_name == job_name)
+                .order_by(models.SchedulerJobRun.run_date.desc())
+                .limit(1)
+            )
+    except Exception as exc:
+        print(f"job_run_load_failed job={job_name} error={exc}", flush=True)
+        return None
+
+
+def record_job_run(job_name: str, run_date: str, report: dict[str, object] | None = None) -> None:
+    try:
+        with SessionLocal() as db:
+            existing = db.scalar(
+                select(models.SchedulerJobRun).where(
+                    models.SchedulerJobRun.job_name == job_name,
+                    models.SchedulerJobRun.run_date == run_date,
+                )
+            )
+            if existing:
+                existing.report = report or {}
+            else:
+                db.add(models.SchedulerJobRun(job_name=job_name, run_date=run_date, report=report or {}))
+            db.commit()
+    except Exception as exc:
+        print(f"job_run_record_failed job={job_name} error={exc}", flush=True)
 
 
 def plm_sync_due(now: datetime, completed_date: str | None) -> bool:
@@ -98,9 +137,9 @@ def run_thursday_notification_jobs(settings: Settings, now: datetime) -> dict[st
 def main() -> None:
     settings = get_settings()
     print(f"scheduler started for {settings.app_env}; plm_sync={settings.plm_sync_enabled}", flush=True)
-    completed_date: str | None = None
-    daily_notification_completed_date: str | None = None
-    manager_notification_completed_date: str | None = None
+    completed_date: str | None = load_last_completed_date(JOB_PLM_SYNC)
+    daily_notification_completed_date: str | None = load_last_completed_date(JOB_DAILY_NOTIFICATION)
+    manager_notification_completed_date: str | None = load_last_completed_date(JOB_MANAGER_NOTIFICATION)
     dingtalk_user_synced_at: datetime | None = None
     retry_after = 0.0
     while True:
@@ -111,6 +150,7 @@ def main() -> None:
                 file_name = run_plm_sync(settings, date_text)
                 completed_date = date_text
                 retry_after = 0.0
+                record_job_run(JOB_PLM_SYNC, date_text, {"file": file_name})
                 print(f"plm_sync_completed date={date_text} file={file_name} bloc={settings.plm_bloc_name}", flush=True)
             except Exception as exc:
                 retry_after = time.monotonic() + RETRY_SECONDS
@@ -126,6 +166,7 @@ def main() -> None:
             try:
                 report = run_daily_notification_jobs(settings, now)
                 daily_notification_completed_date = now.date().isoformat()
+                record_job_run(JOB_DAILY_NOTIFICATION, daily_notification_completed_date, dict(report))
                 print(f"daily_notification_jobs_completed report={report}", flush=True)
             except Exception as exc:
                 print(f"daily_notification_jobs_failed error={exc}", flush=True)
@@ -133,6 +174,7 @@ def main() -> None:
             try:
                 report = run_manager_notification_jobs(settings, now)
                 manager_notification_completed_date = now.date().isoformat()
+                record_job_run(JOB_MANAGER_NOTIFICATION, manager_notification_completed_date, dict(report))
                 print(f"manager_notification_jobs_completed report={report}", flush=True)
             except Exception as exc:
                 print(f"manager_notification_jobs_failed error={exc}", flush=True)

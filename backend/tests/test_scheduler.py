@@ -8,7 +8,9 @@ os.environ["DATABASE_URL"] = f"sqlite:///{Path(__file__).with_name('test_schedul
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import app.scheduler as scheduler
+from app import models
 from app.config import Settings
+from app.db import Base, SessionLocal, engine
 from app.scheduler import daily_notification_due, dingtalk_user_sync_due, manager_notification_due, plm_sync_due
 
 
@@ -44,6 +46,29 @@ def test_manager_notification_due_runs_once_after_1000_beijing_daily() -> None:
     assert not manager_notification_due(before, None)
     assert manager_notification_due(due, None)
     assert not manager_notification_due(due, "2026-07-13")
+
+
+def test_job_run_marker_persists_across_restart() -> None:
+    Base.metadata.drop_all(bind=engine)
+    Base.metadata.create_all(bind=engine)
+
+    assert scheduler.load_last_completed_date(scheduler.JOB_PLM_SYNC) is None
+    scheduler.record_job_run(scheduler.JOB_PLM_SYNC, "2026-07-24", {"file": "a.xlsx"})
+    scheduler.record_job_run(scheduler.JOB_PLM_SYNC, "2026-07-25", {"file": "b.xlsx"})
+    scheduler.record_job_run(scheduler.JOB_PLM_SYNC, "2026-07-25", {"file": "c.xlsx"})
+
+    restored = scheduler.load_last_completed_date(scheduler.JOB_PLM_SYNC)
+    assert restored == "2026-07-25"
+    assert not plm_sync_due(datetime(2026, 7, 26, 8, 30, tzinfo=ZoneInfo("Asia/Shanghai")), restored)
+
+    with SessionLocal() as db:
+        runs = (
+            db.query(models.SchedulerJobRun)
+            .filter_by(job_name=scheduler.JOB_PLM_SYNC)
+            .order_by(models.SchedulerJobRun.run_date)
+            .all()
+        )
+    assert [(run.run_date, run.report["file"]) for run in runs] == [("2026-07-24", "a.xlsx"), ("2026-07-25", "c.xlsx")]
 
 
 def test_operator_and_manager_notification_jobs_are_split(monkeypatch) -> None:
