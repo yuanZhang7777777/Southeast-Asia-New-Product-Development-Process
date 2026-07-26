@@ -14,6 +14,7 @@ FEATURE_SWITCH_SETTINGS = (
     ("AUTH_REQUIRED", "auth_required"),
     ("DINGTALK_CARD_AUTOSEND_ENABLED", "dingtalk_card_autosend_enabled"),
     ("DINGTALK_USER_SYNC_ENABLED", "dingtalk_user_sync_enabled"),
+    ("FINEBI_AUTO_PULL_ENABLED", "finebi_auto_pull_enabled"),
     ("PLM_SYNC_ENABLED", "plm_sync_enabled"),
     ("WORKFLOW_AUTOMATION_ENABLED", "workflow_automation_enabled"),
 )

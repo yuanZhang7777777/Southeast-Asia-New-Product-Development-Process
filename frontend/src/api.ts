@@ -320,6 +320,15 @@ export type FeatureSwitch = {
   enabled: boolean;
 };
 
+export type FineBIPullResult = {
+  week_label: string;
+  file: string;
+  periods: string[];
+  excluded_periods: string[];
+  summary: Record<string, number>;
+  apply_counts: Record<string, number>;
+};
+
 export type OperatorCategorySelection = {
   level1: string;
   level2?: string | null;
@@ -845,5 +854,7 @@ export const api = {
     request<ImportBatchPage>(`/admin/import-batches${query(filter)}`),
   adminDisableImportBatch: (id: string, payload: { disabled: boolean; reason?: string | null }) =>
     request<{ message: string; id?: string | null }>(`/admin/import-batches/${id}/disable`, { method: "POST", body: JSON.stringify(payload) }),
-  adminFeatureSwitches: () => request<FeatureSwitch[]>("/admin/feature-switches")
+  adminFeatureSwitches: () => request<FeatureSwitch[]>("/admin/feature-switches"),
+  adminFineBIPull: (weekLabel: string) =>
+    request<FineBIPullResult>("/admin/finebi/pull", { method: "POST", body: JSON.stringify({ week_label: weekLabel }) })
 };

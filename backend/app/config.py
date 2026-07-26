@@ -46,6 +46,12 @@ class Settings(BaseSettings):
     erp_download_list_url: str = ""
     erp_username: str = ""
     erp_password: str = ""
+    finebi_base_url: str = ""
+    finebi_username: str = ""
+    finebi_password: str = ""
+    finebi_report_id: str = ""
+    finebi_payload_file: str = ""
+    finebi_auto_pull_enabled: bool = False
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 

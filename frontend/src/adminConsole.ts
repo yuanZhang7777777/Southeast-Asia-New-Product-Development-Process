@@ -1,10 +1,11 @@
 import type { RoleMapping } from "./api";
 
-export type AdminSectionKey = "users" | "batches" | "switches";
+export type AdminSectionKey = "users" | "batches" | "finebi" | "switches";
 
 export const ADMIN_SECTIONS: { key: AdminSectionKey; label: string }[] = [
   { key: "users", label: "用户管理" },
   { key: "batches", label: "导入批次" },
+  { key: "finebi", label: "FineBI 拉取" },
   { key: "switches", label: "系统开关" }
 ];
 

@@ -1042,3 +1042,7 @@ class ImportBatchPage(BaseModel):
 class FeatureSwitchRead(BaseModel):
     name: str
     enabled: bool
+
+
+class FineBIPullRequest(BaseModel):
+    week_label: str

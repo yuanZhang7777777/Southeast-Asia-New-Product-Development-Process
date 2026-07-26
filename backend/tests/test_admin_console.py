@@ -209,6 +209,7 @@ def test_feature_switches_expose_only_switch_names_and_booleans() -> None:
         "AUTH_REQUIRED",
         "DINGTALK_CARD_AUTOSEND_ENABLED",
         "DINGTALK_USER_SYNC_ENABLED",
+        "FINEBI_AUTO_PULL_ENABLED",
         "OSS_UPLOAD_ENABLED",
         "PLM_SYNC_ENABLED",
         "WORKFLOW_AUTOMATION_ENABLED",

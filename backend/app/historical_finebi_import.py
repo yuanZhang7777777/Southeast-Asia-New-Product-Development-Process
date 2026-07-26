@@ -110,7 +110,10 @@ def read_workbench(path: Path) -> tuple[dict[tuple[str, str], dict[str, Any]], l
 
 
 def read_finebi_periods(
-    finebi_dir: Path, year: int, excluded: tuple[str, ...] = EXCLUDED_PERIODS
+    finebi_dir: Path,
+    year: int,
+    excluded: tuple[str, ...] = EXCLUDED_PERIODS,
+    include_period: str | None = None,
 ) -> tuple[dict[tuple[str, str], dict[str, dict[str, Any]]], list[str], list[str]]:
     metrics: dict[tuple[str, str], dict[str, dict[str, Any]]] = defaultdict(dict)
     periods: list[str] = []
@@ -120,7 +123,7 @@ def read_finebi_periods(
         if not match:
             continue
         period = match.group(1)
-        if period in excluded:
+        if period in excluded and period != include_period:
             skipped.append(period)
             continue
         periods.append(period)

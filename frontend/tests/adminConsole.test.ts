@@ -27,12 +27,13 @@ const mapping = (id: string, name: string, role: string) => ({
   enabled: true
 });
 
-test("三个分区固定为用户管理、导入批次、系统开关", () => {
+test("四个分区固定为用户管理、导入批次、FineBI 拉取、系统开关", () => {
   assert.deepEqual(
     ADMIN_SECTIONS.map((item) => [item.key, item.label]),
     [
       ["users", "用户管理"],
       ["batches", "导入批次"],
+      ["finebi", "FineBI 拉取"],
       ["switches", "系统开关"]
     ]
   );
