@@ -50,6 +50,7 @@ import {
   setAuthToken,
   Task
 } from "./api";
+import { AdminConsoleView } from "./AdminConsoleView";
 import { ClaimDraftState, claimSubmissionState, createClaimDraft, createClaimDraftFromLatest, formatRejectReason, parseClaimEvidenceImages, parseRejectReason, patchClaimDraftGroup, REJECT_REASON_OPTIONS } from "./claimDrafts";
 import { filterAssignmentItems, groupOperatorProfilesBySite, moveOperatorWithinSite, reorderOperatorWithinSite, sortOperatorProfiles } from "./assignmentFilters";
 import { competitorGroupForColumn, competitorGroupForLabel } from "./competitorGroups";
@@ -94,7 +95,7 @@ declare global {
 }
 
 type RoleKey = "operator" | "manager";
-type ViewKey = "dashboard" | "source" | "pool" | "assign" | "claim" | "review" | "stock" | "research" | "listing";
+type ViewKey = "dashboard" | "source" | "pool" | "assign" | "claim" | "review" | "stock" | "research" | "listing" | "admin";
 
 type ProductGroup = {
   key: string;
@@ -174,7 +175,8 @@ const viewMeta: Record<ViewKey, { title: string; desc: string }> = {
   review: { title: "主管复核", desc: "主管只能通过、确认不认领或退回补充，不允许代改运营填写内容。" },
   stock: { title: "导出中心", desc: "只导出 Excel。按子 SKU 明细出行，同一子 SKU 被不同运营认领时另起一行。" },
   research: { title: "二次调研", desc: "按主 SKU 整组处理到货后的复查；全部子 SKU 在同一界面填写，草稿自动保存。" },
-  listing: { title: "刊登与观察工作台", desc: "按主 SKU 新增店铺与 Item，并逐周期完成数据复盘。" }
+  listing: { title: "刊登与观察工作台", desc: "按主 SKU 新增店铺与 Item，并逐周期完成数据复盘。" },
+  admin: { title: "超管后台", desc: "用户启停与密码重置、导入批次停用恢复、系统开关只读查看。" }
 };
 
 const statusMeta: Record<string, { label: string; klass: string }> = {
@@ -1050,10 +1052,16 @@ function App() {
                 <LayoutDashboard size={16} />
                 商品看板
               </button>
-              <button className={activeView !== "dashboard" ? "flow-step active" : "flow-step"} onClick={() => setActiveView("pool")}>
+              <button className={activeView !== "dashboard" && activeView !== "admin" ? "flow-step active" : "flow-step"} onClick={() => setActiveView("pool")}>
                 <Database size={16} />
                 机会池流程
               </button>
+              {isSuperAdmin && (
+                <button className={activeView === "admin" ? "flow-step active" : "flow-step"} onClick={() => setActiveView("admin")}>
+                  <ShieldCheck size={16} />
+                  超管后台
+                </button>
+              )}
             </div>
             <div className="workflow-flow">
               {visibleFlow.map((item, index) => (
@@ -1070,7 +1078,7 @@ function App() {
           <span className="hub-note">当前为测试阶段：真实钉钉自动推送保持关闭</span>
         </nav>
 
-        <section className={(["claim", "research", "listing", "review"].includes(activeView) || activeView === "stock") && !detailGroup ? "layout claim-full-layout" : "layout"}>
+        <section className={(["claim", "research", "listing", "review", "admin"].includes(activeView) || activeView === "stock") && !detailGroup ? "layout claim-full-layout" : "layout"}>
           <div className="panel screen">
             <div className="screen-top">
               <div>
@@ -1253,6 +1261,7 @@ function App() {
                 onStatus={setStatusMessage}
               />
             )}
+            {activeView === "admin" && isSuperAdmin && <AdminConsoleView onStatus={setStatusMessage} />}
             {activeView === "listing" && (
               <ListingObservationView
                 key={authSession.user.id}
@@ -1274,7 +1283,7 @@ function App() {
             </div>
           </div>
 
-          {activeView !== "claim" && activeView !== "research" && activeView !== "listing" && activeView !== "stock" && activeView !== "review" && (
+          {activeView !== "claim" && activeView !== "research" && activeView !== "listing" && activeView !== "stock" && activeView !== "review" && activeView !== "admin" && (
           <aside className="side">
             <section className="panel side-card">
               <h2>
@@ -4958,6 +4967,7 @@ function roleMetrics(role: RoleKey, stats: ReturnType<typeof buildStats>): [stri
 
 function viewIcon(view: ViewKey) {
   if (view === "dashboard") return <LayoutDashboard size={16} />;
+  if (view === "admin") return <ShieldCheck size={16} />;
   const item = flowItems.find((entry) => entry.view === view);
   return item?.icon;
 }

@@ -5472,3 +5472,107 @@ th {
   min-width: 0;
   overflow-x: auto;
 }
+
+.admin-console {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+
+.admin-section-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.admin-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 10px;
+  margin: 10px 0;
+}
+
+.admin-filters label {
+  display: grid;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.admin-filters .tag {
+  align-self: center;
+}
+
+.admin-table {
+  display: grid;
+  gap: 8px;
+  overflow-x: auto;
+}
+
+.admin-user-row,
+.admin-batch-row,
+.admin-switch-row {
+  display: grid;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.admin-user-row {
+  grid-template-columns: minmax(110px, 0.9fr) 82px 82px minmax(200px, 1.3fr) 92px 190px;
+  min-width: 860px;
+}
+
+.admin-batch-row {
+  grid-template-columns: 118px minmax(130px, 1fr) minmax(170px, 1.3fr) minmax(90px, 0.7fr) 118px 92px 82px 84px;
+  min-width: 980px;
+}
+
+.admin-switch-row {
+  grid-template-columns: minmax(240px, 1fr) 60px;
+  max-width: 460px;
+}
+
+.admin-user-row.head,
+.admin-batch-row.head {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.admin-role-cell {
+  display: grid;
+  gap: 6px;
+}
+
+.admin-pager {
+  margin-top: 10px;
+}
+
+.admin-dialog-error {
+  display: block;
+  margin-top: 6px;
+  color: #dc2626;
+}
+
+.admin-password-display {
+  margin: 6px 0 10px;
+  padding: 10px 14px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 8px;
+  background: #f8fafc;
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  text-align: center;
+  user-select: all;
+  overflow-wrap: anywhere;
+}
+
+p.admin-password-warning {
+  color: #dc2626;
+  font-weight: 700;
+}

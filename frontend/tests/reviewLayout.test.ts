@@ -25,7 +25,7 @@ test("主管复核使用自身右栏时不再显示通用主管统计侧栏", ()
   const sideCondition = app.slice(app.indexOf('{activeView !== "claim"'), app.indexOf('<aside className="side">'));
 
   assert.match(sideCondition, /activeView !== "review"/);
-  assert.match(app, /\["claim", "research", "listing", "review"\]\.includes\(activeView\)/);
+  assert.match(app, /\["claim", "research", "listing", "review", "admin"\]\.includes\(activeView\)/);
 });
 
 test("主管复核按认领类型筛选并提供批量通过和拒绝", () => {

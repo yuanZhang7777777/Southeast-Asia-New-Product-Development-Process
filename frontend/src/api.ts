@@ -256,6 +256,40 @@ export type RoleMapping = {
   enabled: boolean;
 };
 
+export type AdminUser = {
+  id: string;
+  dingtalk_user_id?: string | null;
+  name: string;
+  enabled: boolean;
+  has_password: boolean;
+};
+
+export type AdminPasswordReset = {
+  status: string;
+  password: string;
+  generated: boolean;
+};
+
+export type ImportBatchPage = {
+  total: number;
+  page: number;
+  page_size: number;
+  items: ImportBatchSummary[];
+};
+
+export type AdminImportBatchFilter = {
+  page?: number;
+  page_size?: number;
+  source_type?: string;
+  business_period?: string;
+  status?: string;
+};
+
+export type FeatureSwitch = {
+  name: string;
+  enabled: boolean;
+};
+
 export type OperatorCategorySelection = {
   level1: string;
   level2?: string | null;
@@ -747,5 +781,20 @@ export const api = {
     request<OperatorAssignmentProfile>("/admin/operator-profiles", { method: "POST", body: JSON.stringify(payload) }),
   updateOperatorProfile: (id: string, payload: unknown) =>
     request<OperatorAssignmentProfile>(`/admin/operator-profiles/${id}`, { method: "PATCH", body: JSON.stringify(payload) }),
-  deleteOperatorProfile: (id: string) => request<void>(`/admin/operator-profiles/${id}`, { method: "DELETE" })
+  deleteOperatorProfile: (id: string) => request<void>(`/admin/operator-profiles/${id}`, { method: "DELETE" }),
+  adminUsers: () => request<AdminUser[]>("/admin/users"),
+  adminSetUserEnabled: (id: string, enabled: boolean) =>
+    request<{ id: string; name: string; enabled: boolean }>(`/admin/users/${id}`, { method: "PATCH", body: JSON.stringify({ enabled }) }),
+  adminResetUserPassword: (id: string, newPassword?: string) =>
+    request<AdminPasswordReset>(`/admin/users/${id}/reset-password`, {
+      method: "POST",
+      body: JSON.stringify({ new_password: newPassword || null })
+    }),
+  updateRoleMapping: (id: string, payload: { role?: string; enabled?: boolean }) =>
+    request<RoleMapping>(`/admin/role-mappings/${id}`, { method: "PATCH", body: JSON.stringify(payload) }),
+  adminImportBatches: (filter: AdminImportBatchFilter = {}) =>
+    request<ImportBatchPage>(`/admin/import-batches${query(filter)}`),
+  adminDisableImportBatch: (id: string, payload: { disabled: boolean; reason?: string | null }) =>
+    request<{ message: string; id?: string | null }>(`/admin/import-batches/${id}/disable`, { method: "POST", body: JSON.stringify(payload) }),
+  adminFeatureSwitches: () => request<FeatureSwitch[]>("/admin/feature-switches")
 };
