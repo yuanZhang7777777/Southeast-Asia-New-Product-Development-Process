@@ -53,6 +53,7 @@ import {
 import { ClaimDraftState, claimSubmissionState, createClaimDraft, createClaimDraftFromLatest, formatRejectReason, parseClaimEvidenceImages, parseRejectReason, patchClaimDraftGroup, REJECT_REASON_OPTIONS } from "./claimDrafts";
 import { filterAssignmentItems, groupOperatorProfilesBySite, moveOperatorWithinSite, reorderOperatorWithinSite, sortOperatorProfiles } from "./assignmentFilters";
 import { competitorGroupForColumn, competitorGroupForLabel } from "./competitorGroups";
+import { isHistoricalArchiveItem, snapshotDirectColumnText, structuredCompetitorRows } from "./historicalSnapshot";
 import { ImportResults, recordImportResult } from "./importResults";
 import { businessPeriodsByNewest, filterOperatorClaimRows, latestBusinessPeriod, operatorClaimStatusOptions } from "./operatorClaimFilters";
 import { groupByBusinessIdentity, normalizeSiteText } from "./opportunityGroups";
@@ -2326,10 +2327,16 @@ function ColumnRangeTable(props: { item: Opportunity; columns: string[] }) {
     .map((column) => ({
       column,
       label: headerLabel(props.item, column),
-      value: snapshotColumnText(props.item, column)
+      value: snapshotDirectColumnText(props.item, column)
     }))
     .filter((row) => row.value);
-  if (!rows.length) return <p className="muted detail-empty">暂无成本参数字段。</p>;
+  if (!rows.length) {
+    return (
+      <p className="muted detail-empty">
+        {isHistoricalArchiveItem(props.item) ? "来源无此字段：市场监控源无成本参数（AQ-BR）列位" : "暂无成本参数字段。"}
+      </p>
+    );
+  }
   return (
     <div className="table-wrap detail-table-wrap">
       <table className="detail-table">
@@ -2356,7 +2363,13 @@ function ColumnRangeTable(props: { item: Opportunity; columns: string[] }) {
 
 function CompetitorTable(props: { item: Opportunity }) {
   const rows = competitorRows(props.item);
-  if (!rows.length) return <p className="muted detail-empty">源表 Z:AN 暂无竞品链接、售价或月销。</p>;
+  if (!rows.length) {
+    return (
+      <p className="muted detail-empty">
+        {isHistoricalArchiveItem(props.item) ? "市场监控源 R~Z 上游为空" : "源表 Z:AN 暂无竞品链接、售价或月销。"}
+      </p>
+    );
+  }
   return (
     <div className="table-wrap detail-table-wrap">
       <table className="detail-table">
@@ -2454,6 +2467,8 @@ function renderMaybeLink(value: string) {
 }
 
 function competitorRows(item: Opportunity) {
+  const structured = structuredCompetitorRows(item);
+  if (structured.length) return structured;
   return competitorSpecs
     .map((spec) => ({
       label: spec.label,
