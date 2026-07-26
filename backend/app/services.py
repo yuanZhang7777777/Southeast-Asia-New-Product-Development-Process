@@ -2595,9 +2595,14 @@ def list_product_board_groups(
             models.SalesClaimForecast.created_at.asc(),
         )
     )
+    reviewed_opportunity_ids = set(db.scalars(select(models.ReviewRecord.opportunity_id).distinct()))
     groups: dict[tuple[str | None, str | None, str], dict] = {}
     for opportunity, claim in rows:
-        review = latest_review_for_claim(db, opportunity.id, claim) if claim else None
+        review = (
+            latest_review_for_claim(db, opportunity.id, claim)
+            if claim and opportunity.id in reviewed_opportunity_ids
+            else None
+        )
         status = responsibility_visible_status(opportunity, claim, review)
         pending_tasks = pending_tasks_by_opportunity.get(opportunity.id, [])
         if visible_status and status != visible_status:

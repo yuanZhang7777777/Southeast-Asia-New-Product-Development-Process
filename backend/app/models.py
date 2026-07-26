@@ -86,6 +86,7 @@ class NewProductOpportunity(TimestampMixin, Base):
     __tablename__ = "new_product_opportunity"
     __table_args__ = (
         Index("ix_opportunity_source_trace", "source_type", "source_file", "source_sheet", "source_row"),
+        Index("ix_opportunity_source_batch_sub_sku", "source_type", "batch", "sub_sku"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
@@ -139,7 +140,7 @@ class SourceRecordSnapshot(TimestampMixin, Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     import_batch_id: Mapped[str | None] = mapped_column(ForeignKey("import_batch.id"))
-    opportunity_id: Mapped[str] = mapped_column(ForeignKey("new_product_opportunity.id"))
+    opportunity_id: Mapped[str] = mapped_column(ForeignKey("new_product_opportunity.id"), index=True)
     source_file: Mapped[str | None] = mapped_column(String(255))
     source_sheet: Mapped[str | None] = mapped_column(String(128))
     source_row: Mapped[int | None] = mapped_column(Integer)

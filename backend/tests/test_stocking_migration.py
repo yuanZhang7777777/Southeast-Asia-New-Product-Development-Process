@@ -77,7 +77,7 @@ def test_stocking_workflow_migration_is_the_single_head() -> None:
     config.set_main_option("script_location", str(Path(__file__).resolve().parents[1] / "alembic"))
     script = ScriptDirectory.from_config(config)
 
-    assert script.get_heads() == ["e0f1a2b3c456"]
+    assert script.get_heads() == ["f1a2b3c4d567"]
     assert script.get_revision("e1f2a3b4c678").down_revision == "d0e2f3a4b567"
 
 
@@ -141,7 +141,7 @@ def test_sqlite_upgrade_from_previous_head_preserves_legacy_rows(tmp_path: Path,
             revision = connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
         assert request == ("request-legacy", None)
         assert export_row == ("row-legacy", None, None)
-        assert revision == "e0f1a2b3c456"
+        assert revision == "f1a2b3c4d567"
     finally:
         engine.dispose()
         get_settings.cache_clear()
@@ -185,7 +185,7 @@ def test_listing_binding_backfill_on_upgrade(tmp_path: Path, monkeypatch) -> Non
         assert binding == ("listing-legacy", "MAIN-LEGACY", None, "销售L", "platform_migrated")
         assert listing[0] == "single_binding"
         assert not listing[1]
-        assert revision == "e0f1a2b3c456"
+        assert revision == "f1a2b3c4d567"
     finally:
         engine.dispose()
         get_settings.cache_clear()

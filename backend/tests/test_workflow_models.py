@@ -134,7 +134,7 @@ def test_alembic_has_single_current_head() -> None:
     config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
     config.set_main_option("script_location", str(Path(__file__).resolve().parents[1] / "alembic"))
 
-    assert ScriptDirectory.from_config(config).get_current_head() == "e0f1a2b3c456"
+    assert ScriptDirectory.from_config(config).get_current_head() == "f1a2b3c4d567"
 
 
 def test_stocking_claim_statuses_are_explicit() -> None:

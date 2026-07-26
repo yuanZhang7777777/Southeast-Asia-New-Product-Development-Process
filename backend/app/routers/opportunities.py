@@ -318,20 +318,28 @@ def period_file_name(prefix: str, source_sheet: str | None, import_batch_id: str
 
 
 def attach_latest_summaries(db: Session, opportunities: list[models.NewProductOpportunity]) -> None:
-    for opportunity in opportunities:
-        claim = db.scalar(
+    opportunity_ids = [opportunity.id for opportunity in opportunities]
+    latest_claims: dict[str, models.SalesClaimForecast] = {}
+    latest_reviews: dict[str, models.ReviewRecord] = {}
+    if opportunity_ids:
+        for item in db.scalars(
             select(models.SalesClaimForecast)
             .where(
-                models.SalesClaimForecast.opportunity_id == opportunity.id,
+                models.SalesClaimForecast.opportunity_id.in_(opportunity_ids),
                 models.SalesClaimForecast.source_column == "platform",
             )
             .order_by(models.SalesClaimForecast.last_updated_at.desc(), models.SalesClaimForecast.created_at.desc())
-        )
-        review = db.scalar(
+        ):
+            latest_claims.setdefault(item.opportunity_id, item)
+        for item in db.scalars(
             select(models.ReviewRecord)
-            .where(models.ReviewRecord.opportunity_id == opportunity.id)
+            .where(models.ReviewRecord.opportunity_id.in_(opportunity_ids))
             .order_by(models.ReviewRecord.created_at.desc())
-        )
+        ):
+            latest_reviews.setdefault(item.opportunity_id, item)
+    for opportunity in opportunities:
+        claim = latest_claims.get(opportunity.id)
+        review = latest_reviews.get(opportunity.id)
         opportunity.latest_claim_record_id = claim.id if claim else None
         opportunity.latest_claim_result = claim.claim_result if claim else None
         opportunity.latest_claim_salesperson = claim.salesperson_name if claim else None
