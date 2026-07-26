@@ -169,7 +169,7 @@ def test_manual_listing_batch_creates_new_main_sku_without_claim_source() -> Non
         assert listing.site == "PH"
         assert listing.salesperson_name == "销售A"
         assert db.query(models.ItemObservationPeriod).filter_by(listing_record_id=listing.id).count() == 4
-        assert db.query(models.AuditLog).filter_by(action="listing.created", target_id=listing.id).count() == 1
+        assert db.query(models.AuditLog).filter_by(action="listing.created", entity_id=listing.id).count() == 1
 
     workbench = client.get("/listing-workbench", headers=headers).json()
     assert any(item["main_sku"] == "MAIN-MANUAL" for item in workbench["listing_records"])
