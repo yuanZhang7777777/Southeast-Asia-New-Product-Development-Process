@@ -14,6 +14,7 @@ RUN pip install --no-cache-dir --upgrade pip && pip install --no-cache-dir -r re
 COPY alembic.ini .
 COPY alembic ./alembic
 COPY app ./app
+COPY config ./config
 
 EXPOSE 8000
 
