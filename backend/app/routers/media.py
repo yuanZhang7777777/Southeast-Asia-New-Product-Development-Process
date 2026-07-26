@@ -5,7 +5,7 @@ from app.oss_storage import read_oss_object_by_public_url
 router = APIRouter(prefix="/media", tags=["media"])
 
 
-THUMB_PROCESS = "image/resize,w_400"
+THUMB_PROCESS = "image/resize,w_400/format,jpg/quality,q_80"
 
 
 @router.get("/oss-image")

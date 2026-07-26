@@ -631,7 +631,7 @@ function App() {
   }, [authSession?.access_token, activeRole]);
 
   useEffect(() => {
-    if (activeView !== "dashboard" && !visibleFlow.some((item) => item.view === activeView)) {
+    if (activeView !== "dashboard" && activeView !== "admin" && !visibleFlow.some((item) => item.view === activeView)) {
       setActiveView(activeRole === "manager" ? "source" : "pool");
     }
   }, [activeRole, activeView, visibleFlow]);
