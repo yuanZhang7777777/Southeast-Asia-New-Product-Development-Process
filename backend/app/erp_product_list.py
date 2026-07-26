@@ -28,25 +28,30 @@ PACKAGING_DIMENSIONS = (
     "产品包装后体积高(cm)",
 )
 REQUIRED_HEADERS = ("sku", "主SKU", *PRODUCT_DIMENSIONS, *PACKAGING_DIMENSIONS)
-PORTION_FIELDS = (
-    "sku,mainsku,pretendlength,pretendwidth,pretendlheight,"
-    "actualLength,actualWidth,actualHeight"
-)
+# 2026-07-26 实抓：真实接口要求数组，不是逗号字符串。
+PORTION_FIELDS = [
+    "sku", "mainsku", "pretendlength", "pretendwidth", "pretendlheight",
+    "actualLength", "actualWidth", "actualHeight",
+]
 POLL_ATTEMPTS = 30
 POLL_INTERVAL_SECONDS = 2
 
 
 def calculate_unit_volume(row: Mapping[str, object]) -> float | None:
-    packaging = _dimensions(row, PACKAGING_DIMENSIONS)
-    product = _dimensions(row, PRODUCT_DIMENSIONS)
-    selected = packaging or product
+    selected = selected_dimensions(row)
     if selected is None:
         return None
     return round(selected[0] * selected[1] * selected[2] / 1_000_000, 12)
 
 
-def parse_product_list_workbook(content: bytes, requested_skus: list[str]) -> dict[str, float | None]:
-    result = dict.fromkeys(requested_skus)
+def selected_dimensions(row: Mapping[str, object]) -> tuple[float, float, float] | None:
+    packaging = _dimensions(row, PACKAGING_DIMENSIONS)
+    product = _dimensions(row, PRODUCT_DIMENSIONS)
+    return packaging or product
+
+
+def parse_product_list_details(content: bytes, requested_skus: list[str]) -> dict[str, dict[str, float] | None]:
+    result: dict[str, dict[str, float] | None] = dict.fromkeys(requested_skus)
     workbook = load_workbook(BytesIO(content), read_only=True, data_only=True)
     try:
         worksheet = workbook.active
@@ -57,15 +62,42 @@ def parse_product_list_workbook(content: bytes, requested_skus: list[str]) -> di
         for values in rows:
             row = dict(zip(headers, values))
             sku = str(row.get("sku") or "").strip()
-            if sku in result:
-                result[sku] = calculate_unit_volume(row)
+            if sku not in result:
+                continue
+            dimensions = selected_dimensions(row)
+            volume = calculate_unit_volume(row)
+            if dimensions is None and volume is None:
+                result[sku] = None
+                continue
+            detail: dict[str, float] = {}
+            if volume is not None:
+                detail["unit_volume"] = volume
+            if dimensions is not None:
+                detail["length_cm"], detail["width_cm"], detail["height_cm"] = dimensions
+            result[sku] = detail
         return result
     finally:
         workbook.close()
 
 
+def parse_product_list_workbook(content: bytes, requested_skus: list[str]) -> dict[str, float | None]:
+    details = parse_product_list_details(content, requested_skus)
+    return {
+        sku: (detail or {}).get("unit_volume") if detail is not None else None
+        for sku, detail in details.items()
+    }
+
+
 def fetch_product_volumes(skus: list[str], settings: Settings) -> dict[str, float | None]:
-    fallback = dict.fromkeys(skus)
+    details = fetch_product_details(skus, settings)
+    return {
+        sku: (detail or {}).get("unit_volume") if detail is not None else None
+        for sku, detail in details.items()
+    }
+
+
+def fetch_product_details(skus: list[str], settings: Settings) -> dict[str, dict[str, float] | None]:
+    fallback: dict[str, dict[str, float] | None] = dict.fromkeys(skus)
     if not skus:
         return fallback
 
@@ -127,7 +159,7 @@ def fetch_product_volumes(skus: list[str], settings: Settings) -> dict[str, floa
                 candidate_skus = _product_list_skus(content)
                 if candidate_skus != requested_skus:
                     continue
-                return parse_product_list_workbook(content, skus)
+                return parse_product_list_details(content, skus)
             if attempt + 1 < POLL_ATTEMPTS:
                 phase = "poll"
                 time.sleep(POLL_INTERVAL_SECONDS)

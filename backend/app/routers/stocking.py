@@ -224,12 +224,15 @@ def preview_stocking_volume(
     skus = list(dict.fromkeys(sku.strip() for sku in payload.skus if sku.strip()))
     if not skus:
         raise HTTPException(status_code=400, detail="at least one sub_sku is required")
-    volumes = erp_product_list.fetch_product_volumes(skus, settings)
+    details = erp_product_list.fetch_product_details(skus, settings)
     return [
         schemas.VolumePreviewRead(
             sub_sku=sku,
-            unit_volume=volumes.get(sku),
-            status="resolved" if volumes.get(sku) is not None else "manual_required",
+            unit_volume=(details.get(sku) or {}).get("unit_volume"),
+            length_cm=(details.get(sku) or {}).get("length_cm"),
+            width_cm=(details.get(sku) or {}).get("width_cm"),
+            height_cm=(details.get(sku) or {}).get("height_cm"),
+            status="resolved" if (details.get(sku) or {}).get("unit_volume") is not None else "manual_required",
         )
         for sku in skus
     ]

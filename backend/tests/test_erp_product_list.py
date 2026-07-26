@@ -157,10 +157,10 @@ def test_fetch_product_volumes_uses_open_login_and_new_successful_product_list_e
     assert create_call[1] == {
         "skuList": ["GSHWAC225ND", "MISSING"],
         "isfile": "0",
-        "portionFieldSet": (
-            "sku,mainsku,pretendlength,pretendwidth,pretendlheight,"
-            "actualLength,actualWidth,actualHeight"
-        ),
+        "portionFieldSet": [
+            "sku", "mainsku", "pretendlength", "pretendwidth", "pretendlheight",
+            "actualLength", "actualWidth", "actualHeight",
+        ],
     }
     assert create_call[2] == {"Authorization": "temporary-token"}
     assert poll_call[1] == {"pageNum": 1, "pageSize": 20}
@@ -300,7 +300,7 @@ def test_runtime_failures_log_safe_phase_and_exception_class(monkeypatch, caplog
         f"Authorization: {secret_token} Cookie=session-secret"
     )
     list_calls = 0
-    original_parser = erp_product_list.parse_product_list_workbook
+    original_parser = erp_product_list.parse_product_list_details
 
     def fail() -> None:
         raise SensitiveFailure(secret_message)
@@ -339,14 +339,14 @@ def test_runtime_failures_log_safe_phase_and_exception_class(monkeypatch, caplog
             fail()
         return _workbook_bytes([["SKU-1", "MAIN-1", 1, 1, 1, 2, 2, 2]])
 
-    def fake_parser(content: bytes, requested_skus: list[str]) -> dict[str, float | None]:
+    def fake_parser(content: bytes, requested_skus: list[str]):
         if failure_phase == "parse":
             fail()
         return original_parser(content, requested_skus)
 
     monkeypatch.setattr(erp_product_list, "_post_json", fake_post_json)
     monkeypatch.setattr(erp_product_list, "_download_bytes", fake_download_bytes)
-    monkeypatch.setattr(erp_product_list, "parse_product_list_workbook", fake_parser)
+    monkeypatch.setattr(erp_product_list, "parse_product_list_details", fake_parser)
     caplog.set_level(logging.WARNING, logger=erp_product_list.__name__)
 
     result = erp_product_list.fetch_product_volumes(
