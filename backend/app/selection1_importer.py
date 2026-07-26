@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from app import models, schemas, services
 from app.excel_images import images_by_row, save_product_image
-from app.field_mapping import normalize_header
+from app.field_mapping import json_safe_value, normalize_header
 from app.site_codes import normalize_site_code
 from app.workbook_sheets import resolve_sheet_name
 
@@ -230,8 +230,8 @@ def resolve_source_file(source_file: str | None) -> Path:
 
 
 def parse_selection1_row(row: tuple[Any, ...], headers_by_column: dict[str, list[str]] | None = None) -> dict[str, Any] | None:
-    raw_values = {get_column_letter(index): clean_cell(value) for index, value in enumerate(row, start=1)}
-    values = {column: clean_cell(cell_value(row, column)) for column in SNAPSHOT_COLUMNS}
+    raw_values = {get_column_letter(index): json_safe_value(clean_cell(value)) for index, value in enumerate(row, start=1)}
+    values = {column: json_safe_value(clean_cell(cell_value(row, column))) for column in SNAPSHOT_COLUMNS}
     headers = headers_by_column or {}
     main = parse_main_fields(raw_values, values, headers)
     main_sku = text_value(main["main_sku"])

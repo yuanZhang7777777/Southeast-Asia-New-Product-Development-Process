@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from app import models, schemas, services
 from app.excel_images import images_by_row, save_product_image
-from app.field_mapping import normalize_header, number_value, text_value
+from app.field_mapping import json_safe_value, normalize_header, number_value, text_value
 from app.workbook_sheets import resolve_sheet_name
 from app.workflow_status import OPPORTUNITY_ASSIGNED, OPPORTUNITY_PENDING_ASSIGNMENT, TASK_PENDING
 
@@ -129,8 +129,8 @@ def resolve_source_file(source_file: str | None) -> Path:
 
 
 def parse_selection2_row(row: tuple[Any, ...], headers_by_column: dict[str, list[str]] | None = None) -> dict[str, Any] | None:
-    raw_values = {get_column_letter(index): cell_value(row, get_column_letter(index)) for index in range(1, len(row) + 1)}
-    values = {column: cell_value(row, column) for column in SNAPSHOT_COLUMNS}
+    raw_values = {get_column_letter(index): json_safe_value(cell_value(row, get_column_letter(index))) for index in range(1, len(row) + 1)}
+    values = {column: json_safe_value(cell_value(row, column)) for column in SNAPSHOT_COLUMNS}
     sub_sku = text_value(values["C"])
     if not sub_sku:
         return None

@@ -336,6 +336,28 @@ def test_selection1_import_matches_current_pricing_headers_at_aj_and_am(tmp_path
     assert opportunity.snapshot["cells"]["AR"] == 385.896352293578
 
 
+def test_selection1_import_tolerates_datetime_cells(tmp_path: Path) -> None:
+    from datetime import datetime
+
+    from openpyxl import load_workbook
+
+    workbook_path = tmp_path / "selection1_datetime.xlsx"
+    build_selection1_fixture(workbook_path)
+    workbook = load_workbook(workbook_path)
+    workbook["W27"]["AY3"] = datetime(2026, 5, 19, 0, 0, 0)
+    workbook.save(workbook_path)
+
+    response = client.post(
+        "/opportunities/import/selection1",
+        json={"source_file": str(workbook_path), "source_sheet": "W27"},
+    )
+
+    assert response.status_code == 200
+    with SessionLocal() as db:
+        opportunity = db.query(models.NewProductOpportunity).one()
+    assert opportunity.snapshot["cells"]["AY"] == "2026-05-19 00:00:00"
+
+
 def build_selection1_fixture(
     path: Path,
     image_path: Path | None = None,

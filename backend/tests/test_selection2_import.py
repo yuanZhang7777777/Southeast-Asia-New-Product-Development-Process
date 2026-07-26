@@ -165,6 +165,28 @@ def test_selection2_clean_import_has_no_prefill_claims(tmp_path: Path) -> None:
         assert db.query(models.FlowTask).count() == 2
 
 
+def test_selection2_import_tolerates_datetime_cells(tmp_path: Path) -> None:
+    from datetime import datetime
+
+    from openpyxl import load_workbook
+
+    workbook_path = tmp_path / "selection2_datetime.xlsx"
+    build_selection2_fixture(workbook_path)
+    workbook = load_workbook(workbook_path)
+    workbook["5.26期"]["AK2"] = datetime(2026, 5, 19, 0, 0, 0)
+    workbook.save(workbook_path)
+
+    response = client.post(
+        "/opportunities/import/selection2",
+        json={"source_file": str(workbook_path), "source_sheet": "5.26期"},
+    )
+
+    assert response.status_code == 200
+    with SessionLocal() as db:
+        opportunity = db.query(models.NewProductOpportunity).one()
+    assert opportunity.snapshot["cells"]["AK"] == "2026-05-19 00:00:00"
+
+
 def build_selection2_fixture(path: Path, image_path: Path | None = None) -> None:
     workbook = Workbook()
     worksheet = workbook.active
