@@ -352,7 +352,7 @@ test("刊登观察工作台使用固定操作区和分组卡片且不再依赖�
   assert.match(listingObservationViewSource, /listing-item-card/);
   assert.match(listingObservationViewSource, /提交选中周记录（\{visibleSelectedIds\.length\}）/);
   assert.match(listingObservationViewSource, /observationPeriodDisplay\(row\)/);
-  assert.match(listingObservationViewSource, /const itemStatusRows = sortStartedObservationPeriods\(data\.period_rows\.filter\(\(row\) => row\.listing_record_id === listing\.id\)\);/);
+  assert.match(listingObservationViewSource, /const itemStatusRows = sortStartedObservationPeriods\(periodRowsByListing\.get\(listing\.id\) \|\| \[\]\);/);
   assert.match(listingObservationViewSource, /itemStatus: observationItemStatusLabel\(listing, itemStatusRows\)/);
   assert.doesNotMatch(listingStylesSource, /min-width:\s*1900px/);
   assert.doesNotMatch(listingObservationViewSource, /已有刊登记录/);

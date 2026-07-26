@@ -22,28 +22,30 @@ export function groupByBusinessIdentity<T extends OpportunityGroupItem>(items: r
   return Array.from(groups, ([key, groupItems]) => ({ key, items: groupItems }));
 }
 
+// 别名表提到模块级：normalizeSiteText 在大列表匹配里按行调用，避免每次调用重建对象。
+const siteAliases: Record<string, string> = {
+  菲律宾: "PH",
+  菲: "PH",
+  PH: "PH",
+  泰国: "TH",
+  泰: "TH",
+  TH: "TH",
+  越南: "VN",
+  越: "VN",
+  VN: "VN",
+  马来西亚: "MY",
+  马来: "MY",
+  MY: "MY",
+  新加坡: "SG",
+  SG: "SG",
+  印度尼西亚: "ID",
+  印尼: "ID",
+  ID: "ID"
+};
+
 export function normalizeSiteText(value?: string | null) {
   const text = value?.trim();
   if (!text) return "";
   const upper = text.toUpperCase();
-  const aliases: Record<string, string> = {
-    菲律宾: "PH",
-    菲: "PH",
-    PH: "PH",
-    泰国: "TH",
-    泰: "TH",
-    TH: "TH",
-    越南: "VN",
-    越: "VN",
-    VN: "VN",
-    马来西亚: "MY",
-    马来: "MY",
-    MY: "MY",
-    新加坡: "SG",
-    SG: "SG",
-    印度尼西亚: "ID",
-    印尼: "ID",
-    ID: "ID"
-  };
-  return aliases[text] || aliases[upper] || upper;
+  return siteAliases[text] || siteAliases[upper] || upper;
 }

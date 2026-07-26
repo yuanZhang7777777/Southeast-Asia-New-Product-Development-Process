@@ -56,7 +56,9 @@ test("刊登和观察的 SKU 可进入商品详情且有图时显示缩略图", 
 
 test("周期观察折叠主行直接展示 Item 当前状态", () => {
   assert.match(listingSource, /const itemSummaries = group\.listings\.map/);
-  assert.match(listingSource, /const itemStatusRows = sortStartedObservationPeriods\(data\.period_rows\.filter\(\(row\) => row\.listing_record_id === listing\.id\)\);/);
+  // Item 状态取全量 period_rows（经 periodRowsByListing 预索引），不受当前分组筛选影响。
+  assert.match(listingSource, /const itemStatusRows = sortStartedObservationPeriods\(periodRowsByListing\.get\(listing\.id\) \|\| \[\]\);/);
+  assert.match(listingSource, /for \(const row of data\.period_rows\)/);
   assert.match(listingSource, /className="listing-group-status-strip"/);
   assert.match(listingSource, /itemSummaries\.slice\(0, 3\)\.map/);
   assert.match(listingSource, /className="listing-group-status-chip"/);

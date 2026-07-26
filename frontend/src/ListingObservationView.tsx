@@ -73,6 +73,9 @@ type ManualListingDraft = ListingDraft & {
 
 type ManualListingErrors = Partial<Record<keyof ManualListingDraft, string>>;
 
+// 历史档案导入后单页可达上千张主 SKU 卡，一次性渲染会卡死页面；默认渲染前 N 张，点击"展开更多"递增。
+const CARD_RENDER_STEP = 50;
+
 const DEFAULT_FILTERS: WorkbenchFilters = {
   business_status: "all",
   business_period: "",
@@ -109,6 +112,7 @@ export function ListingObservationView(props: {
   const [scenario, setScenario] = useState<"listing" | "observation">("observation");
   const [correctingPeriods, setCorrectingPeriods] = useState<string[]>([]);
   const [expandedGroups, setExpandedGroups] = useState<string[]>([]);
+  const [cardLimit, setCardLimit] = useState(CARD_RENDER_STEP);
   const [loading, setLoading] = useState(false);
   const [listingDrafts, setListingDrafts] = useState<Record<string, ListingDraft[]>>({});
   const [listingErrors, setListingErrors] = useState<Record<string, ListingDraftErrors[]>>({});
@@ -214,10 +218,13 @@ export function ListingObservationView(props: {
   useEffect(() => { if (editingListing) editDialog.current?.focus(); }, [editingListing?.record.id]);
   useEffect(() => { if (voidingListing) voidDialog.current?.focus(); }, [voidingListing?.record.id]);
 
-  const effectiveFilters = {
+  // 必须 useMemo：每次渲染新建对象会击穿下方 visibleGroups 的缓存，导致大列表整表重算。
+  const effectiveFilters = useMemo(() => ({
     ...(props.role === "manager" ? filters : { ...filters, salesperson_name: "" }),
     ...(scenario === "listing" && { shop: "", period_start: "", status: "", week_number: "" as const, product_positioning: "", tracking_status: "" })
-  };
+  }), [filters, props.role, scenario]);
+  // 筛选或场景变化后回到第一屏，避免沿用上一组条件的展开数量。
+  useEffect(() => { setCardLimit(CARD_RENDER_STEP); }, [effectiveFilters, includeHistory]);
   const groups = useMemo(() => buildListingWorkbenchGroups(
     data.pending_listing_tasks,
     data.listing_records,
@@ -280,6 +287,27 @@ export function ListingObservationView(props: {
     () => new Map(data.listing_records.map((listing) => [listing.id, listing])),
     [data.listing_records]
   );
+  // 周数据按 listing 预索引：卡片渲染逐 Item 取周记录，避免每个 Item 全表扫描 period_rows（O(n²)）。
+  const periodRowsByListing = useMemo(() => {
+    const index = new Map<string, ObservationPeriodRow[]>();
+    for (const row of data.period_rows) {
+      const rows = index.get(row.listing_record_id);
+      if (rows) rows.push(row);
+      else index.set(row.listing_record_id, [row]);
+    }
+    return index;
+  }, [data.period_rows]);
+  // 商品详情链接按 主SKU|国家 预索引，避免每张卡片线性扫描全部商机分组。
+  const productLinkIndex = useMemo(() => {
+    const index = new Map<string, ListingProductLink[]>();
+    for (const link of props.productLinks) {
+      const key = `${link.main_sku}|${normalizeSiteText(link.country)}`;
+      const links = index.get(key);
+      if (links) links.push(link);
+      else index.set(key, [link]);
+    }
+    return index;
+  }, [props.productLinks]);
   const editableRows = visibleRows.filter((row) => canEditObservationPeriod(row, listingById.get(row.listing_record_id), correctingPeriods.includes(row.id)));
   const pendingReviewIds = editableRows.filter((row) => row.status === "pending_review").map((row) => row.id);
   const visibleSelectedIds = visibleSelectedPeriodIds(selectedPeriods, editableRows);
@@ -843,12 +871,15 @@ export function ListingObservationView(props: {
       <div id="listing-workbench-panel" className="listing-workbench-panel listing-workbench-results">
         {props.canManage && props.role === "operator" && !props.operatorName ? (
           <div className="empty-state">请先选择运营</div>
-        ) : visibleGroups.length ? visibleGroups.map((group) => {
+        ) : visibleGroups.length ? <>{visibleGroups.slice(0, cardLimit).map((group) => {
           const expanded = expandedGroups.includes(group.context.task_key);
-          const productLink = findListingProductLink(props.productLinks, group.context.main_sku, group.context.country, group.context.business_period);
+          const productLink = findListingProductLink(
+            productLinkIndex.get(`${group.context.main_sku}|${normalizeSiteText(group.context.country)}`) || [],
+            group.context.business_period
+          );
           const itemSummaries = group.listings.map((listing) => {
             const rows = sortStartedObservationPeriods(group.periodRows.filter((row) => row.listing_record_id === listing.id));
-            const itemStatusRows = sortStartedObservationPeriods(data.period_rows.filter((row) => row.listing_record_id === listing.id));
+            const itemStatusRows = sortStartedObservationPeriods(periodRowsByListing.get(listing.id) || []);
             return {
               listing,
               rows,
@@ -1060,7 +1091,16 @@ export function ListingObservationView(props: {
               )}
             </section>
           );
-        }) : (
+        })}
+        {visibleGroups.length > cardLimit && (
+          <button
+            className="btn listing-load-more"
+            type="button"
+            onClick={() => setCardLimit((current) => current + CARD_RENDER_STEP)}
+          >
+            展开更多（已显示 {cardLimit} / {visibleGroups.length} 个主 SKU）
+          </button>
+        )}</> : (
           <div className="empty-state">
             {filters.business_status === "pending_listing"
               ? "当前没有待刊登主 SKU，可选择全部查看观察记录"
@@ -1435,14 +1475,12 @@ function FieldError({ message }: { message?: string }) {
   return message ? <small className="listing-field-error">{message}</small> : null;
 }
 
+// 传入的 links 已按 主SKU|国家 预过滤（productLinkIndex），这里只做业务期优先选择。
 function findListingProductLink(
   links: readonly ListingProductLink[],
-  mainSku: string,
-  country?: string | null,
   businessPeriod?: string | null
 ) {
-  const sameProduct = links.filter((link) => link.main_sku === mainSku && normalizeSiteText(link.country) === normalizeSiteText(country));
-  return sameProduct.find((link) => businessPeriod && link.business_period === businessPeriod) || sameProduct[0];
+  return links.find((link) => businessPeriod && link.business_period === businessPeriod) || links[0];
 }
 
 function unique(values: string[]) {

@@ -4269,6 +4269,11 @@ th {
   padding: 12px 4px 20px 0;
 }
 
+.listing-load-more {
+  justify-self: center;
+  padding: 8px 24px;
+}
+
 .listing-filters,
 .listing-advanced-filters {
   display: flex;

@@ -656,11 +656,15 @@ function isObservationReviewDraft(value: unknown): value is ObservationReviewDra
     && typeof value.four_week_summary === "string";
 }
 
+// Intl.DateTimeFormat 构造开销大且被排序/过滤按行调用（默认参数逐次触发），缓存实例只保留 format 调用。
+let shanghaiDateFormatter: Intl.DateTimeFormat | null = null;
+
 function shanghaiDateText() {
-  return new Intl.DateTimeFormat("en-CA", {
+  shanghaiDateFormatter ||= new Intl.DateTimeFormat("en-CA", {
     timeZone: "Asia/Shanghai",
     year: "numeric",
     month: "2-digit",
     day: "2-digit"
-  }).format(new Date());
+  });
+  return shanghaiDateFormatter.format(new Date());
 }

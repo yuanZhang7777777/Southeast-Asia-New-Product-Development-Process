@@ -2169,7 +2169,7 @@ def list_listing_workbench(
 
 
 def listing_summary(db: Session, main_sku: str, owner: str | None = None, country: str | None = None) -> dict:
-    result = list_listing_workbench(db, owner=owner, country=country, include_history=True)
+    # 商品详情只看单个主 SKU：直接按 SKU（含绑定关系）查库，避免整表拉全部刊登与周数据再丢弃。
     bound_listing_ids = set(
         db.scalars(
             select(models.ListingSkuBinding.listing_record_id).where(
@@ -2177,15 +2177,38 @@ def listing_summary(db: Session, main_sku: str, owner: str | None = None, countr
             )
         )
     )
-    listing_ids = {
-        item["id"]
-        for item in result["listing_records"]
-        if item["main_sku"] == main_sku or item["id"] in bound_listing_ids
-    }
+    statement = select(models.ListingRecord).where(
+        or_(
+            models.ListingRecord.main_sku == main_sku,
+            models.ListingRecord.id.in_(bound_listing_ids),
+        )
+    )
+    if owner:
+        statement = statement.where(models.ListingRecord.salesperson_name == owner)
+    if country:
+        statement = statement.where(models.ListingRecord.country == country)
+    listings = list(db.scalars(statement.order_by(models.ListingRecord.created_at.desc())))
+    listing_by_id = {item.id: item for item in listings}
+    periods = list(
+        db.scalars(
+            select(models.ItemObservationPeriod)
+            .where(models.ItemObservationPeriod.listing_record_id.in_(list(listing_by_id)))
+            .order_by(models.ItemObservationPeriod.period_start, models.ItemObservationPeriod.week_number)
+        )
+    )
+    source_context = listing_source_context(db, listings)
+    positioning_defaults = observation_positioning_defaults(db, [item.id for item in listings], source_context)
     return {
         "pending_listing_tasks": [],
-        "listing_records": [item for item in result["listing_records"] if item["id"] in listing_ids],
-        "period_rows": [item for item in result["period_rows"] if item["listing_record_id"] in listing_ids],
+        "listing_records": [listing_record_read(item, source_context[item.id]) for item in listings],
+        "period_rows": [
+            observation_period_read(
+                period,
+                listing_by_id[period.listing_record_id],
+                positioning_defaults.get(period.id),
+            )
+            for period in periods
+        ],
     }
 
 
