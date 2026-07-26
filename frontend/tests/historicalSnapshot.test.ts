@@ -205,12 +205,13 @@ test("选品1历史新世代 fields_by_cell 按 R1 分组归入板块且列序�
   const sections = historyFieldsByCellSections(historySelection1NewGenItem);
   assert.ok(sections);
   assert.deepEqual(sections.development.map((field) => field.column), ["N", "Q"]);
-  assert.deepEqual(sections.market.map((field) => field.column), ["AA", "AB", "AC", "AM", "AN", "AO", "AP"]);
-  assert.deepEqual(sections.pricing.map((field) => field.column), ["BP"]);
+  assert.deepEqual(sections.market.map((field) => field.column), ["AA", "AB", "AC", "AM", "AN", "AO"]);
+  // AP 参考单销虽被 R1 前向填充打上"市场调研"分组，但按 2026-07 用户口径定价类表头归价格参考。
+  assert.deepEqual(sections.pricing.map((field) => field.column), ["AP", "BP"]);
   assert.deepEqual(sections.cost.map((field) => field.column), ["AX", "BZ"]);
   assert.deepEqual(sections.other.map((field) => field.column), ["A", "BU"]);
   // 空值（CA）跳过，数字 0（BP）保留。
-  assert.equal(sections.pricing[0].value, "0");
+  assert.equal(sections.pricing[1].value, "0");
   assert.deepEqual(sections.development[0], { column: "N", label: "产品规格", group: "开发询价", value: "箱规：42*32*28CM 50pcs" });
 });
 
@@ -232,7 +233,8 @@ test("市场调研派生识别 链接/售价/月销 三元组为竞品行，识�
     { label: "最低价", linkColumn: "AA", priceColumn: "AB", salesColumn: "AC", link: "https://shopee.ph/lowest", price: "331", sales: "2" },
     { label: "新晋", linkColumn: "AM", priceColumn: "AN", salesColumn: "AO", link: "https://shopee.ph/new", price: "429", sales: "499" }
   ]);
-  assert.deepEqual(view.extras.map((field) => field.column), ["AP"]);
+  // AP 参考单销已改归价格参考板块，市场调研不再留通用字段。
+  assert.deepEqual(view.extras.map((field) => field.column), []);
 });
 
 test("旧世代市场调研无链接值时全部走通用标签值列表", () => {
@@ -241,6 +243,33 @@ test("旧世代市场调研无链接值时全部走通用标签值列表", () =>
   const view = historyMarketView(sections.market);
   assert.deepEqual(view.competitors, []);
   assert.deepEqual(view.extras.map((field) => field.column), ["N", "O"]);
+});
+
+test("定价类表头前向填充成市场调研分组时归价格参考，含竞品表头与无分组总结不受影响", () => {
+  const item = {
+    source_type: "history_selection1",
+    snapshot: {
+      archive_type: "historical_selection1",
+      fields_by_cell: {
+        AB: { header: "竞品单价\n（链接1）\n(比索）", group: "Shopee菲律宾市场调研", value: 120 },
+        AC: { header: "竞品月销\n（链接1）", group: "Shopee菲律宾市场调研", value: 30 },
+        AP: { header: "参考单销", group: "Shopee菲律宾市场调研", value: 6.68 },
+        AQ: { header: "推广期定价", group: "Shopee菲律宾市场调研", value: 199 },
+        AR: { header: "一次毛利额", group: "Shopee菲律宾市场调研", value: 35.2 },
+        AS: { header: "稳定期利润率", group: "Shopee菲律宾市场调研", value: 0.21 },
+        AT: { header: "预估单销", group: "Shopee菲律宾市场调研", value: 3.5 },
+        BS: { header: "销售反馈总结", group: null, value: "四周销量平稳" }
+      }
+    }
+  };
+  const sections = historyFieldsByCellSections(item);
+  assert.ok(sections);
+  // 财务列（定价/毛利/利润率/单销）按用户口径进价格参考，不再落市场调研通用表。
+  assert.deepEqual(sections.pricing.map((field) => field.column), ["AP", "AQ", "AR", "AS", "AT"]);
+  // 竞品单价/竞品月销仍留在市场调研，不被定价表头判定误吸。
+  assert.deepEqual(sections.market.map((field) => field.column), ["AB", "AC"]);
+  // 销售反馈总结等无分组总结类字段落"其他源表字段"。
+  assert.deepEqual(sections.other.map((field) => field.column), ["BS"]);
 });
 
 test("认领区与总结列不因前向填充分组混进成本参数板块", () => {

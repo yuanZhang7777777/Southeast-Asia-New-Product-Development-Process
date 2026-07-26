@@ -329,6 +329,10 @@ test("Item 摘要显示当前周次或终止态，已开始周期当前优先", 
   assert.deepEqual(sortStartedObservationPeriods(rows, "2026-07-24").map((row) => row.id), ["week-2", "week-1"]);
   assert.equal(observationItemStatusLabel(listingRecord({ tracking_status: "stopped" }), rows, "2026-07-24"), "停止跟踪");
   assert.equal(observationItemStatusLabel(listingRecord({ status: "voided" }), rows, "2026-07-24"), "已作废");
+  // 无任何观察周数据的已刊登 Item（多为历史档案零成交）显示中性说明，不再显示"观察中"引起等待误解。
+  assert.equal(observationItemStatusLabel(listingRecord(), [], "2026-07-24"), "已刊登 · 暂无成交数据");
+  assert.equal(observationItemStatusLabel(listingRecord({ status: "voided" }), [], "2026-07-24"), "已作废");
+  assert.equal(observationItemStatusLabel(listingRecord({ tracking_status: "stopped" }), [], "2026-07-24"), "停止跟踪");
 });
 
 test("刊登观察页面使用单表和业务状态筛选且不暴露内部待取数", () => {
@@ -999,6 +1003,39 @@ test("提交后即使 Storage 删除失败也用组件生命周期墓碑忽略�
   assert.match(listingObservationViewSource, /submittedPeriodDraftKeys\.current\.add\(row\.period_id\)/);
   assert.match(listingObservationViewSource, /submittedListingDraftKeys\.current\.delete\(task\.task_key\)/);
   assert.match(listingObservationViewSource, /submittedPeriodDraftKeys\.current\.delete\(periodId\)/);
+});
+
+test("周期观察同主SKU+国家合并为一张卡：负责人逗号列出、期数取各 listing 最早", () => {
+  const groups = buildListingWorkbenchGroups(
+    [],
+    [
+      listingRecord({ id: "listing-a", task_key: "task-a", main_sku: "FFJ322", salesperson_name: "运营甲", business_period: "开发0710期" }),
+      listingRecord({ id: "listing-b", task_key: "task-b", main_sku: "FFJ322", item: "ITEM-2", salesperson_name: "运营乙", business_period: "开发0703期" }),
+      listingRecord({ id: "listing-vn", task_key: "task-vn", main_sku: "FFJ322", item: "ITEM-3", country: "越南" })
+    ],
+    [
+      observationRow({ id: "period-a", listing_record_id: "listing-a" }),
+      observationRow({ id: "period-b", listing_record_id: "listing-b", item: "ITEM-2", salesperson_name: "运营乙" })
+    ],
+    "2026-07-23"
+  );
+  // buildListingWorkbenchGroups 仍按 task_key 出组：刊登任务场景的草稿与提交按任务键隔离。
+  assert.equal(groups.length, 3);
+  const merged = listingObservation.filterListingWorkbenchGroupsForScenario(groups, "observation");
+  // 同主SKU+国家合并成一张卡，不同国家不合并（2026-07 FFJ322 被拆两卡实测反馈）。
+  assert.equal(merged.length, 2);
+  const card = merged.find((group) => group.context.country === "菲律宾");
+  assert.ok(card);
+  assert.deepEqual(card.listings.map((listing) => listing.id), ["listing-a", "listing-b"]);
+  assert.deepEqual(card.periodRows.map((row) => row.id), ["period-a", "period-b"]);
+  assert.equal(card.context.salesperson_name, "运营甲，运营乙");
+  assert.equal(card.context.business_period, "开发0703期");
+  // 合并卡 context.task_key 保留首个真实任务键，供"新增刊登 Item"提交沿用。
+  assert.equal(card.context.task_key, "task-a");
+  // 未发生合并的组不改写 context（listing 派生上下文的 business_period 保持 null）。
+  const vnCard = merged.find((group) => group.context.country === "越南");
+  assert.equal(vnCard?.context.business_period, null);
+  assert.equal(vnCard?.context.salesperson_name, "运营甲");
 });
 
 test("刊登与观察场景分开，已复盘周期需纠错后才可编辑或选择", () => {

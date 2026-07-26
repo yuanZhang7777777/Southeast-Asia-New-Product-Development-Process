@@ -141,7 +141,8 @@ export function observationItemStatusLabel(
   if (record.first_round_completed_at && summarizeVisibleObservationPeriods(started).firstRoundCompleted) return "首轮观察完成";
   const completed = started.find((row) => row.status === "completed");
   if (completed) return `已复盘至第${completed.week_number}周`;
-  return rows.length ? "尚未开始" : "观察中";
+  // 无任何观察周数据（多为历史档案零成交 Item）时不再显示"观察中"，避免误以为在等首周数据。
+  return rows.length ? "尚未开始" : "已刊登 · 暂无成交数据";
 }
 
 
@@ -240,7 +241,40 @@ export function buildListingWorkbenchGroups(
 
 export function filterListingWorkbenchGroupsForScenario(groups: readonly ListingWorkbenchGroup[], scenario: "listing" | "observation"): ListingWorkbenchGroup[] {
   if (scenario === "listing") return groups.filter((group) => group.pendingListing).map((group) => ({ ...group, listings: [], periodRows: [] }));
-  return groups.filter((group) => group.listings.length).map((group) => ({ ...group, pendingListing: false }));
+  return mergeObservationGroupsByProduct(
+    groups.filter((group) => group.listings.length).map((group) => ({ ...group, pendingListing: false }))
+  );
+}
+
+// 周期观察按 (主SKU+国家) 合并为一张卡：同一 SKU 因不同业务期/负责人拆出多个 task_key 时
+// 用户会看到重复卡片（2026-07 FFJ322 实测反馈）。context 沿用首个组（task_key 仍是真实任务键，
+// 供"新增刊登 Item"提交），合并时负责人逗号列出、business_period 取各 listing 中最早期数。
+// 刊登任务场景不合并：草稿与提交都按 task_key 隔离。
+function mergeObservationGroupsByProduct(groups: ListingWorkbenchGroup[]): ListingWorkbenchGroup[] {
+  const merged = new Map<string, ListingWorkbenchGroup>();
+  for (const group of groups) {
+    const key = `${group.context.main_sku}|${group.context.country || ""}`;
+    const existing = merged.get(key);
+    if (!existing) {
+      merged.set(key, { ...group, context: { ...group.context }, listings: [...group.listings], periodRows: [...group.periodRows] });
+      continue;
+    }
+    existing.listings.push(...group.listings);
+    existing.periodRows.push(...group.periodRows);
+    const owners = unique([...existing.context.salesperson_name.split("，"), group.context.salesperson_name]);
+    existing.context.salesperson_name = owners.join("，");
+    existing.context.business_period = earliestListingBusinessPeriod(existing.listings) ?? existing.context.business_period;
+  }
+  return Array.from(merged.values());
+}
+
+function earliestListingBusinessPeriod(listings: readonly Pick<ListingRecord, "business_period">[]) {
+  const periods = unique(listings.map((listing) => listing.business_period || ""));
+  return periods.sort((left, right) => left.localeCompare(right))[0] ?? null;
+}
+
+function unique(values: readonly string[]) {
+  return Array.from(new Set(values.filter(Boolean)));
 }
 
 export function filterListingWorkbenchGroups(

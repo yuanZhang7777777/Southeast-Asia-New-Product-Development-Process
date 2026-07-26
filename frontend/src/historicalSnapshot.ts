@@ -163,6 +163,9 @@ function historyFieldSection(label: string, group: string): HistoryCellSectionKe
   // 认领区字段不进通用板块：由认领事实回填生成真正的认领记录，在"认领与复核"展示。
   if (/主销售员|是否认领|认领单销|不认领理由|不认领原因/.test(label)) return null;
   if (/总结|复盘/.test(label)) return "other";
+  // 定价/毛利/利润率/单销等财务表头即使被 R1 前向填充打上"市场调研"分组也归价格参考
+  // （2026-07 用户口径）；含"竞品"的表头（竞品单价/竞品月销）不受影响，仍走分组判定。
+  if (!label.includes("竞品") && /定价|毛利|利润率|单销/.test(label)) return "pricing";
   if (!group) return "other";
   if (group.includes("询价")) return "development";
   if (group.includes("调研") || group.includes("竞品")) return "market";

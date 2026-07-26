@@ -246,16 +246,21 @@ export function ListingObservationView(props: {
       const text = effectiveFilters.query?.trim().toLocaleLowerCase();
       const contextMatches = !text || [group.context.main_sku, group.context.main_sku_name]
         .some((value) => value?.toLocaleLowerCase().includes(text));
+      // 周期观察合并卡的 context.salesperson_name 可能是多负责人逗号串：负责人筛选按 listing 命中，命中后只显示该负责人的 Item。
+      const ownerFilter = effectiveFilters.salesperson_name;
+      const ownerListings = ownerFilter
+        ? group.listings.filter((listing) => listing.salesperson_name === ownerFilter)
+        : group.listings;
       const commonMatches = (!effectiveFilters.country || group.context.country === effectiveFilters.country)
-        && (!effectiveFilters.salesperson_name || group.context.salesperson_name === effectiveFilters.salesperson_name);
+        && (!ownerFilter || ownerListings.length > 0 || group.context.salesperson_name === ownerFilter);
       if (!commonMatches) return [];
       if (group.pendingListing && !group.periodRows.length) {
         return contextMatches && !hasPeriodFilters ? [{ ...group, periodRows: [] }] : [];
       }
       const matchedListingIds = new Set((hasPeriodFilters ? periodRows : matchedRows).map((row) => row.listing_record_id));
       const listings = !hasPeriodFilters && contextMatches
-        ? group.listings
-        : group.listings.filter((listing) => matchedListingIds.has(listing.id));
+        ? ownerListings
+        : ownerListings.filter((listing) => matchedListingIds.has(listing.id));
       return listings.length || (group.pendingListing && contextMatches && !hasPeriodFilters)
         ? [{ ...group, listings, periodRows }]
         : [];
