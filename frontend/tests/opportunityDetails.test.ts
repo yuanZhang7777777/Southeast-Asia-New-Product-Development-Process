@@ -1,0 +1,38 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+
+import { attachCachedSnapshots, hasFullDetail, idsNeedingDetail } from "../src/opportunityDetails.ts";
+
+test("只补取缺 snapshot 且未缓存未在途的行", () => {
+  const items = [
+    { id: "a" },
+    { id: "b", snapshot: { cells: {} } },
+    { id: "c" },
+    { id: "d" }
+  ];
+  const pending = new Set(["c"]);
+  const cache = new Map([["d", { cells: {} }]]);
+  assert.deepEqual(idsNeedingDetail(items, pending, cache), ["a"]);
+  assert.deepEqual(idsNeedingDetail(items, new Set(), new Map()), ["a", "c", "d"]);
+});
+
+test("刷新后的轻量列表能贴回已缓存快照且不覆盖已有快照", () => {
+  const existing = { cells: { A: "已有" } };
+  const cached = { cells: { A: "缓存" } };
+  const items = [
+    { id: "a" },
+    { id: "b", snapshot: existing },
+    { id: "c" }
+  ];
+  const merged = attachCachedSnapshots(items, new Map([["a", cached], ["b", { cells: { A: "不应覆盖" } }]]));
+  assert.equal(merged[0].snapshot, cached);
+  assert.equal(merged[1].snapshot, existing);
+  assert.equal(merged[2].snapshot, undefined);
+  assert.equal(merged[2], items[2]);
+});
+
+test("hasFullDetail 以 snapshot 是否取回为准（空对象也算已取回）", () => {
+  assert.equal(hasFullDetail({ id: "a" }), false);
+  assert.equal(hasFullDetail(null), false);
+  assert.equal(hasFullDetail({ id: "a", snapshot: {} }), true);
+});

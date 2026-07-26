@@ -50,7 +50,7 @@ class AuthLoginResponse(BaseModel):
     operator_name: str | None = None
 
 
-class OpportunityCreate(BaseModel):
+class OpportunityBase(BaseModel):
     source_type: str = "manual"
     source_file: str | None = None
     source_sheet: str | None = None
@@ -69,10 +69,14 @@ class OpportunityCreate(BaseModel):
     sub_sku: str
     product_type: str | None = None
     reason: str | None = None
+
+
+class OpportunityCreate(OpportunityBase):
     snapshot: dict[str, Any] = Field(default_factory=dict)
 
 
-class OpportunityRead(OpportunityCreate):
+# 列表专用轻量视图：不带 snapshot（源表快照可达数十 KB/行），完整快照走 GET /opportunities/{id}。
+class OpportunityListRead(OpportunityBase):
     id: str
     current_status: str
     latest_claim_record_id: str | None = None
@@ -88,6 +92,10 @@ class OpportunityRead(OpportunityCreate):
     updated_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class OpportunityRead(OpportunityListRead):
+    snapshot: dict[str, Any] = Field(default_factory=dict)
 
 
 class OpportunityImportRequest(BaseModel):
@@ -398,6 +406,9 @@ class VolumePreviewRequest(BaseModel):
 class VolumePreviewRead(BaseModel):
     sub_sku: str
     unit_volume: float | None = None
+    length_cm: float | None = None
+    width_cm: float | None = None
+    height_cm: float | None = None
     status: Literal["resolved", "manual_required"]
 
 
@@ -839,6 +850,11 @@ class DingTalkNewProductTodoCardRequest(BaseModel):
     action_url: str = Field(min_length=1)
     out_track_id: str = Field(min_length=1)
     dedupe_key: str | None = None
+    card_title: str | None = None
+    summary_text: str | None = None
+    left_label: str | None = None
+    right_label: str | None = None
+    tip_text: str | None = None
 
     @field_validator("receiver_role")
     @classmethod

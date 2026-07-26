@@ -694,6 +694,7 @@ export const api = {
     request<{ status: string }>("/auth/password", { method: "POST", body: JSON.stringify(payload) }),
   opportunities: (limit = 5000, filter?: PeriodFilter, includeDisabled = false) =>
     request<Opportunity[]>(`/opportunities?limit=${limit}${query(filter).replace("?", "&")}${includeDisabled ? "&include_disabled=true" : ""}`),
+  opportunity: (id: string) => request<Opportunity>(`/opportunities/${encodeURIComponent(id)}`),
   updateOpportunity: (id: string, payload: unknown) =>
     request<Opportunity>(`/opportunities/${id}`, { method: "PATCH", body: JSON.stringify(payload) }),
   disableOpportunity: (id: string, payload: { disabled: boolean; reason?: string | null }) =>

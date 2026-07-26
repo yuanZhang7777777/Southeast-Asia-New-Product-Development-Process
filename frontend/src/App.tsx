@@ -89,6 +89,7 @@ import {
   removeKeyCategory
 } from "./keyCategories";
 import { businessPeriodsByNewest, filterOperatorClaimRows, latestBusinessPeriod, operatorClaimStatusOptions } from "./operatorClaimFilters";
+import { attachCachedSnapshots, hasFullDetail, idsNeedingDetail } from "./opportunityDetails";
 import { groupByBusinessIdentity, normalizeSiteText } from "./opportunityGroups";
 import { adjacentDetailTarget } from "./productDetailNavigation";
 import { ProductBoardView } from "./ProductBoardView";
@@ -311,6 +312,9 @@ function App() {
   const [activeRole, setActiveRole] = useState<RoleKey>("manager");
   const refreshGeneration = useRef(0);
   const refreshLoadingGeneration = useRef(0);
+  // 列表接口已不含 snapshot；这里缓存按需取回的完整快照，刷新列表后重新贴回，避免重复请求。
+  const detailSnapshotCache = useRef(new Map<string, Record<string, unknown>>());
+  const detailPendingIds = useRef(new Set<string>());
   const [activeView, setActiveView] = useState<ViewKey>("dashboard");
   const [authChecked, setAuthChecked] = useState(false);
   const [authSession, setAuthSession] = useState<AuthSession | null>(null);
@@ -489,6 +493,44 @@ function App() {
   function openClaimDetail(group: ProductGroup, childId?: string | null) {
     setClaimDetailChildId(childId || group.items[0]?.id || null);
   }
+
+  async function hydrateOpportunityDetails(items: Opportunity[]) {
+    if (items.some((item) => item.snapshot === undefined && detailSnapshotCache.current.has(item.id))) {
+      setOpportunities((current) => attachCachedSnapshots(current, detailSnapshotCache.current));
+    }
+    const missing = idsNeedingDetail(items, detailPendingIds.current, detailSnapshotCache.current);
+    if (!missing.length) return;
+    for (const id of missing) detailPendingIds.current.add(id);
+    try {
+      const details = await Promise.all(
+        missing.map(async (id) => {
+          try {
+            return await api.opportunity(id);
+          } catch {
+            return null;
+          }
+        })
+      );
+      const loaded = details.filter((detail): detail is Opportunity => Boolean(detail));
+      for (const detail of loaded) detailSnapshotCache.current.set(detail.id, detail.snapshot || {});
+      if (loaded.length) setOpportunities((current) => attachCachedSnapshots(current, detailSnapshotCache.current));
+      if (loaded.length < missing.length) setStatusMessage("部分商品源表明细加载失败，请重新打开详情重试");
+    } finally {
+      for (const id of missing) detailPendingIds.current.delete(id);
+    }
+  }
+
+  // 商品详情打开或前后切换时，按需取整组子 SKU 的完整快照（列表接口已不带 snapshot）。
+  useEffect(() => {
+    if (detailGroup) void hydrateOpportunityDetails(detailGroup.items);
+  }, [detailGroup]);
+
+  // 认领工作台详情抽屉打开或切组时同样按需补齐快照。
+  useEffect(() => {
+    if (!claimDetailChildId) return;
+    const group = groups.find((entry) => entry.items.some((item) => item.id === claimDetailChildId));
+    if (group) void hydrateOpportunityDetails(group.items);
+  }, [claimDetailChildId, groups]);
 
   function addSelfClaimGroup(group: ProductGroup) {
     const ids = group.items.filter(isSelfClaimPoolItem).map((item) => item.id);
@@ -745,7 +787,7 @@ function App() {
       return;
     }
     setHealthStatus(health.status);
-    setOpportunities(opportunityList);
+    setOpportunities(attachCachedSnapshots(opportunityList, detailSnapshotCache.current));
     setTasks(taskList);
     setAvailableStocking(stockingList);
     setExportPeriods(exportPeriodList);
@@ -874,6 +916,7 @@ function App() {
   async function updateOpportunityDetails(id: string, payload: unknown) {
     await runAction("保存 SKU 信息", async () => {
       const updated = await api.updateOpportunity(id, payload);
+      detailSnapshotCache.current.set(updated.id, updated.snapshot || {});
       setDetailGroupKey(groupByBusinessIdentity([updated])[0]?.key || null);
     });
   }
@@ -2042,6 +2085,8 @@ function ProductDetailView(props: {
   const { group } = props;
   const item = group.first;
   const activeChild = group.items.find((child) => child.id === props.activeChildId) || group.items[0] || item;
+  // 列表数据不含 snapshot，打开详情后由 App 按需取回完整快照；取回前展示加载态。
+  const detailReady = hasFullDetail(activeChild);
   const imageItem = activeChild.image_url ? activeChild : group.items.find((child) => child.image_url) || item;
   // 选品1历史档案（fields_by_cell）按分组派生的板块补位数据；已有结构化数据的板块不重复渲染。
   const historySections = historyFieldsByCellSections(activeChild);
@@ -2169,7 +2214,7 @@ function ProductDetailView(props: {
                   <h3>{activeChild.sub_sku}</h3>
                   {statusPill(activeChild.current_status)}
                   {props.activeRole === "manager" && (
-                    <button className="btn" type="button" onClick={() => startEdit(activeChild)}>
+                    <button className="btn" type="button" disabled={!detailReady} onClick={() => startEdit(activeChild)}>
                       <ClipboardPen size={14} />
                       编辑
                     </button>
@@ -2185,6 +2230,13 @@ function ProductDetailView(props: {
                 </div>
               </div>
             </div>
+            {!detailReady && (
+              <div className="detail-pane">
+                <p className="muted detail-empty">源表明细加载中...</p>
+              </div>
+            )}
+            {detailReady && (
+            <>
             {activeSection === "core" && (
               <div className="detail-pane">
                 <h3>基础信息（A-L）</h3>
@@ -2336,6 +2388,8 @@ function ProductDetailView(props: {
                 </div>
                 <SourceFieldsTable item={activeChild} />
               </div>
+            )}
+            </>
             )}
           </div>
         </div>
@@ -4138,6 +4192,8 @@ function ClaimDetailDrawer(props: {
   onRemoveSelfClaim: (item: Opportunity) => void;
 }) {
   const first = props.group.first;
+  // 列表数据不含 snapshot，抽屉打开后由 App 按需取回；取回前源表列展示加载态。
+  const detailReady = props.group.items.every((item) => hasFullDetail(item));
   const moduleTabs: { key: ClaimDrawerModuleKey; label: string; columns: string[] }[] = [
     { key: "market", label: "市场调研", columns: columnsBetween("Z", "AN") },
     { key: "pricing", label: "价格 / 毛利", columns: columnsBetween("AO", "AV") },
@@ -4191,14 +4247,18 @@ function ClaimDetailDrawer(props: {
               </span>
               <span className="tag">基础信息 A-L</span>
             </summary>
-            <div className="claim-basic-grid">
-              {basicColumns.map((column) => (
-                <span key={column}>
-                  <b>{column} · {headerLabel(first, column) || column}</b>
-                  {renderMaybeLink(snapshotColumnText(first, column) || "-")}
-                </span>
-              ))}
-            </div>
+            {detailReady ? (
+              <div className="claim-basic-grid">
+                {basicColumns.map((column) => (
+                  <span key={column}>
+                    <b>{column} · {headerLabel(first, column) || column}</b>
+                    {renderMaybeLink(snapshotColumnText(first, column) || "-")}
+                  </span>
+                ))}
+              </div>
+            ) : (
+              <p className="muted">源表明细加载中...</p>
+            )}
           </details>
 
           {props.group.items.some((item) => item.current_status === "returned_for_supplement" && item.latest_review_comment) && (
@@ -4226,16 +4286,20 @@ function ClaimDetailDrawer(props: {
             </div>
           </div>
 
-          <ClaimMatrixTable
-            columns={activeTab.columns}
-            drafts={props.drafts}
-            group={props.group}
-            onAddEvidence={props.onAddEvidence}
-            onMode={props.onMode}
-            onPatch={props.onPatch}
-            onRemoveEvidence={props.onRemoveEvidence}
-            onRemoveSelfClaim={props.onRemoveSelfClaim}
-          />
+          {detailReady ? (
+            <ClaimMatrixTable
+              columns={activeTab.columns}
+              drafts={props.drafts}
+              group={props.group}
+              onAddEvidence={props.onAddEvidence}
+              onMode={props.onMode}
+              onPatch={props.onPatch}
+              onRemoveEvidence={props.onRemoveEvidence}
+              onRemoveSelfClaim={props.onRemoveSelfClaim}
+            />
+          ) : (
+            <p className="muted">源表明细加载中...</p>
+          )}
           <div className="claim-group-nav-row">
             <button
               aria-label="上一个主 SKU"

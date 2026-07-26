@@ -21,7 +21,7 @@ router = APIRouter(prefix="/opportunities", tags=["opportunities"])
 UPLOAD_ROOT = Path(__file__).resolve().parents[2] / ".private_uploads" / "source-workbooks"
 
 
-@router.get("", response_model=list[schemas.OpportunityRead])
+@router.get("", response_model=list[schemas.OpportunityListRead])
 def list_opportunities(
     limit: int = Query(1000, ge=1, le=5000),
     source_sheet: str | None = Query(None),
@@ -102,6 +102,22 @@ def import_opportunities(
     items = [services.create_opportunity(db, item) for item in payload.items]
     db.commit()
     return items
+
+
+# 注意：必须注册在 /export、/import-batches 等静态 GET 路由之后，避免路径参数抢占匹配。
+@router.get("/{opportunity_id}", response_model=schemas.OpportunityRead)
+def get_opportunity(
+    opportunity_id: str,
+    db: Session = Depends(get_db),
+    auth: AuthContext | None = Depends(require_roles("operator", "manager")),
+) -> models.NewProductOpportunity:
+    opportunity = db.get(models.NewProductOpportunity, opportunity_id)
+    if opportunity is None:
+        raise HTTPException(status_code=404, detail="opportunity not found")
+    if opportunity.current_status == OPPORTUNITY_DISABLED and auth and "super_admin" not in auth.role_keys:
+        raise HTTPException(status_code=404, detail="opportunity not found")
+    attach_latest_summaries(db, [opportunity])
+    return opportunity
 
 
 @router.patch("/{opportunity_id}", response_model=schemas.OpportunityRead)
