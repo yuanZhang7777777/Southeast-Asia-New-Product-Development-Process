@@ -1,10 +1,15 @@
-"""选品1 历史期档案模式导入器（仅新世代期数，绝不建认领/任务/通知）。
+"""选品1 历史期档案模式导入器（新旧两代全期，绝不建认领/任务/通知）。
 
-- 范围：sheet 名含 `开发MMDD期` 且 0428 <= MMDD < 0815 的新世代期；旧世代（0421 及更早、0815-0924）
-  与非期数 sheet 一律跳过并在报告 `skipped_sheets` 中列出。
+- 范围：sheet 名含 `开发MMDD期` 且 MMDD >= 0414 的期数；0414-0623 为新世代，
+  0815-0924 为旧世代（用户 2026-07-26 拍板一并导入，行快照标记 generation=old）；
+  0414 之前与非期数 sheet 跳过并在报告 `skipped_sheets` 中列出。
+- 表头动态探测：前 3 行内找同时含『主SKU』『子SKU』表头的行定为表头行；其下一行若
+  主/子SKU 列已有值则视为单层表头（数据紧跟，如开发0827期），否则该行按第二层表头
+  处理（子字段行或空行均可，覆盖新世代双层与旧世代『表头+空行+数据』变体）。
 - 档案行：NewProductOpportunity(source_type=history_selection1, current_status 与
   historical_central_import 档案行一致)；快照 `fields_by_cell` 按列字母全列保真，
   规避 cells 快照缺 BY:CB、同名表头/同别名串值只存第一列的问题。
+  旧世代无『站点』列：site/country 置空，历史缺失不造数。
 - 判重键：source_type + source_sheet + sub_sku（与选品2 修复后语义一致）；
   现行选品1 机会行（selection1_developer_claim_feedback）同 sheet 同子SKU 也计跳过、绝不更新。
 - 批次级 sha256 判重防整文件重导；审计带 batch_tag，支持 --revert 整批撤销。
@@ -43,14 +48,17 @@ AUDIT_ACTION = "history.selection1_imported"
 REVERT_AUDIT_ACTION = "history.selection1_import_reverted"
 SHEET_PERIOD_PATTERN = re.compile(r"开发(\d{4})期")
 NEW_GENERATION_MIN = 414  # 用户拍板（2026-07-26）：0414/0421 与新世代同表头结构，一并纳入
-OLD_GENERATION_MIN = 815  # 开发0815期~0924期为旧世代杂糅结构
+OLD_GENERATION_MIN = 815  # 开发0815期~0924期为旧世代杂糅结构（2026-07-26 拍板：全部导入，标记 generation=old）
+HEADER_PROBE_ROWS = 3  # 表头行动态探测范围：前 3 行
 SUMMARY_LABELS = {"小计", "合计", "总计", "汇总"}
 FIELD_ALIASES = {
     "developer_department": ("开发部门", "部门"),
     "developer_name": ("开发员",),
     "category_level1": ("一级类目",),
-    "keyword": ("关键词", "开发关键词"),
-    "main_sku_name": ("主SKU名称",),
+    # 关键词组：旧世代别名（防个别期表头变体）
+    "keyword": ("关键词", "开发关键词", "关键词组"),
+    # 主SKU名称（33）：开发0903期实测表头
+    "main_sku_name": ("主SKU名称", "主SKU名称（33）"),
     "sub_sku_name": ("子SKU名称",),
     "product_type": ("产品类型", "引流or绑定or利润", "产品类型/引流or绑定or利润"),
     "reason": ("开品理由",),
@@ -68,9 +76,26 @@ def sheet_skip_reason(sheet_name: str) -> str | None:
         return "非期数sheet"
     if int(period) < NEW_GENERATION_MIN:
         return "早于0414期"
-    if int(period) >= OLD_GENERATION_MIN:
-        return "旧世代（0815-0924）"
     return None
+
+
+def sheet_generation(sheet_name: str) -> str | None:
+    period = period_from_sheet(sheet_name)
+    if period is None:
+        return None
+    return "old" if int(period) >= OLD_GENERATION_MIN else "new"
+
+
+def _sku_header_columns(row: tuple[Any, ...]) -> tuple[int | None, int | None]:
+    """行内首个『主SKU』/『子SKU』表头列（大小写不敏感；0820期存在重复子SKU表头，取首列）。"""
+    main_index = sub_index = None
+    for index, value in enumerate(row):
+        key = normalize_header(value).upper()
+        if key == "主SKU" and main_index is None:
+            main_index = index
+        elif key == "子SKU" and sub_index is None:
+            sub_index = index
+    return main_index, sub_index
 
 
 def _is_summary_row(*values: str | None) -> bool:
@@ -99,14 +124,48 @@ def parse_selection1_workbook(
                 skipped_sheets.append({"sheet": sheet_name, "reason": reason})
                 continue
             period = f"开发{period_from_sheet(sheet_name)}期"
+            generation = sheet_generation(sheet_name)
             worksheet = workbook[sheet_name]
             try:
                 worksheet.reset_dimensions()
             except AttributeError:
                 pass
             iterator = worksheet.iter_rows(values_only=True)
-            header_top = next(iterator, ()) or ()
-            header_bottom = next(iterator, ()) or ()
+            buffered: list[tuple[Any, ...]] = []
+
+            def row_at(position: int) -> tuple[Any, ...] | None:
+                while len(buffered) <= position:
+                    try:
+                        buffered.append(next(iterator))
+                    except StopIteration:
+                        return None
+                return buffered[position]
+
+            header_pos = main_header_col = sub_header_col = None
+            for position in range(HEADER_PROBE_ROWS):
+                candidate = row_at(position)
+                if candidate is None:
+                    break
+                main_index, sub_index = _sku_header_columns(candidate)
+                if main_index is not None and sub_index is not None:
+                    header_pos, main_header_col, sub_header_col = position, main_index, sub_index
+                    break
+            if header_pos is None:
+                skipped_sheets.append({"sheet": sheet_name, "reason": "前3行未探测到主SKU/子SKU表头"})
+                continue
+            header_top = row_at(header_pos) or ()
+            # 单层/双层探测：表头行下一行的主/子SKU列已有值 → 单层表头、数据紧跟（旧世代0827期）；
+            # 否则该行按第二层表头处理（新世代子字段行，或旧世代空行/双层子字段行）。
+            probe = row_at(header_pos + 1)
+
+            def probe_value(index: int | None) -> str | None:
+                if probe is None or index is None or index >= len(probe):
+                    return None
+                return text_value(probe[index])
+
+            single_layer = bool(probe_value(main_header_col) or probe_value(sub_header_col))
+            header_bottom = () if single_layer or probe is None else probe
+            data_pos = header_pos + (1 if single_layer else 2)
             headers: dict[int, str] = {}
             groups: dict[int, str] = {}
             column_of: dict[str, int] = {}
@@ -134,18 +193,28 @@ def parse_selection1_workbook(
                         return index
                 return None
 
-            site_col = col("站点", "国家")
-            main_col = col("主SKU")
-            sub_col = col("子SKU")
+            site_col = col("站点", "国家")  # 旧世代无站点列 → None，site/country 置空
+            # 主/子SKU 直接用表头探测列：与探测判定一致，且大小写不敏感（col() 区分大小写）。
+            main_col = main_header_col
+            sub_col = sub_header_col
             image_col = col("产品图片")
             field_cols = {field: col(*aliases) for field, aliases in FIELD_ALIASES.items()}
 
             def cell(row: tuple[Any, ...], index: int | None) -> Any:
                 return row[index] if index is not None and index < len(row) else None
 
+            def data_rows():
+                position = data_pos
+                while position < len(buffered):
+                    yield position + 1, buffered[position]
+                    position += 1
+                for values in iterator:
+                    yield position + 1, values
+                    position += 1
+
             sheet_rows = 0
             skipped = 0
-            for source_row, row in enumerate(iterator, start=3):
+            for source_row, row in data_rows():
                 if max_rows_per_sheet is not None and sheet_rows >= max_rows_per_sheet:
                     break
                 sub_sku = text_value(cell(row, sub_col))
@@ -188,6 +257,8 @@ def parse_selection1_workbook(
                         "snapshot": {
                             "archive_type": "historical_selection1",
                             "business_period": period,
+                            # 旧世代行打世代标记便于追溯；新世代快照保持既有形状（0414-0623 已入库）。
+                            **({"generation": "old"} if generation == "old" else {}),
                             "site_raw": site_raw,
                             "fields_by_cell": fields_by_cell,
                             "source_reference": {
@@ -199,7 +270,10 @@ def parse_selection1_workbook(
                     }
                 )
                 sheet_rows += 1
-            sheet_reports.append({"sheet": sheet_name, "period": period, "rows": sheet_rows, "skipped": skipped})
+            sheet_report = {"sheet": sheet_name, "period": period, "rows": sheet_rows, "skipped": skipped}
+            if generation == "old":
+                sheet_report["generation"] = "old"
+            sheet_reports.append(sheet_report)
     finally:
         workbook.close()
 
@@ -446,7 +520,7 @@ def revert_selection1_import(db: Session, batch_tag: str, actor: str | None = No
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="选品1 历史期档案导入（仅新世代 0428+；本地解析/传图，rows 文件搬到服务器 apply；默认 dry-run）"
+        description="选品1 历史期档案导入（0414+ 新旧两代全期；本地解析/传图，rows 文件搬到服务器 apply；默认 dry-run）"
     )
     parser.add_argument("--workbook", help="选品1：海外仓开发部门开发新品认领-反馈*.xlsx 路径（parse 模式必填）")
     parser.add_argument("--upload-images", action="store_true", help="zip 直读内嵌图片并上传 OSS（需 OSS_UPLOAD_ENABLED=1）")
