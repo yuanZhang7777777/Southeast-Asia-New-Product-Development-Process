@@ -9,7 +9,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from openpyxl import Workbook  # noqa: E402
 
 from app import historical_finebi_import as hfi  # noqa: E402
-from app import models  # noqa: E402
+from app import models, services  # noqa: E402
 from app.db import Base, SessionLocal, engine  # noqa: E402
 
 
@@ -152,6 +152,16 @@ def test_shared_item_aggregation_review_and_idempotency(tmp_path: Path) -> None:
         assert db.query(models.ListingRecord).count() == 1
         assert db.query(models.ListingSkuBinding).count() == 2
         assert db.query(models.ItemObservationPeriod).count() == 3
+
+    with SessionLocal() as db:
+        workbench_view = services.list_listing_workbench(db)
+        summary_view = services.listing_summary(db, "MAINA")
+    assert workbench_view["listing_records"] == []
+    assert workbench_view["period_rows"] == []
+    assert len(summary_view["listing_records"]) == 1
+    assert summary_view["listing_records"][0]["is_shared_item"] is True
+    assert {row["record_source"] for row in summary_view["period_rows"]} == {"history_finebi"}
+    assert len(summary_view["period_rows"]) == 3
 
 
 def test_workbench_only_item_uses_fallback_metrics(tmp_path: Path) -> None:

@@ -1907,7 +1907,7 @@ def observation_positioning_defaults(
     defaults: dict[str, str | None] = {}
     for listing_id, periods in periods_by_listing.items():
         latest_positioning = None
-        for period in sorted(periods, key=lambda item: (item.period_start, item.week_number)):
+        for period in sorted(periods, key=lambda item: (item.period_start or date.min, item.week_number)):
             defaults[period.id] = latest_positioning or source_context.get(listing_id, {}).get("secondary_positioning")
             latest_positioning = _clean_text(period.product_positioning) or latest_positioning
     return defaults
@@ -1987,9 +1987,12 @@ def list_listing_workbench(
     week_number: int | None = None,
     product_positioning: str | None = None,
     tracking_status: str | None = None,
+    include_history: bool = False,
 ) -> dict:
     pending = list_pending_listing_tasks(db, owner)
     statement = select(models.ListingRecord)
+    if not include_history:
+        statement = statement.where(models.ListingRecord.source_type != "history_finebi")
     if owner:
         statement = statement.where(models.ListingRecord.salesperson_name == owner)
     if country:
@@ -2018,9 +2021,10 @@ def list_listing_workbench(
     listings = list(db.scalars(statement.order_by(models.ListingRecord.created_at.desc())))
     listing_ids = [item.id for item in listings]
     period_statement = select(models.ItemObservationPeriod).where(
-        models.ItemObservationPeriod.listing_record_id.in_(listing_ids),
-        models.ItemObservationPeriod.record_source == "platform",
+        models.ItemObservationPeriod.listing_record_id.in_(listing_ids)
     )
+    if not include_history:
+        period_statement = period_statement.where(models.ItemObservationPeriod.record_source == "platform")
     if period_start:
         period_statement = period_statement.where(models.ItemObservationPeriod.period_start == period_start)
     if status:
@@ -2061,7 +2065,7 @@ def list_listing_workbench(
 
 
 def listing_summary(db: Session, main_sku: str, owner: str | None = None, country: str | None = None) -> dict:
-    result = list_listing_workbench(db, owner=owner, country=country)
+    result = list_listing_workbench(db, owner=owner, country=country, include_history=True)
     listing_ids = {
         item["id"] for item in result["listing_records"] if item["main_sku"] == main_sku
     }
