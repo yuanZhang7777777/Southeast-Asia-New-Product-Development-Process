@@ -427,6 +427,12 @@ export type ProductBoardFilter = {
   query?: string;
 };
 
+export type DashboardCounts = {
+  waiting_listing: number;
+  waiting_secondary_research: number;
+  pending_review_periods: number;
+};
+
 export type ListingWorkbenchView = "pending_listing" | "pending_data" | "pending_review" | "first_round_completed" | "all";
 export type ObservationPeriodStatus = "pending_data" | "pending_review" | "completed";
 export type ListingTrackingStatus = "active" | "stopped";
@@ -724,6 +730,8 @@ export const api = {
   secondaryResearchExport: (filter?: { scenario?: string; salesperson_name?: string; business_period?: string; country?: string; query?: string }) =>
     download(`/secondary-research/export${query(filter)}`, "二次调研导出.xlsx"),
   productBoard: (filter?: ProductBoardFilter) => request<ProductBoardGroup[]>(`/product-board${productBoardQuery(filter)}`),
+  dashboardCounts: (salespersonName = "") =>
+    request<DashboardCounts>(`/dashboard/counts${query({ salesperson_name: salespersonName })}`),
   updateSecondaryResearch: (claimRecordId: string, salespersonName: string, payload: unknown) =>
     request<SecondaryResearchItem>(
       `/secondary-research/${claimRecordId}?salesperson_name=${encodeURIComponent(salespersonName)}`,

@@ -58,7 +58,18 @@ def send_arrival_daily_cards(
         if mapping is None or not mapping.dingtalk_user_id:
             logs.append(services.skipped_dingtalk_notification(db, dedupe_key, group.salesperson_name, "skipped_no_receiver"))
             continue
-        logs.append(_send_arrival_card(db, dedupe_key, mapping.dingtalk_user_id, group, settings, sender))
+        logs.append(
+            _send_arrival_card(
+                db,
+                dedupe_key,
+                mapping.dingtalk_user_id,
+                group,
+                settings,
+                sender,
+                action_text="去处理",
+                action_url=services.dingtalk_action_url(settings, "operator"),
+            )
+        )
     return logs
 
 

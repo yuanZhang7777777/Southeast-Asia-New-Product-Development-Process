@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-import { isHistoricalArchiveItem, snapshotDirectColumnText, structuredCompetitorRows } from "../src/historicalSnapshot.ts";
+import { developmentSourceV2Section, isHistoricalArchiveItem, snapshotDirectColumnText, structuredCompetitorRows } from "../src/historicalSnapshot.ts";
 
 const appSource = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
 
@@ -92,4 +92,53 @@ test("档案来源空态文案与选品1 空态文案区分", () => {
   assert.equal(isHistoricalArchiveItem({ snapshot: { archive_type: "historical_market_monitor" } }), true);
   assert.match(appSource, /isHistoricalArchiveItem\(props\.item\) \? "来源无此字段：市场监控源无成本参数（AQ-BR）列位" : "暂无成本参数字段。"/);
   assert.match(appSource, /isHistoricalArchiveItem\(props\.item\) \? "市场监控源 R~Z 上游为空" : "源表 Z:AN 暂无竞品链接、售价或月销。"/);
+});
+
+const archiveV2Item = {
+  source_type: "historical_market_monitor_archive",
+  snapshot: {
+    archive_type: "historical_market_monitor",
+    development_source_v2: {
+      business_period: "开发0602期",
+      segments: {
+        开发询价: [
+          { column: "M", label: "产品规格", value: "60x40x30cm" },
+          { column: "N", label: "询价结果", value: "12.5" },
+          { column: "O", label: "备注", value: "" }
+        ],
+        成本参数: [
+          { column: "AQ", label: "采购成本", value: "8.8" },
+          { column: "AR", label: "头程运费", value: "1.2" }
+        ],
+        "价格/毛利": [{ column: "AO", label: "售价", value: "19.9" }]
+      }
+    }
+  }
+};
+
+test("档案 development_source_v2 按分组名关键字输出列/字段/值行与期数", () => {
+  const cost = developmentSourceV2Section(archiveV2Item, ["成本"]);
+  assert.equal(cost?.businessPeriod, "开发0602期");
+  assert.deepEqual(cost?.rows, [
+    { column: "AQ", label: "采购成本", value: "8.8" },
+    { column: "AR", label: "头程运费", value: "1.2" }
+  ]);
+
+  const development = developmentSourceV2Section(archiveV2Item, ["询价", "规格"]);
+  assert.deepEqual(development?.rows.map((row) => row.label), ["产品规格", "询价结果"]);
+  assert.equal(development?.businessPeriod, "开发0602期");
+});
+
+test("无 development_source_v2 或非档案来源回落现有路径", () => {
+  assert.equal(developmentSourceV2Section(selection1Item, ["成本"]), null);
+  assert.equal(developmentSourceV2Section(archiveMarketItem, ["成本"]), null);
+  assert.equal(developmentSourceV2Section(archiveV2Item, ["市场"]), null);
+});
+
+test("商品详情成本参数与开发询价模块接入 v2 段并标注三国表来源", () => {
+  assert.match(appSource, /developmentSourceV2Section\(activeChild, \["成本"\]\)/);
+  assert.match(appSource, /developmentSourceV2Section\(activeChild, \["询价", "规格"\]\)/);
+  assert.match(appSource, /三国表·\{archiveSection\.businessPeriod\}/);
+  assert.match(appSource, /archiveSection \? \(\s*<ArchiveSegmentTable section=\{archiveSection\} \/>\s*\) : \(\s*<ColumnRangeTable item=\{activeChild\} columns=\{costParameterColumns\} \/>/);
+  assert.match(appSource, /archiveSection \? \(\s*<ArchiveSegmentTable section=\{archiveSection\} \/>\s*\) : \(\s*<DetailFieldGrid item=\{activeChild\} specs=\{developmentFieldSpecs\} \/>/);
 });

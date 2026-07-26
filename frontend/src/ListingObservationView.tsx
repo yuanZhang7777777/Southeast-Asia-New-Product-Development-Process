@@ -92,6 +92,12 @@ export function ListingObservationView(props: {
   role: "operator" | "manager";
   operatorName: string;
   canManage: boolean;
+  preset?: {
+    scenario: "listing" | "observation";
+    businessStatus: "pending_listing" | "pending_review";
+    status: "" | "pending_review";
+    nonce: number;
+  } | null;
   productLinks: ListingProductLink[];
   onOpenProduct: (opportunityId: string) => void;
   onStatus: (message: string) => void;
@@ -193,6 +199,13 @@ export function ListingObservationView(props: {
   useEffect(() => {
     void loadWorkbench();
   }, [props.role, props.canManage, props.operatorName, props.draftUserId, includeHistory, filters.business_period]);
+
+  useEffect(() => {
+    const preset = props.preset;
+    if (!preset) return;
+    setScenario(preset.scenario);
+    setFilters((current) => ({ ...current, business_status: preset.businessStatus, status: preset.status }));
+  }, [props.preset?.nonce]);
 
   useEffect(() => { if (summaryPeriodId) summaryDialog.current?.focus(); }, [summaryPeriodId]);
   useEffect(() => { if (manualListing) manualListingDialog.current?.focus(); }, [manualListing]);

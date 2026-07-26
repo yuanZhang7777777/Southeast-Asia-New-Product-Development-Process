@@ -4327,6 +4327,37 @@ def count_opportunities_by_status(db: Session, status: str) -> int:
     )
 
 
+def count_waiting_listing_groups(db: Session, owner: str | None = None) -> int:
+    return sum(1 for task in list_pending_listing_tasks(db, owner) if task["requires_confirmation"])
+
+
+def count_waiting_secondary_research_claims(db: Session, owner: str | None = None) -> int:
+    filters = [
+        models.SalesClaimForecast.downstream_status == CLAIM_WAITING_SECONDARY_RESEARCH,
+        models.SalesClaimForecast.secondary_research_submitted_at.is_(None),
+    ]
+    if owner:
+        filters.append(models.SalesClaimForecast.salesperson_name == owner)
+    return int(db.scalar(select(func.count()).select_from(models.SalesClaimForecast).where(*filters)) or 0)
+
+
+def count_pending_review_observation_periods(db: Session, owner: str | None = None) -> int:
+    statement = (
+        select(func.count())
+        .select_from(models.ItemObservationPeriod)
+        .join(models.ListingRecord, models.ListingRecord.id == models.ItemObservationPeriod.listing_record_id)
+        .where(
+            models.ItemObservationPeriod.status == "pending_review",
+            models.ItemObservationPeriod.record_source == "platform",
+            models.ListingRecord.status == "active",
+            models.ListingRecord.source_type != "history_finebi",
+        )
+    )
+    if owner:
+        statement = statement.where(models.ListingRecord.salesperson_name == owner)
+    return int(db.scalar(statement) or 0)
+
+
 def dingtalk_action_url(settings: Settings, role: str) -> str:
     role_param = "operator" if role == "operator" else "supervisor"
     return f"{settings.platform_base_url.rstrip('/')}/?from=ding&role={role_param}"

@@ -47,6 +47,35 @@ export function snapshotDirectColumnText(item: SnapshotItem, column: string) {
   return valueText(fields[column]) || valueText(cells[column]);
 }
 
+export type DevelopmentSourceV2Row = {
+  column: string;
+  label: string;
+  value: string;
+};
+
+export type DevelopmentSourceV2Section = {
+  businessPeriod: string;
+  rows: DevelopmentSourceV2Row[];
+};
+
+export function developmentSourceV2Section(item: SnapshotItem, keywords: readonly string[]): DevelopmentSourceV2Section | null {
+  if (!isHistoricalArchiveItem(item)) return null;
+  const source = snapshotOf(item).development_source_v2;
+  if (!isRecord(source)) return null;
+  const segments = isRecord(source.segments) ? source.segments : {};
+  const rows: DevelopmentSourceV2Row[] = [];
+  for (const [segmentName, entries] of Object.entries(segments)) {
+    if (!keywords.some((keyword) => segmentName.includes(keyword)) || !Array.isArray(entries)) continue;
+    for (const entry of entries.filter(isRecord)) {
+      const value = valueText(entry.value);
+      if (!value) continue;
+      rows.push({ column: valueText(entry.column), label: valueText(entry.label), value });
+    }
+  }
+  if (!rows.length) return null;
+  return { businessPeriod: valueText(source.business_period), rows };
+}
+
 function competitorEntryRows(value: unknown, fromMarketSource: boolean): StructuredCompetitorRow[] {
   if (!Array.isArray(value)) return [];
   return value

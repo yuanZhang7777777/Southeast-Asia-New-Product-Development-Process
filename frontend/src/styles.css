@@ -514,6 +514,18 @@ textarea {
   font-size: 16px;
 }
 
+.metric-button {
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  width: 100%;
+}
+
+.metric-button:hover {
+  background: var(--blue-soft);
+  border-color: #91caff;
+}
+
 .notice {
   flex: 0 0 auto;
   margin-bottom: 12px;
@@ -2056,77 +2068,54 @@ summary {
   border-top: 1px solid var(--line);
 }
 
-.category-multi-select {
-  align-items: center;
+.key-category-editor {
   display: grid;
   gap: 6px;
-  grid-template-columns: 86px 86px minmax(120px, 1fr);
   min-width: 0;
 }
 
-.category-multi-select details {
-  position: relative;
-}
-
-.category-multi-select summary {
-  border: 1px solid var(--line-strong);
-  border-radius: 6px;
-  cursor: pointer;
-  height: 36px;
-  line-height: 34px;
-  list-style: none;
-  overflow: hidden;
-  padding: 0 10px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.category-multi-select summary::-webkit-details-marker {
-  display: none;
-}
-
-.category-menu {
-  background: #fff;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.14);
-  display: grid;
-  gap: 6px;
-  left: 0;
-  max-height: 260px;
-  min-width: 190px;
-  overflow: auto;
-  padding: 8px;
-  position: absolute;
-  top: 40px;
-  z-index: 20;
-}
-
-.category-menu.wide {
-  min-width: 260px;
-}
-
-.category-menu label {
-  align-items: center;
+.key-category-tags {
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
-  font-size: 13px;
   min-width: 0;
 }
 
-.category-menu input[type="checkbox"] {
-  flex: 0 0 auto;
-  min-height: 14px;
-  width: 14px;
+.key-category-tag {
+  align-items: center;
+  display: inline-flex;
+  gap: 4px;
 }
 
-.category-summary {
+.key-category-tag button {
+  align-items: center;
+  background: none;
+  border: 0;
   color: var(--muted);
-  font-size: 12px;
+  cursor: pointer;
+  display: inline-flex;
+  padding: 0;
+}
+
+.key-category-tag button:hover {
+  color: #cf1322;
+}
+
+.key-category-picker {
+  align-items: center;
+  display: grid;
+  gap: 6px;
+  grid-template-columns: minmax(96px, 1fr) minmax(96px, 1fr) auto;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
+}
+
+.key-category-picker .btn {
   white-space: nowrap;
+}
+
+.key-category-error {
+  color: #cf1322;
+  font-size: 12px;
 }
 
 .compact-actions {

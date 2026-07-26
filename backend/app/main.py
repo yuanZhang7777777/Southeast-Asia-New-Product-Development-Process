@@ -13,6 +13,7 @@ from app.routers import (
     assignments,
     auth,
     claims,
+    dashboard,
     events,
     health,
     listing_workbench,
@@ -58,6 +59,7 @@ app.include_router(product_board.router)
 app.include_router(assignments.router)
 app.include_router(tasks.router)
 app.include_router(claims.router)
+app.include_router(dashboard.router)
 app.include_router(events.router)
 app.include_router(reviews.router)
 app.include_router(secondary_research.router)

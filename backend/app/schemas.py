@@ -673,6 +673,12 @@ class ListingWorkbenchRead(BaseModel):
     period_rows: list[ObservationPeriodRead]
 
 
+class DashboardCountsRead(BaseModel):
+    waiting_listing: int = Field(ge=0)
+    waiting_secondary_research: int = Field(ge=0)
+    pending_review_periods: int = Field(ge=0)
+
+
 class ListingBatchRow(BaseModel):
     shop: str
     item: str

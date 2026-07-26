@@ -50,6 +50,7 @@ export function SecondaryResearchView(props: {
   salespersonName: string;
   editable: boolean;
   canManage: boolean;
+  preset?: { scenario: "pending"; periodFilter: "__all__"; nonce: number } | null;
   onStatus: (message: string) => void;
 }) {
   const [scenario, setScenario] = useState<"pending" | "submitted">("pending");
@@ -109,6 +110,14 @@ export function SecondaryResearchView(props: {
   useEffect(() => {
     void loadGroups();
   }, [props.salespersonName, props.editable]);
+
+  useEffect(() => {
+    const preset = props.preset;
+    if (!preset) return;
+    setScenario(preset.scenario);
+    setPeriodFilter(preset.periodFilter);
+    setActiveIndex(0);
+  }, [props.preset?.nonce]);
 
   useEffect(() => {
     setActiveIndex((current) => Math.min(current, Math.max(0, groups.length - 1)));

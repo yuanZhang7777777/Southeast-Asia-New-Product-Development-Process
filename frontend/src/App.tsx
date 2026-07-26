@@ -38,6 +38,7 @@ import {
   AuthSession,
   AvailableStockingItem,
   CompanyCategory,
+  DashboardCounts,
   ExportPeriodSummary,
   getAuthToken,
   ImportBatchSummary,
@@ -54,8 +55,24 @@ import { AdminConsoleView } from "./AdminConsoleView";
 import { ClaimDraftState, claimSubmissionState, createClaimDraft, createClaimDraftFromLatest, formatRejectReason, parseClaimEvidenceImages, parseRejectReason, patchClaimDraftGroup, REJECT_REASON_OPTIONS } from "./claimDrafts";
 import { filterAssignmentItems, groupOperatorProfilesBySite, moveOperatorWithinSite, reorderOperatorWithinSite, sortOperatorProfiles } from "./assignmentFilters";
 import { competitorGroupForColumn, competitorGroupForLabel } from "./competitorGroups";
-import { isHistoricalArchiveItem, snapshotDirectColumnText, structuredCompetitorRows } from "./historicalSnapshot";
+import { developmentSourceV2Section, DevelopmentSourceV2Section, isHistoricalArchiveItem, snapshotDirectColumnText, structuredCompetitorRows } from "./historicalSnapshot";
+import {
+  EMPTY_DASHBOARD_COUNTS,
+  HomeMetricItem,
+  ListingWorkbenchPreset,
+  roleHomeMetrics,
+  SecondaryResearchPreset
+} from "./homeMetrics";
 import { ImportResults, recordImportResult } from "./importResults";
+import {
+  addKeyCategory,
+  categoryLevel1Options,
+  categoryLevel2Options,
+  categorySelectionKey,
+  categorySelectionLabel,
+  normalizeCategorySelections,
+  removeKeyCategory
+} from "./keyCategories";
 import { businessPeriodsByNewest, filterOperatorClaimRows, latestBusinessPeriod, operatorClaimStatusOptions } from "./operatorClaimFilters";
 import { groupByBusinessIdentity, normalizeSiteText } from "./opportunityGroups";
 import { adjacentDetailTarget } from "./productDetailNavigation";
@@ -69,7 +86,7 @@ import { imageFiles } from "./imageUploads";
 import { StockingRequestView } from "./StockingRequestView";
 import { roleStockingLabel } from "./stockingRequests";
 
-type OperatorProfileDraft = Pick<OperatorAssignmentProfile, "operator_name" | "key_site" | "key_category1" | "key_category2" | "key_categories" | "assignment_priority" | "enabled">;
+type OperatorProfileDraft = Pick<OperatorAssignmentProfile, "operator_name" | "key_site" | "key_categories" | "assignment_priority" | "enabled">;
 
 type DingTalkAuthCodeResult = {
   authCode?: string;
@@ -330,12 +347,14 @@ function App() {
   const [newProfile, setNewProfile] = useState<OperatorProfileDraft>({
     operator_name: "",
     key_site: "",
-    key_category1: "",
-    key_category2: "",
     key_categories: [],
     assignment_priority: 0,
     enabled: true
   });
+  const [dashboardCounts, setDashboardCounts] = useState<DashboardCounts>(EMPTY_DASHBOARD_COUNTS);
+  const presetNonce = useRef(0);
+  const [researchPreset, setResearchPreset] = useState<(SecondaryResearchPreset & { nonce: number }) | null>(null);
+  const [listingPreset, setListingPreset] = useState<(ListingWorkbenchPreset & { nonce: number }) | null>(null);
 
   const availableRoles = useMemo(
     () => {
@@ -588,6 +607,40 @@ function App() {
     setDetailGroupKey(null);
   }, [activeView]);
 
+  useEffect(() => {
+    if (activeView !== "research") setResearchPreset(null);
+    if (activeView !== "listing") setListingPreset(null);
+  }, [activeView]);
+
+  useEffect(() => {
+    if (!authChecked || !authSession) {
+      setDashboardCounts(EMPTY_DASHBOARD_COUNTS);
+      return;
+    }
+    const owner = activeRole === "operator" ? activeOperator : "";
+    if (activeRole === "operator" && !owner) {
+      setDashboardCounts(EMPTY_DASHBOARD_COUNTS);
+      return;
+    }
+    let cancelled = false;
+    api
+      .dashboardCounts(owner)
+      .then((counts) => {
+        if (!cancelled) setDashboardCounts(counts);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [activeOperator, activeRole, authChecked, authSession, opportunities]);
+
+  function openHomeMetric(metric: HomeMetricItem) {
+    const nonce = ++presetNonce.current;
+    if (metric.researchPreset) setResearchPreset({ ...metric.researchPreset, nonce });
+    if (metric.listingPreset) setListingPreset({ ...metric.listingPreset, nonce });
+    setActiveView(metric.view);
+  }
+
   function applyAuthSession(session: AuthSession) {
     setAuthSession(session);
     setAuthToken(session.access_token);
@@ -816,8 +869,6 @@ function App() {
         await api.updateOperatorProfile(profile.id, {
           operator_name: profile.operator_name,
           key_site: profile.key_site || "",
-          key_category1: profile.key_category1 || "",
-          key_category2: profile.key_category2 || "",
           key_categories: profileCategorySelections(profile),
           assignment_priority: Number(profile.assignment_priority || 0),
           display_order: profile.display_order || 0,
@@ -831,7 +882,7 @@ function App() {
     await runAction("新增人员配置", async () => {
       if (!newProfile.operator_name.trim()) throw new Error("运营不能为空");
       await api.createOperatorProfile(newProfile);
-      setNewProfile({ operator_name: "", key_site: "", key_category1: "", key_category2: "", key_categories: [], assignment_priority: 0, enabled: true });
+      setNewProfile({ operator_name: "", key_site: "", key_categories: [], assignment_priority: 0, enabled: true });
     });
   }
 
@@ -1258,6 +1309,7 @@ function App() {
                 salespersonName={activeOperator}
                 editable={activeRole === "operator"}
                 canManage={canManage}
+                preset={researchPreset}
                 onStatus={setStatusMessage}
               />
             )}
@@ -1269,6 +1321,7 @@ function App() {
                 role={activeRole}
                 operatorName={activeOperator}
                 canManage={canManage}
+                preset={listingPreset}
                 productLinks={listingProductLinks}
                 onOpenProduct={(opportunityId) => {
                   const item = opportunities.find((entry) => entry.id === opportunityId);
@@ -1296,11 +1349,17 @@ function App() {
                   : "导入两张内部反馈表，按主 SKU 组分配，复核认领/不认领并导出 Excel。"}
               </p>
               <div className="metrics">
-                {roleMetrics(activeRole, stats).map(([label, value]) => (
-                  <div className="metric" key={label}>
-                    <span>{label}</span>
-                    <b>{value}</b>
-                  </div>
+                {roleHomeMetrics(activeRole, stats, dashboardCounts).map((metric) => (
+                  <button
+                    className="metric metric-button"
+                    key={metric.label}
+                    type="button"
+                    title={`打开${viewMeta[metric.view].title}`}
+                    onClick={() => openHomeMetric(metric)}
+                  >
+                    <span>{metric.label}</span>
+                    <b>{metric.value}</b>
+                  </button>
                 ))}
               </div>
             </section>
@@ -2115,12 +2174,22 @@ function ProductDetailView(props: {
                 <DetailFieldGrid item={activeChild} specs={coreFieldSpecs} />
               </div>
             )}
-            {activeSection === "development" && (
-              <div className="detail-pane">
-                <h3>开发询价（M-Y）</h3>
-                <DetailFieldGrid item={activeChild} specs={developmentFieldSpecs} />
-              </div>
-            )}
+            {activeSection === "development" && (() => {
+              const archiveSection = developmentSourceV2Section(activeChild, ["询价", "规格"]);
+              return (
+                <div className="detail-pane">
+                  <h3>
+                    开发询价（M-Y）
+                    {archiveSection && <span className="tag">三国表·{archiveSection.businessPeriod}</span>}
+                  </h3>
+                  {archiveSection ? (
+                    <ArchiveSegmentTable section={archiveSection} />
+                  ) : (
+                    <DetailFieldGrid item={activeChild} specs={developmentFieldSpecs} />
+                  )}
+                </div>
+              );
+            })()}
             {activeSection === "market" && (
               <div className="detail-pane">
                 <h3>市场调研（表头匹配，历史 Z-AN 兜底）</h3>
@@ -2134,12 +2203,22 @@ function ProductDetailView(props: {
                 {!pricingRows(activeChild).length && <p className="muted detail-empty">暂无价格 / 毛利参考字段。</p>}
               </div>
             )}
-            {activeSection === "cost" && (
-              <div className="detail-pane">
-                <h3>成本参数（AQ-BR）</h3>
-                <ColumnRangeTable item={activeChild} columns={costParameterColumns} />
-              </div>
-            )}
+            {activeSection === "cost" && (() => {
+              const archiveSection = developmentSourceV2Section(activeChild, ["成本"]);
+              return (
+                <div className="detail-pane">
+                  <h3>
+                    成本参数（AQ-BR）
+                    {archiveSection && <span className="tag">三国表·{archiveSection.businessPeriod}</span>}
+                  </h3>
+                  {archiveSection ? (
+                    <ArchiveSegmentTable section={archiveSection} />
+                  ) : (
+                    <ColumnRangeTable item={activeChild} columns={costParameterColumns} />
+                  )}
+                </div>
+              );
+            })()}
             {activeSection === "claim" && (
               <div className="detail-pane">
                 <h3>认领与复核</h3>
@@ -2327,6 +2406,31 @@ function DetailFieldGrid(props: { item: Opportunity; specs: DetailFieldSpec[] })
           <b>{renderMaybeLink(formatBusinessValue(row.value, row.label))}</b>
         </div>
       ))}
+    </div>
+  );
+}
+
+function ArchiveSegmentTable(props: { section: DevelopmentSourceV2Section }) {
+  return (
+    <div className="table-wrap detail-table-wrap">
+      <table className="detail-table">
+        <thead>
+          <tr>
+            <th>列</th>
+            <th>字段</th>
+            <th>值</th>
+          </tr>
+        </thead>
+        <tbody>
+          {props.section.rows.map((row, index) => (
+            <tr key={`${row.column}-${row.label}-${index}`}>
+              <td>{row.column || "—"}</td>
+              <td>{row.label || "—"}</td>
+              <td>{renderMaybeLink(formatBusinessValue(row.value, row.label))}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
@@ -2941,12 +3045,10 @@ function AssignView(props: {
                       <option value="">请选择</option>
                       {siteOptions.map((site) => <option key={site} value={site}>{siteOptionLabel(site)}</option>)}
                     </select>
-                    <CategoryMultiSelect
-                      categoryOptions={categoryOptions}
+                    <KeyCategoryEditor
+                      ariaLabel={`${profile.operator_name} 重点类目`}
                       companyCategories={props.companyCategories}
-                      legacy1={profile.key_category1}
-                      legacy2={profile.key_category2}
-                      onChange={(key_categories) => patchProfile(profile.id, { key_categories, ...legacyCategoryFields(key_categories) })}
+                      onChange={(key_categories) => patchProfile(profile.id, { key_categories })}
                       value={profile.key_categories}
                     />
                     <input
@@ -3007,12 +3109,10 @@ function AssignView(props: {
                     <option value="">选择负责站点</option>
                     {siteOptions.map((site) => <option key={site} value={site}>{siteOptionLabel(site)}</option>)}
                   </select>
-                  <CategoryMultiSelect
-                    categoryOptions={categoryOptions}
+                  <KeyCategoryEditor
+                    ariaLabel="新运营重点类目"
                     companyCategories={props.companyCategories}
-                    legacy1={props.newProfile.key_category1}
-                    legacy2={props.newProfile.key_category2}
-                    onChange={(key_categories) => props.setNewProfile({ ...props.newProfile, key_categories, ...legacyCategoryFields(key_categories) })}
+                    onChange={(key_categories) => props.setNewProfile({ ...props.newProfile, key_categories })}
                     value={props.newProfile.key_categories}
                   />
                   <input
@@ -3082,111 +3182,88 @@ function assignmentWorkload(
   return byName;
 }
 
-function profileCategorySelections(profile?: Pick<OperatorAssignmentProfile, "key_categories" | "key_category1" | "key_category2"> | OperatorProfileDraft | null) {
-  const configured = profile?.key_categories && profile.key_categories.length ? profile.key_categories : legacyCategorySelections(profile?.key_category1, profile?.key_category2);
-  return normalizeCategorySelections(configured);
+function profileCategorySelections(profile?: Pick<OperatorAssignmentProfile, "key_categories"> | OperatorProfileDraft | null) {
+  return normalizeCategorySelections(profile?.key_categories || []);
 }
 
-function legacyCategorySelections(...values: Array<string | null | undefined>): OperatorCategorySelection[] {
-  return values.filter((value): value is string => Boolean(value?.trim())).map((level1) => ({ level1 }));
-}
-
-function normalizeCategorySelections(values: Array<OperatorCategorySelection | null | undefined>): OperatorCategorySelection[] {
-  const wholeLevel1 = new Set(values.map((item) => item?.level2 ? "" : item?.level1?.trim()).filter(Boolean));
-  const seen = new Set<string>();
-  const output: OperatorCategorySelection[] = [];
-  for (const item of values) {
-    const level1 = item?.level1?.trim();
-    const level2 = item?.level2?.trim() || null;
-    if (!level1 || (level2 && wholeLevel1.has(level1))) continue;
-    const key = categorySelectionKey({ level1, level2 });
-    if (seen.has(key)) continue;
-    seen.add(key);
-    output.push({ level1, level2 });
-  }
-  return output;
-}
-
-function legacyCategoryFields(selections: OperatorCategorySelection[]) {
-  const levels = Array.from(new Set(selections.map((item) => item.level1).filter(Boolean)));
-  return { key_category1: levels[0] || "", key_category2: levels[1] || "" };
-}
-
-function categorySelectionKey(selection: Pick<OperatorCategorySelection, "level1" | "level2">) {
-  return selection.level1 + "|||" + (selection.level2 || "");
-}
-
-function categorySelectionLabel(selection: Pick<OperatorCategorySelection, "level1" | "level2">) {
-  return selection.level2 ? selection.level1 + " / " + selection.level2 : selection.level1;
-}
-
-function parseCategorySelectionKey(value: string): OperatorCategorySelection {
-  const [level1, level2 = ""] = value.split("|||");
-  return { level1, level2: level2 || null };
-}
-
-function CategoryMultiSelect(props: {
-  categoryOptions: string[];
+function KeyCategoryEditor(props: {
+  ariaLabel: string;
   companyCategories: CompanyCategory[];
-  legacy1?: string | null;
-  legacy2?: string | null;
   value?: OperatorCategorySelection[] | null;
   onChange: (value: OperatorCategorySelection[]) => void;
 }) {
-  const selected = profileCategorySelections({ key_categories: props.value || [], key_category1: props.legacy1, key_category2: props.legacy2 });
-  const selectedKeys = new Set(selected.map(categorySelectionKey));
-  const selectedLevel1 = new Set(selected.filter((item) => !item.level2).map((item) => item.level1));
-  const level1Options = Array.from(new Set([
-    ...props.categoryOptions,
-    ...props.companyCategories.map((item) => item.level1),
-    ...selected.map((item) => item.level1)
-  ].filter(Boolean))).sort((left, right) => left.localeCompare(right, "zh-CN"));
-  const pairOptions = props.companyCategories
-    .filter((item) => item.level1 && item.level2)
-    .sort((left, right) => categorySelectionLabel(left).localeCompare(categorySelectionLabel(right), "zh-CN"));
-  const setLevel1 = (level1: string, checked: boolean) => {
-    const next = selected.filter((item) => item.level1 !== level1);
-    if (checked) next.push({ level1, level2: null });
-    props.onChange(normalizeCategorySelections(next));
-  };
-  const setPair = (selection: OperatorCategorySelection, checked: boolean) => {
-    const key = categorySelectionKey(selection);
-    const next = selected.filter((item) => categorySelectionKey(item) !== key && !(checked && item.level1 === selection.level1 && !item.level2));
-    if (checked) next.push(selection);
-    props.onChange(normalizeCategorySelections(next));
-  };
-  const secondLevelCount = selected.filter((item) => item.level2).length;
-  const summary = selected.length ? selected.map(categorySelectionLabel).join("、") : "选择重点类目";
+  const [level1, setLevel1] = useState("");
+  const [level2, setLevel2] = useState("");
+  const [error, setError] = useState("");
+  const selected = normalizeCategorySelections(props.value || []);
+  const level1Options = categoryLevel1Options(props.companyCategories);
+  const level2Options = level1 ? categoryLevel2Options(props.companyCategories, level1) : [];
+
+  function add() {
+    const result = addKeyCategory(selected, { level1, level2: level2 || null });
+    if (!result.selections) {
+      setError(result.error);
+      return;
+    }
+    setError("");
+    setLevel2("");
+    props.onChange(result.selections);
+  }
+
+  function remove(selection: OperatorCategorySelection) {
+    setError("");
+    props.onChange(removeKeyCategory(selected, selection));
+  }
+
   return (
-    <div className="category-multi-select">
-      <details>
-        <summary title={summary}>{selectedLevel1.size ? "一级 " + selectedLevel1.size : "一级类目"}</summary>
-        <div className="category-menu">
-          {level1Options.map((level1) => (
-            <label key={level1}>
-              <input type="checkbox" checked={selectedLevel1.has(level1)} onChange={(event) => setLevel1(level1, event.target.checked)} />
-              <span>{level1}</span>
-            </label>
+    <div className="key-category-editor">
+      {selected.length > 0 && (
+        <div className="key-category-tags">
+          {selected.map((selection) => (
+            <span className="tag key-category-tag" key={categorySelectionKey(selection)}>
+              {categorySelectionLabel(selection)}
+              <button
+                aria-label={`删除重点类目 ${categorySelectionLabel(selection)}`}
+                type="button"
+                onClick={() => remove(selection)}
+              >
+                <X size={12} />
+              </button>
+            </span>
           ))}
-          {!level1Options.length && <span className="muted">暂无类目字典</span>}
         </div>
-      </details>
-      <details>
-        <summary title={summary}>{secondLevelCount ? "二级 " + secondLevelCount : "二级类目"}</summary>
-        <div className="category-menu wide">
-          {pairOptions.map((item) => {
-            const selection = parseCategorySelectionKey(categorySelectionKey(item));
-            return (
-              <label key={categorySelectionKey(item)}>
-                <input type="checkbox" checked={selectedKeys.has(categorySelectionKey(item))} onChange={(event) => setPair(selection, event.target.checked)} />
-                <span>{categorySelectionLabel(item)}</span>
-              </label>
-            );
-          })}
-          {!pairOptions.length && <span className="muted">暂无二级类目</span>}
-        </div>
-      </details>
-      <span className="category-summary" title={summary}>{summary}</span>
+      )}
+      <div className="key-category-picker">
+        <select
+          aria-label={`${props.ariaLabel}一级类目`}
+          value={level1}
+          onChange={(event) => {
+            setLevel1(event.target.value);
+            setLevel2("");
+            setError("");
+          }}
+        >
+          <option value="">一级类目</option>
+          {level1Options.map((option) => <option key={option} value={option}>{option}</option>)}
+        </select>
+        <select
+          aria-label={`${props.ariaLabel}二级类目`}
+          disabled={!level1}
+          value={level2}
+          onChange={(event) => {
+            setLevel2(event.target.value);
+            setError("");
+          }}
+        >
+          <option value="">整个一级</option>
+          {level2Options.map((option) => <option key={option} value={option}>{option}</option>)}
+        </select>
+        <button className="btn" disabled={!level1} type="button" onClick={add}>
+          <Plus size={14} />
+          添加
+        </button>
+      </div>
+      {error && <span className="key-category-error">{error}</span>}
     </div>
   );
 }
@@ -4946,23 +5023,6 @@ function buildStats(opportunities: Opportunity[], tasks: Task[], availableStocki
     pendingAssign: byStatus.pending_assignment || 0,
     pendingReview: tasks.filter((task) => task.task_type === "manager_review" && task.status === "pending").length || (byStatus.claim_submitted || 0) + (byStatus.claim_rejected || 0)
   };
-}
-
-function roleMetrics(role: RoleKey, stats: ReturnType<typeof buildStats>): [string, number][] {
-  if (role === "operator") {
-    return [
-      ["待认领", stats.assigned],
-      ["待补充", stats.returned],
-      ["可自认领", stats.selfClaimPool],
-      ["已通过", stats.ready]
-    ];
-  }
-  return [
-    ["待导入", stats.sourceTodo],
-    ["待分配", stats.pendingAssign],
-    ["待复核", stats.pendingReview],
-    ["可导出", stats.ready]
-  ];
 }
 
 function viewIcon(view: ViewKey) {

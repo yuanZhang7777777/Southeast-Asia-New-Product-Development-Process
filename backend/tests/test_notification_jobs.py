@@ -13,6 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from app import models  # noqa: E402
 from app.config import Settings  # noqa: E402
 from app.db import Base, SessionLocal, engine  # noqa: E402
+from app.dingtalk_card_sender import DingTalkCardConfig, DingTalkCardSender  # noqa: E402
 from app.notification_jobs import (  # noqa: E402
     send_arrival_daily_cards,
     send_daily_elimination_summary,
@@ -94,6 +95,41 @@ def test_arrival_daily_cards_group_by_date_and_salesperson_and_dedupe() -> None:
         assert [(item.main_sku, item.child_sku_count, item.product_name) for item in card.new_items] == [("MAIN-1", 2, "新品一")]
         assert [(item.main_sku, item.child_sku_count, item.product_name) for item in card.old_items] == [("MAIN-2", 1, "老品二")]
         assert db.query(models.NotificationLog).count() == 1
+
+
+def test_arrival_daily_cards_carry_handle_button_linking_to_platform() -> None:
+    settings = Settings(dingtalk_card_autosend_enabled=True, platform_base_url="https://np.example")
+    sender = FakeSender()
+    with SessionLocal() as db:
+        db.add(models.RoleMapping(name="销售A", role="operator", dingtalk_user_id="dt-sales-a", enabled=True))
+        batch = models.PlmArrivalBatch(arrival_date="2026-07-12", source_hash="hash-btn", bloc_name="集团八部", row_count=1)
+        db.add(batch)
+        db.flush()
+        db.add(
+            models.PlmArrivalItem(
+                batch_id=batch.id,
+                arrival_type="new_arrival",
+                salesperson_name="销售A",
+                main_sku="MAIN-1",
+                sub_sku="S1",
+                product_name="新品一",
+            )
+        )
+        db.flush()
+
+        send_arrival_daily_cards(db, settings, sender, "2026-07-12")
+
+    assert len(sender.arrival_cards) == 1
+    card = sender.arrival_cards[0]
+    assert card.action_text == "去处理"
+    assert card.action_url == "https://np.example/?from=ding&role=operator"
+
+    payload = DingTalkCardSender(
+        DingTalkCardConfig(client_id="cid", client_secret="secret")
+    ).build_arrival_create_and_deliver_payload(card)
+    card_params = payload["cardData"]["cardParamMap"]
+    assert card_params["action_text"] == "去处理"
+    assert card_params["action_url"] == "https://np.example/?from=ding&role=operator"
 
 
 def test_arrival_daily_cards_send_every_salesperson_group_to_test_receiver() -> None:
