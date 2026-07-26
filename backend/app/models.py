@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import date, datetime, timezone
 
-from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base
@@ -388,7 +388,14 @@ class PlmArrivalItem(TimestampMixin, Base):
 class ListingRecord(TimestampMixin, Base):
     __tablename__ = "listing_record"
     __table_args__ = (
-        UniqueConstraint("item", name="uq_listing_record_item"),
+        Index(
+            "uq_listing_record_shop_item_active",
+            "shop",
+            "item",
+            unique=True,
+            sqlite_where=text("status = 'active'"),
+            postgresql_where=text("status = 'active'"),
+        ),
         Index("ix_listing_record_owner_status", "salesperson_name", "status", "tracking_status"),
     )
 
@@ -414,17 +421,47 @@ class ListingRecord(TimestampMixin, Base):
     resumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     voided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     void_reason: Mapped[str | None] = mapped_column(Text)
+    is_shared_item: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
+    representative_rule: Mapped[str | None] = mapped_column(String(64))
+    representative_sub_sku: Mapped[str | None] = mapped_column(String(128))
     created_by_user_id: Mapped[str | None] = mapped_column(String(36))
     created_by_name: Mapped[str | None] = mapped_column(String(128))
 
     periods: Mapped[list["ItemObservationPeriod"]] = relationship(back_populates="listing_record")
+    bindings: Mapped[list["ListingSkuBinding"]] = relationship(back_populates="listing_record")
+
+
+class ListingSkuBinding(TimestampMixin, Base):
+    __tablename__ = "listing_sku_binding"
+    __table_args__ = (
+        UniqueConstraint("listing_record_id", "main_sku", "sub_sku", name="uq_listing_sku_binding_sku"),
+        Index(
+            "uq_listing_sku_binding_main_level",
+            "listing_record_id",
+            "main_sku",
+            unique=True,
+            sqlite_where=text("sub_sku IS NULL"),
+            postgresql_where=text("sub_sku IS NULL"),
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    listing_record_id: Mapped[str] = mapped_column(ForeignKey("listing_record.id"), index=True)
+    main_sku: Mapped[str] = mapped_column(String(128), index=True)
+    sub_sku: Mapped[str | None] = mapped_column(String(128), index=True)
+    salesperson_name: Mapped[str | None] = mapped_column(String(128))
+    opportunity_id: Mapped[str | None] = mapped_column(String(36))
+    claim_record_id: Mapped[str | None] = mapped_column(String(36))
+    binding_source: Mapped[str] = mapped_column(String(32), default="platform_confirm", server_default="platform_confirm")
+
+    listing_record: Mapped[ListingRecord] = relationship(back_populates="bindings")
 
 
 class ItemObservationPeriod(TimestampMixin, Base):
     __tablename__ = "item_observation_period"
     __table_args__ = (
-        UniqueConstraint("listing_record_id", "week_number", name="uq_item_observation_period_week"),
-        UniqueConstraint("listing_record_id", "period_start", name="uq_item_observation_period_start"),
+        UniqueConstraint("listing_record_id", "week_number", "record_source", name="uq_item_observation_period_week"),
+        UniqueConstraint("listing_record_id", "period_start", "record_source", name="uq_item_observation_period_start"),
         Index("ix_item_observation_period_status_start", "status", "period_start"),
     )
 
@@ -434,6 +471,8 @@ class ItemObservationPeriod(TimestampMixin, Base):
     period_start: Mapped[date] = mapped_column(Date)
     period_end: Mapped[date] = mapped_column(Date)
     status: Mapped[str] = mapped_column(String(32), default="pending_data")
+    record_source: Mapped[str] = mapped_column(String(32), default="platform", server_default="platform")
+    metrics_origin: Mapped[str | None] = mapped_column(String(32))
     order_count: Mapped[int | None] = mapped_column(Integer)
     total_revenue: Mapped[float | None] = mapped_column(Float)
     gross_profit_amount: Mapped[float | None] = mapped_column(Float)

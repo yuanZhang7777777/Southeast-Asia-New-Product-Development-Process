@@ -116,11 +116,16 @@ def test_batch_summary_schemas_read_model_metadata() -> None:
 def test_listing_observation_tables_replace_legacy_four_week_summary() -> None:
     assert "listing_record" in Base.metadata.tables
     assert "item_observation_period" in Base.metadata.tables
+    assert "listing_sku_binding" in Base.metadata.tables
     assert "four_week_summary" not in Base.metadata.tables
 
     listing_constraints = {constraint.name for constraint in Base.metadata.tables["listing_record"].constraints}
+    listing_indexes = {index.name for index in Base.metadata.tables["listing_record"].indexes}
     period_constraints = {constraint.name for constraint in Base.metadata.tables["item_observation_period"].constraints}
-    assert "uq_listing_record_item" in listing_constraints
+    binding_constraints = {constraint.name for constraint in Base.metadata.tables["listing_sku_binding"].constraints}
+    assert "uq_listing_record_item" not in listing_constraints
+    assert "uq_listing_record_shop_item_active" in listing_indexes
+    assert "uq_listing_sku_binding_sku" in binding_constraints
     assert "uq_item_observation_period_week" in period_constraints
     assert "uq_item_observation_period_start" in period_constraints
 
@@ -129,7 +134,7 @@ def test_alembic_has_single_current_head() -> None:
     config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
     config.set_main_option("script_location", str(Path(__file__).resolve().parents[1] / "alembic"))
 
-    assert ScriptDirectory.from_config(config).get_current_head() == "d7e8f9a0b123"
+    assert ScriptDirectory.from_config(config).get_current_head() == "e0f1a2b3c456"
 
 
 def test_stocking_claim_statuses_are_explicit() -> None:

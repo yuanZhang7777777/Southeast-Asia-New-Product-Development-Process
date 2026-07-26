@@ -1706,23 +1706,30 @@ def create_listing_batch(
                 row_errors.append({"row_index": row_index, "field": field, "message": f"{field} is required"})
         cleaned.append({**values, "first_period_start": first_period_start})
 
-    item_rows: dict[str, list[int]] = defaultdict(list)
+    item_rows: dict[tuple[str, str], list[int]] = defaultdict(list)
     for row_index, values in enumerate(cleaned):
         if values["item"]:
-            item_rows[values["item"]].append(row_index)
+            item_rows[(values["shop"], values["item"])].append(row_index)
     for indexes in item_rows.values():
         if len(indexes) > 1:
             row_errors.extend(
                 {"row_index": row_index, "field": "item", "message": "item is duplicated in this batch"}
                 for row_index in indexes
             )
-    existing_items = set(
-        db.scalars(select(models.ListingRecord.item).where(models.ListingRecord.item.in_(item_rows))).all()
-    ) if item_rows else set()
+    existing_pairs = {
+        (shop, item)
+        for shop, item in db.execute(
+            select(models.ListingRecord.shop, models.ListingRecord.item).where(
+                models.ListingRecord.item.in_({item for _, item in item_rows}),
+                models.ListingRecord.status == "active",
+            )
+        )
+    } if item_rows else set()
     row_errors.extend(
         {"row_index": row_index, "field": "item", "message": "item already exists"}
-        for item in existing_items
-        for row_index in item_rows[item]
+        for pair in existing_pairs
+        if pair in item_rows
+        for row_index in item_rows[pair]
     )
     reusable = {
         listing.id: listing
@@ -1776,10 +1783,20 @@ def create_listing_batch(
             listing_strategy=values["listing_strategy"],
             first_period_start=first_start,
             first_period_end=first_start + timedelta(days=6),
+            representative_rule="single_binding",
             created_by_user_id=actor_user_id,
             created_by_name=actor_name,
         )
         db.add(record)
+        db.add(
+            models.ListingSkuBinding(
+                id=models.new_id(),
+                listing_record_id=record.id,
+                main_sku=task["main_sku"],
+                salesperson_name=task["salesperson_name"],
+                binding_source="platform_confirm",
+            )
+        )
         for week_number, (period_start, period_end) in enumerate(initial_observation_period_dates(first_start), start=1):
             db.add(
                 models.ItemObservationPeriod(
@@ -1915,6 +1932,9 @@ def listing_record_read(item: models.ListingRecord, source_context: dict | None 
         "status": item.status,
         "tracking_status": item.tracking_status,
         "first_round_completed_at": item.initial_observation_completed_at,
+        "is_shared_item": item.is_shared_item,
+        "representative_rule": item.representative_rule,
+        "representative_sub_sku": item.representative_sub_sku,
     }
 
 
@@ -1938,6 +1958,8 @@ def observation_period_read(
         "week_number": period.week_number,
         "period_start": period.period_start,
         "period_end": period.period_end,
+        "record_source": period.record_source,
+        "metrics_origin": period.metrics_origin,
         "business_period": listing.business_period,
         "status": period.status,
         "tracking_status": listing.tracking_status,
@@ -1996,7 +2018,8 @@ def list_listing_workbench(
     listings = list(db.scalars(statement.order_by(models.ListingRecord.created_at.desc())))
     listing_ids = [item.id for item in listings]
     period_statement = select(models.ItemObservationPeriod).where(
-        models.ItemObservationPeriod.listing_record_id.in_(listing_ids)
+        models.ItemObservationPeriod.listing_record_id.in_(listing_ids),
+        models.ItemObservationPeriod.record_source == "platform",
     )
     if period_start:
         period_statement = period_statement.where(models.ItemObservationPeriod.period_start == period_start)
@@ -2088,7 +2111,10 @@ def review_observation_periods(
     locked_listing_periods = list(
         db.scalars(
             select(models.ItemObservationPeriod)
-            .where(models.ItemObservationPeriod.listing_record_id.in_(listing_ids))
+            .where(
+                models.ItemObservationPeriod.listing_record_id.in_(listing_ids),
+                models.ItemObservationPeriod.record_source == "platform",
+            )
             .order_by(models.ItemObservationPeriod.listing_record_id, models.ItemObservationPeriod.week_number)
             .with_for_update()
         )
@@ -2195,6 +2221,7 @@ def review_observation_periods(
                 select(models.ItemObservationPeriod).where(
                     models.ItemObservationPeriod.listing_record_id == listing_id,
                     models.ItemObservationPeriod.week_number <= 4,
+                    models.ItemObservationPeriod.record_source == "platform",
                 )
             )
         )
@@ -2226,12 +2253,16 @@ def update_listing_record(
     periods = list(
         db.scalars(
             select(models.ItemObservationPeriod)
-            .where(models.ItemObservationPeriod.listing_record_id == listing.id)
+            .where(
+                models.ItemObservationPeriod.listing_record_id == listing.id,
+                models.ItemObservationPeriod.record_source == "platform",
+            )
             .order_by(models.ItemObservationPeriod.week_number)
         )
     )
     has_metrics = any(period.metrics_fetched_at is not None for period in periods)
     changed: list[str] = []
+    original_pair = (listing.shop, listing.item)
     for field in ("shop", "item", "listing_strategy"):
         if field not in payload.model_fields_set:
             continue
@@ -2240,11 +2271,17 @@ def update_listing_record(
             raise ValueError(f"{field} is required")
         if has_metrics and field in {"shop", "item"} and value != getattr(listing, field):
             raise ValueError(f"{field} cannot be changed after weekly metrics exist")
-        if field == "item" and value != listing.item:
-            if db.scalar(select(models.ListingRecord.id).where(models.ListingRecord.item == value)):
-                raise ValueError("item already exists")
         setattr(listing, field, value)
         changed.append(field)
+    if (listing.shop, listing.item) != original_pair and db.scalar(
+        select(models.ListingRecord.id).where(
+            models.ListingRecord.shop == listing.shop,
+            models.ListingRecord.item == listing.item,
+            models.ListingRecord.status == "active",
+            models.ListingRecord.id != listing.id,
+        )
+    ):
+        raise ValueError("item already exists")
     if "first_period_start" in payload.model_fields_set:
         if has_metrics:
             raise ValueError("first_period_start cannot be changed after weekly metrics exist")
@@ -2334,7 +2371,10 @@ def add_observation_period(
     validate_selectable_period_start(period_start, today or datetime.now(EXCEL_TIMEZONE).date())
     periods = list(
         db.scalars(
-            select(models.ItemObservationPeriod).where(models.ItemObservationPeriod.listing_record_id == listing.id)
+            select(models.ItemObservationPeriod).where(
+                models.ItemObservationPeriod.listing_record_id == listing.id,
+                models.ItemObservationPeriod.record_source == "platform",
+            )
         )
     )
     if any(period.period_start == period_start for period in periods):
@@ -2360,18 +2400,41 @@ def add_observation_period(
     return period
 
 
+def recompute_listing_binding_state(db: Session, listing: models.ListingRecord) -> None:
+    bindings = list(
+        db.scalars(
+            select(models.ListingSkuBinding).where(models.ListingSkuBinding.listing_record_id == listing.id)
+        )
+    )
+    main_skus = sorted({binding.main_sku for binding in bindings})
+    sub_skus = sorted({binding.sub_sku for binding in bindings if binding.sub_sku})
+    listing.is_shared_item = len(main_skus) > 1 or len(sub_skus) > 1
+    if len(bindings) <= 1:
+        listing.representative_rule = "single_binding"
+    elif any(binding.claim_record_id for binding in bindings):
+        listing.representative_rule = "platform_claim"
+    else:
+        listing.representative_rule = "lexical_first"
+    listing.representative_sub_sku = sub_skus[0] if len(sub_skus) == 1 else None
+
+
 def apply_week_metrics(
     db: Session,
+    shop: str,
     item: str,
     period_start: date,
     metrics: dict | None,
     actor_name: str = "weekly_item_import",
 ) -> models.ItemObservationPeriod | None:
-    listing = db.scalar(
+    listing = db.scalars(
         select(models.ListingRecord)
-        .where(models.ListingRecord.item == item.strip())
+        .where(
+            models.ListingRecord.shop == shop.strip(),
+            models.ListingRecord.item == item.strip(),
+            models.ListingRecord.status == "active",
+        )
         .with_for_update()
-    )
+    ).one_or_none()
     if listing is None:
         return None
     period = db.scalar(
@@ -2379,6 +2442,7 @@ def apply_week_metrics(
         .where(
             models.ItemObservationPeriod.listing_record_id == listing.id,
             models.ItemObservationPeriod.period_start == period_start,
+            models.ItemObservationPeriod.record_source == "platform",
         )
         .with_for_update()
     )
@@ -2386,7 +2450,7 @@ def apply_week_metrics(
         return None
     if period.metrics_fetched_at is not None:
         return period
-    if metrics is None or listing.status != "active" or listing.tracking_status != "active":
+    if metrics is None or listing.tracking_status != "active":
         return period
     required = ("order_count", "total_revenue", "gross_profit_amount")
     missing = [field for field in required if field not in metrics or metrics[field] is None]

@@ -77,7 +77,7 @@ def test_stocking_workflow_migration_is_the_single_head() -> None:
     config.set_main_option("script_location", str(Path(__file__).resolve().parents[1] / "alembic"))
     script = ScriptDirectory.from_config(config)
 
-    assert script.get_heads() == ["d7e8f9a0b123"]
+    assert script.get_heads() == ["e0f1a2b3c456"]
     assert script.get_revision("e1f2a3b4c678").down_revision == "d0e2f3a4b567"
 
 
@@ -141,7 +141,51 @@ def test_sqlite_upgrade_from_previous_head_preserves_legacy_rows(tmp_path: Path,
             revision = connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
         assert request == ("request-legacy", None)
         assert export_row == ("row-legacy", None, None)
-        assert revision == "d7e8f9a0b123"
+        assert revision == "e0f1a2b3c456"
+    finally:
+        engine.dispose()
+        get_settings.cache_clear()
+
+
+def test_listing_binding_backfill_on_upgrade(tmp_path: Path, monkeypatch) -> None:
+    database_url = f"sqlite:///{tmp_path / 'binding_migration.db'}"
+    monkeypatch.setenv("DATABASE_URL", database_url)
+    get_settings.cache_clear()
+    config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
+    config.set_main_option("script_location", str(Path(__file__).resolve().parents[1] / "alembic"))
+    engine = create_engine(database_url)
+    try:
+        command.upgrade(config, "d7e8f9a0b123")
+        now = "2026-07-21 00:00:00"
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    """INSERT INTO listing_record
+                    (id, source_group_key, source_claim_ids, source_type, main_sku, salesperson_name, shop, item,
+                     listing_strategy, first_period_start, first_period_end, status, tracking_status, created_at, updated_at)
+                    VALUES ('listing-legacy', 'task-legacy', '[]', 'selection1_developer_claim_feedback', 'MAIN-LEGACY',
+                            '销售L', 'Shopee-PH-L', 'ITEM-LEGACY', '策略', '2026-07-16', '2026-07-22', 'active', 'active',
+                            :now, :now)"""
+                ),
+                {"now": now},
+            )
+
+        command.upgrade(config, "head")
+
+        with engine.connect() as connection:
+            binding = connection.execute(
+                text(
+                    "SELECT listing_record_id, main_sku, sub_sku, salesperson_name, binding_source FROM listing_sku_binding"
+                )
+            ).one()
+            listing = connection.execute(
+                text("SELECT representative_rule, is_shared_item FROM listing_record WHERE id = 'listing-legacy'")
+            ).one()
+            revision = connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
+        assert binding == ("listing-legacy", "MAIN-LEGACY", None, "销售L", "platform_migrated")
+        assert listing[0] == "single_binding"
+        assert not listing[1]
+        assert revision == "e0f1a2b3c456"
     finally:
         engine.dispose()
         get_settings.cache_clear()

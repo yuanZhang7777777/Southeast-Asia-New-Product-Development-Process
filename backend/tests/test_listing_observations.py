@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import event
+from sqlalchemy.exc import IntegrityError
 
 os.environ["DATABASE_URL"] = f"sqlite:///{Path(__file__).with_name('test_listing_observations.db')}"
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -173,6 +174,105 @@ def test_manual_listing_batch_creates_new_main_sku_without_claim_source() -> Non
 
     workbench = client.get("/listing-workbench", headers=headers).json()
     assert any(item["main_sku"] == "MAIN-MANUAL" for item in workbench["listing_records"])
+
+
+def test_listing_batch_creates_main_sku_binding() -> None:
+    create_waiting_listing_group("销售A", "MAIN-A")
+    with SessionLocal() as db:
+        task = next(task for task in services.list_pending_listing_tasks(db) if task["main_sku"] == "MAIN-A")
+        records = services.create_listing_batch(
+            db,
+            task["task_key"],
+            [schemas.ListingBatchRow(
+                shop="Shopee-PH-A",
+                item="10001",
+                listing_strategy="低价切入",
+                first_period_start=services.current_business_period_start(date.today()).isoformat(),
+            )],
+            actor_name="销售A",
+            actor_user_id="user-a",
+            actor_is_manager=False,
+            operator_name="销售A",
+        )
+        db.commit()
+        listing_id = records[0].id
+    with SessionLocal() as db:
+        listing = db.get(models.ListingRecord, listing_id)
+        bindings = db.query(models.ListingSkuBinding).filter_by(listing_record_id=listing_id).all()
+        assert listing.representative_rule == "single_binding"
+        assert listing.is_shared_item is False
+        assert [(b.main_sku, b.sub_sku, b.salesperson_name, b.binding_source) for b in bindings] == [
+            ("MAIN-A", None, "销售A", "platform_confirm")
+        ]
+
+
+def test_main_level_binding_duplicate_is_rejected_by_partial_index() -> None:
+    with SessionLocal() as db:
+        listing = seeded_listing("销售A", date(2026, 7, 16))
+        db.add(listing)
+        db.flush()
+        db.add(
+            models.ListingSkuBinding(
+                id=models.new_id(), listing_record_id=listing.id, main_sku="MAIN-SEED", binding_source="history_finebi"
+            )
+        )
+        db.flush()
+        db.add(
+            models.ListingSkuBinding(
+                id=models.new_id(), listing_record_id=listing.id, main_sku="MAIN-SEED", binding_source="history_finebi"
+            )
+        )
+        with pytest.raises(IntegrityError):
+            db.flush()
+        db.rollback()
+
+
+def test_voided_item_slot_can_be_reused_but_active_duplicate_is_rejected() -> None:
+    headers = login("销售A", "operator", "dt-a")
+    manager_headers = login("主管B", "manager", "dt-b")
+    create_waiting_listing_group("销售A", "MAIN-A")
+    create_waiting_listing_group("销售A", "MAIN-B", business_period="开发0711期")
+    workbench = client.get("/listing-workbench", headers=headers).json()
+    task_a = next(task for task in workbench["pending_listing_tasks"] if task["main_sku"] == "MAIN-A")
+    task_b = next(task for task in workbench["pending_listing_tasks"] if task["main_sku"] == "MAIN-B")
+    current = services.current_business_period_start(date.today()).isoformat()
+
+    def batch_payload(task_key: str, shop: str, item: str) -> dict:
+        return {
+            "task_key": task_key,
+            "rows": [{"shop": shop, "item": item, "listing_strategy": "低价切入", "first_period_start": current}],
+        }
+
+    first = client.post(
+        "/listing-workbench/listings/batch", headers=headers, json=batch_payload(task_a["task_key"], "Shopee-PH-A", "10001")
+    )
+    assert first.status_code == 200
+    listing_id = first.json()[0]["id"]
+
+    duplicate = client.post(
+        "/listing-workbench/listings/batch", headers=headers, json=batch_payload(task_b["task_key"], "Shopee-PH-A", "10001")
+    )
+    assert duplicate.status_code == 409
+
+    other_shop = client.post(
+        "/listing-workbench/listings/batch", headers=headers, json=batch_payload(task_b["task_key"], "Shopee-PH-B", "10001")
+    )
+    assert other_shop.status_code == 200
+
+    voided = client.patch(
+        f"/listing-workbench/listings/{listing_id}",
+        headers=manager_headers,
+        json={"status": "voided", "void_reason": "重刊登"},
+    )
+    assert voided.status_code == 200
+
+    recreated = client.post(
+        "/listing-workbench/listings/batch", headers=headers, json=batch_payload(task_a["task_key"], "Shopee-PH-A", "10001")
+    )
+    assert recreated.status_code == 200
+    with SessionLocal() as db:
+        rows = db.query(models.ListingRecord).filter_by(shop="Shopee-PH-A", item="10001").all()
+        assert sorted(row.status for row in rows) == ["active", "voided"]
 def test_listing_batch_rechecks_locked_claim_status_before_creation(monkeypatch) -> None:
     claim_ids = create_waiting_listing_group("销售A", "MAIN-RACE")
     with SessionLocal() as db:
@@ -236,7 +336,7 @@ def test_batch_validation_is_atomic_and_returns_row_errors() -> None:
             "task_key": task_key,
             "rows": [
                 {"shop": "Shop A", "item": " 10001 ", "listing_strategy": "策略A", "first_period_start": current},
-                {"shop": "Shop B", "item": "10001", "listing_strategy": "策略B", "first_period_start": current},
+                {"shop": "Shop A", "item": "10001", "listing_strategy": "策略B", "first_period_start": current},
             ],
         },
     )
@@ -1208,7 +1308,7 @@ def test_apply_week_metrics_distinguishes_missing_source_from_true_zero() -> Non
         db.commit()
 
     with SessionLocal() as db:
-        missing = services.apply_week_metrics(db, "ITEM-ZERO", date(2026, 7, 16), None)
+        missing = services.apply_week_metrics(db, "Shop Seed", "ITEM-ZERO", date(2026, 7, 16), None)
         db.commit()
         assert missing.status == "pending_data"
         assert missing.metrics_fetched_at is None
@@ -1218,6 +1318,7 @@ def test_apply_week_metrics_distinguishes_missing_source_from_true_zero() -> Non
     with SessionLocal() as db:
         zero = services.apply_week_metrics(
             db,
+            "Shop Seed",
             "ITEM-ZERO",
             date(2026, 7, 16),
             {
@@ -1257,11 +1358,11 @@ def test_apply_week_metrics_freezes_first_success() -> None:
         "source_snapshot": {"file": "week-b.zip", "row": 9},
     }
     with SessionLocal() as db:
-        first = services.apply_week_metrics(db, "ITEM-PROFIT", date(2026, 7, 16), metrics_a)
+        first = services.apply_week_metrics(db, "Shop Seed", "ITEM-PROFIT", date(2026, 7, 16), metrics_a)
         db.commit()
         first_fetched_at = first.metrics_fetched_at
 
-        period = services.apply_week_metrics(db, "ITEM-PROFIT", date(2026, 7, 16), metrics_b)
+        period = services.apply_week_metrics(db, "Shop Seed", "ITEM-PROFIT", date(2026, 7, 16), metrics_b)
         db.commit()
         listing = db.get(models.ListingRecord, period.listing_record_id)
         row = services.observation_period_read(period, listing)
@@ -1291,6 +1392,7 @@ def test_apply_week_metrics_locks_listing_and_period_before_first_success_check(
         try:
             services.apply_week_metrics(
                 db,
+                "Shop Seed",
                 "ITEM-LOCK-METRICS",
                 date(2026, 7, 16),
                 {"order_count": 1, "total_revenue": 10, "gross_profit_amount": 2},
@@ -1314,6 +1416,7 @@ def test_apply_week_metrics_skips_stopped_listing() -> None:
     with SessionLocal() as db:
         period = services.apply_week_metrics(
             db,
+            "Shop Seed",
             "ITEM-STOPPED",
             date(2026, 7, 16),
             {"order_count": 1, "total_revenue": 10, "gross_profit_amount": 2},

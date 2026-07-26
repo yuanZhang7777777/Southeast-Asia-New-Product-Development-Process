@@ -631,6 +631,9 @@ class ListingRecordRead(BaseModel):
     status: str
     tracking_status: str
     first_round_completed_at: datetime | None = None
+    is_shared_item: bool = False
+    representative_rule: str | None = None
+    representative_sub_sku: str | None = None
 
 
 class ObservationPeriodRead(BaseModel):
@@ -645,6 +648,8 @@ class ObservationPeriodRead(BaseModel):
     week_number: int
     period_start: date
     period_end: date
+    record_source: str = "platform"
+    metrics_origin: str | None = None
     business_period: str | None = None
     status: str
     tracking_status: str
