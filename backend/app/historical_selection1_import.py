@@ -42,7 +42,7 @@ SOURCE_TYPE = "history_selection1"
 AUDIT_ACTION = "history.selection1_imported"
 REVERT_AUDIT_ACTION = "history.selection1_import_reverted"
 SHEET_PERIOD_PATTERN = re.compile(r"开发(\d{4})期")
-NEW_GENERATION_MIN = 428  # 开发0428期起为新世代结构
+NEW_GENERATION_MIN = 414  # 用户拍板（2026-07-26）：0414/0421 与新世代同表头结构，一并纳入
 OLD_GENERATION_MIN = 815  # 开发0815期~0924期为旧世代杂糅结构
 SUMMARY_LABELS = {"小计", "合计", "总计", "汇总"}
 FIELD_ALIASES = {
@@ -67,7 +67,7 @@ def sheet_skip_reason(sheet_name: str) -> str | None:
     if period is None:
         return "非期数sheet"
     if int(period) < NEW_GENERATION_MIN:
-        return "旧世代（0421及更早）"
+        return "早于0414期"
     if int(period) >= OLD_GENERATION_MIN:
         return "旧世代（0815-0924）"
     return None

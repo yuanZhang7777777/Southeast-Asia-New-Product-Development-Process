@@ -50,7 +50,7 @@ def build_selection1_workbook(path: Path) -> None:
         ["泰国", "开发二部", "开发员B", "收纳", "box", None, "收纳盒", "TAB10K",
          "收纳盒-蓝", "TAB10KB", "利润", "理由B"]
     )
-    for old_sheet_name, sub_sku in (("开发0421期", "OLD421A"), ("开发0820期--表格容易错行", "OLD820A")):
+    for old_sheet_name, sub_sku in (("开发0407期", "OLD407A"), ("开发0820期--表格容易错行", "OLD820A")):
         old_sheet = workbook.create_sheet(old_sheet_name)
         old_sheet.append(["站点", "开发部门", "开发员", "一级类目", "关键词", "产品图片", "主SKU名称", "主SKU",
                           "子SKU名称", "子SKU", "产品类型", "开品理由"])
@@ -72,7 +72,7 @@ def test_parse_scopes_new_generation_and_keeps_full_snapshot(tmp_path: Path) -> 
     assert report["sheets"] == [{"sheet": "开发0623期", "period": "开发0623期", "rows": 2, "skipped": 2}]
     skipped = {entry["sheet"]: entry["reason"] for entry in report["skipped_sheets"]}
     assert skipped == {
-        "开发0421期": "旧世代（0421及更早）",
+        "开发0407期": "早于0414期",
         "开发0820期--表格容易错行": "旧世代（0815-0924）",
         "说明文档": "非期数sheet",
     }
