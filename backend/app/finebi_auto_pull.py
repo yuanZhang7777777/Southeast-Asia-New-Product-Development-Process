@@ -401,6 +401,8 @@ def _validate_headers(content: bytes, week_label: str) -> None:
     try:
         seen: list[str] = []
         for worksheet in workbook.worksheets:
+            # FineBI 自动导出的 xlsx 维度元数据是坏的（标称 A1:A1），read_only 模式必须重置
+            worksheet.reset_dimensions()
             first_row = next(worksheet.iter_rows(min_row=1, max_row=1, values_only=True), ())
             headers = {text_value(value) for value in first_row if text_value(value)}
             if all(column in headers for column in REQUIRED_HEADER_COLUMNS):
