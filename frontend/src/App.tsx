@@ -1216,7 +1216,21 @@ function App() {
                 onOpenProfilePanel={() => setProfilePanelOpen(true)}
               />
             </div>
-            {statusMessage && <div className={statusMessage.includes("失败") || statusMessage.includes("Error") ? "notice toast red" : "notice toast"}>{statusMessage}</div>}
+            {statusMessage && (
+              <div
+                className={
+                  statusMessage.includes("失败") || statusMessage.includes("Error") || statusMessage.includes("无法") || statusMessage.includes("请")
+                    ? "notice toast toast-red"
+                    : statusMessage.includes("中...") || statusMessage.includes("正在")
+                      ? "notice toast toast-blue"
+                      : "notice toast toast-green"
+                }
+                role="status"
+                aria-live="polite"
+              >
+                {statusMessage}
+              </div>
+            )}
             <div className="screen-body">
             {detailGroup && (
               <ProductDetailView
