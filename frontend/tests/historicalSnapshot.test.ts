@@ -243,6 +243,30 @@ test("旧世代市场调研无链接值时全部走通用标签值列表", () =>
   assert.deepEqual(view.extras.map((field) => field.column), ["N", "O"]);
 });
 
+test("认领区与总结列不因前向填充分组混进成本参数板块", () => {
+  const poisoned = {
+    source_type: "history_selection1",
+    snapshot: {
+      archive_type: "historical_selection1",
+      fields_by_cell: {
+        BU: { header: "开发是否接受核价结果", group: "开发是否接受核价结果", value: "是" },
+        BV: { header: "主销售员", group: "开发是否接受核价结果", value: "陈丽妹" },
+        BW: { header: "是否认领", group: "开发是否接受核价结果", value: "是" },
+        BX: { header: "认领单销", group: "开发是否接受核价结果", value: 0.5 },
+        BY: { header: "不认领理由", group: "开发是否接受核价结果", value: "利润太低" },
+        BZ: { header: "总结", group: "开发是否接受核价结果", value: "四周复盘总结" }
+      }
+    }
+  };
+  const sections = historyFieldsByCellSections(poisoned);
+  assert.ok(sections);
+  // 真正的核价字段留在成本参数；认领区被排除；总结落"其他"。
+  assert.deepEqual(sections.cost.map((field) => field.column), ["BU"]);
+  assert.deepEqual(sections.other.map((field) => field.column), ["BZ"]);
+  const all = Object.values(sections).flat().map((field) => field.label);
+  assert.ok(!all.includes("主销售员") && !all.includes("是否认领") && !all.includes("认领单销") && !all.includes("不认领理由"));
+});
+
 test("非选品1历史来源不产生 fields_by_cell 派生数据", () => {
   assert.equal(historyFieldsByCellSections(selection1Item), null);
   assert.equal(historyFieldsByCellSections(archiveMarketItem), null);

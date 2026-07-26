@@ -149,13 +149,20 @@ export function historyFieldsByCellSections(item: SnapshotItem): HistoryCellSect
     if (!value) continue;
     const group = valueText(cell.group);
     const label = valueText(cell.header) || group || column;
-    sections[historyGroupSection(group)].push({ column, label, group, value });
+    const section = historyFieldSection(label, group);
+    if (section === null) continue;
+    sections[section].push({ column, label, group, value });
   }
   if (!Object.values(sections).some((rows) => rows.length)) return null;
   return sections;
 }
 
-function historyGroupSection(group: string): HistoryCellSectionKey {
+// R1 分组是合并单元格前向填充，认领区/总结列常被打上邻组名（如"开发是否接受核价结果"）——
+// 这两类按表头先行排除，其余仍按分组归类。
+function historyFieldSection(label: string, group: string): HistoryCellSectionKey | null {
+  // 认领区字段不进通用板块：由认领事实回填生成真正的认领记录，在"认领与复核"展示。
+  if (/主销售员|是否认领|认领单销|不认领理由|不认领原因/.test(label)) return null;
+  if (/总结|复盘/.test(label)) return "other";
   if (!group) return "other";
   if (group.includes("询价")) return "development";
   if (group.includes("调研") || group.includes("竞品")) return "market";
