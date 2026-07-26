@@ -1,3 +1,4 @@
+import base64
 import json
 import os
 import sys
@@ -10,6 +11,8 @@ os.environ["DATABASE_URL"] = f"sqlite:///{Path(__file__).with_name('test_workflo
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import pytest  # noqa: E402
+from cryptography.hazmat.primitives import serialization  # noqa: E402
+from cryptography.hazmat.primitives.asymmetric import padding, rsa  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 from openpyxl import Workbook, load_workbook  # noqa: E402
 
@@ -22,12 +25,29 @@ from app.main import app  # noqa: E402
 
 client = TestClient(app)
 
+TEST_PRIVATE_KEY = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+TEST_PUBLIC_KEY_B64 = base64.b64encode(
+    TEST_PRIVATE_KEY.public_key().public_bytes(
+        serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo
+    )
+).decode("ascii")
+# 生产登录页格式：Dec.system = JSON.parse('{\"encryptionType\":0,...}')
+DEC_SYSTEM_JSON = json.dumps(
+    {"encryptionType": 0, "encryptionKey": TEST_PUBLIC_KEY_B64}, separators=(",", ":")
+)
+DEC_SYSTEM_ESCAPED = DEC_SYSTEM_JSON.replace("\\", "\\\\").replace('"', '\\"')
 LOGIN_PAGE = (
     "<html><head><title>数据决策系统</title></head><body>"
-    '<script>var Dec=Dec||{};Dec.system={"origin":"demo-origin"};</script>'
-    '<input type="hidden" name="__token__" value="tok-123"/>'
+    f"<script>Dec.system = JSON.parse('{DEC_SYSTEM_ESCAPED}');</script>"
     "<form>login</form></body></html>"
 )
+
+
+def decrypt_password(value: str) -> str:
+    return "".join(
+        TEST_PRIVATE_KEY.decrypt(base64.b64decode(part), padding.PKCS1v15()).decode("utf-8")
+        for part in value.split("---")
+    )
 
 
 def setup_function() -> None:
@@ -79,6 +99,7 @@ class FakeFineBI:
         self.download_content_type = download_content_type
         self.calls: list[tuple[str, str]] = []
         self.login_payload: dict | None = None
+        self.login_headers: dict | None = None
         self.export_url: str | None = None
         self.export_body: bytes | None = None
         self.download_url: str | None = None
@@ -90,6 +111,7 @@ class FakeFineBI:
             return fap.HttpResponse(200, {"content-type": "text/html"}, LOGIN_PAGE.encode("utf-8"))
         if url.endswith(fap.LOGIN_PATH) and method == "POST":
             self.login_payload = json.loads(data.decode("utf-8"))
+            self.login_headers = dict(headers or {})
             if self.login_ok:
                 self._cookies.add("fine_auth_token")
                 return fap.HttpResponse(200, {"content-type": "application/json"}, b'{"errorCode":""}')
@@ -137,12 +159,21 @@ def test_pull_week_success_writes_file_and_backs_up_existing(tmp_path: Path) -> 
     workbook = load_workbook(path, read_only=True)
     assert workbook.active.cell(row=2, column=1).value == "10000000001"
     workbook.close()
-    # 登录 payload：凭据 + 页面解析出的字段（hidden input 与 Dec.system origin）
+    # 登录 payload：密码按 Dec.system 公钥 RSA 加密（可用私钥解回），固定字段与生产脚本一致
     assert fake.login_payload["username"] == "ops-user"
-    assert fake.login_payload["password"] == "ops-pass"
-    assert fake.login_payload["__token__"] == "tok-123"
-    assert fake.login_payload["origin"] == "demo-origin"
-    assert fake.login_payload["validity"] == -1
+    assert fake.login_payload["password"] != "ops-pass"
+    assert decrypt_password(fake.login_payload["password"]) == "ops-pass"
+    assert fake.login_payload["validity"] == -2
+    assert fake.login_payload["sliderToken"] == ""
+    assert fake.login_payload["origin"] == ""
+    assert fake.login_payload["encrypted"] is True
+    # 登录 headers 与生产脚本一致
+    assert fake.login_headers["Content-Type"] == "application/json"
+    assert fake.login_headers["X-Requested-With"] == "XMLHttpRequest"
+    assert fake.login_headers["Origin"] == "https://finebi.internal.test:8443"
+    assert fake.login_headers["Referer"] == "https://finebi.internal.test:8443/webroot/decision/login"
+    assert fake.login_headers["transEncryptLevel"] == "1"
+    assert "Chrome" in fake.login_headers["User-Agent"]
     # 导出 URL 携带 reportId/entryType/operationId，body 是配置文件原文
     query = parse_qs(urlsplit(fake.export_url).query)
     assert query["reportId"] == ["RPT-1"]
@@ -169,16 +200,62 @@ def test_operation_and_session_ids_regenerated_each_run(tmp_path: Path) -> None:
     assert seen[0][1] != seen[1][1]
 
 
-def test_login_failure_raises_with_page_snippet(tmp_path: Path) -> None:
+def test_login_failure_raises_with_error_json_and_page_snippet(tmp_path: Path) -> None:
     settings = make_settings(tmp_path)
     fake = FakeFineBI(login_ok=False)
     with pytest.raises(fap.FineBIPullError) as excinfo:
         fap.pull_week("0723-0729", settings=settings, target_dir=tmp_path / "live", session=fake)
     message = str(excinfo.value)
     assert "登录失败" in message
+    assert "fine_auth_token" in message
+    assert "denied" in message
     assert "INVALID_USER" in message
     assert "数据决策系统" in message
     assert not (tmp_path / "live").exists()
+
+
+def test_parse_dec_system_unescapes_json_parse_literal() -> None:
+    assert fap._parse_dec_system(LOGIN_PAGE) == {
+        "encryptionType": 0,
+        "encryptionKey": TEST_PUBLIC_KEY_B64,
+    }
+
+
+def test_missing_dec_system_raises_with_page_snippet() -> None:
+    with pytest.raises(fap.FineBIPullError) as excinfo:
+        fap._parse_dec_system("<html><title>数据决策系统</title><body>no config</body></html>")
+    assert "Dec.system" in str(excinfo.value)
+    assert "数据决策系统" in str(excinfo.value)
+
+
+def test_unsupported_encryption_type_rejected() -> None:
+    with pytest.raises(fap.FineBIPullError, match="Unsupported encryption type"):
+        fap._encrypt_password("pass", {"encryptionType": 1, "encryptionKey": TEST_PUBLIC_KEY_B64})
+    with pytest.raises(fap.FineBIPullError, match="Unsupported encryption type"):
+        fap._encrypt_password("pass", {"encryptionType": 0})
+
+
+def test_password_chunked_every_50_chars_joined_with_triple_dash(monkeypatch) -> None:
+    monkeypatch.setattr(fap, "_load_public_key", lambda key: "PUB")
+    monkeypatch.setattr(fap, "_rsa_encrypt", lambda key, chunk: b"<" + chunk + b">")
+    password = "".join(chr(ord("a") + index % 26) for index in range(120))
+    result = fap._encrypt_password(password, {"encryptionType": 0, "encryptionKey": "KEY"})
+    parts = [base64.b64decode(part).decode("utf-8") for part in result.split("---")]
+    assert parts == [f"<{password[0:50]}>", f"<{password[50:100]}>", f"<{password[100:120]}>"]
+    short = fap._encrypt_password("abc", {"encryptionType": 0, "encryptionKey": "KEY"})
+    assert "---" not in short
+    assert base64.b64decode(short) == b"<abc>"
+
+
+def test_public_key_pem_wraps_base64_at_64_chars() -> None:
+    pem = fap._public_key_pem(TEST_PUBLIC_KEY_B64)
+    assert pem.startswith("-----BEGIN PUBLIC KEY-----\n")
+    assert pem.endswith("\n-----END PUBLIC KEY-----\n")
+    body_lines = pem.strip().splitlines()[1:-1]
+    assert all(len(line) <= 64 for line in body_lines)
+    assert "".join(body_lines) == TEST_PUBLIC_KEY_B64
+    # 转出的 PEM 能被 cryptography 加载
+    assert fap._load_public_key(TEST_PUBLIC_KEY_B64).key_size == 2048
 
 
 def test_export_created_with_empty_body_is_not_failure(tmp_path: Path) -> None:

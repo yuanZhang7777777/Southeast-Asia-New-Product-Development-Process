@@ -1,9 +1,13 @@
 """FineBI 周数据自动拉取：登录 -> 创建导出 -> 下载 -> 校验表头 -> 入库。
 
 协议来自生产自动化实测：
-1. GET /webroot/decision/login 取登录页，解析页面里需要回传的字段（hidden input / Dec.system origin），
-   再向同一 URL POST JSON（username/password + validity/keepAlive 等常见字段）。
-   成功判定 = HTTP 200 且会话新增 FineBI 认证 Cookie；失败时把登录页关键片段写进异常便于运维排查。
+1. GET /webroot/decision/login 取登录页，正则解析 Dec.system = JSON.parse('...') 配置；
+   要求 encryptionType=0 且带 encryptionKey（RSA 公钥），密码按每 50 字符分块做
+   RSA PKCS1v15 加密 + base64，块间用 "---" 连接；再向同一 URL POST JSON
+   {username, password: 加密串, validity: -2, sliderToken: "", origin: "", encrypted: true}，
+   headers 必带 X-Requested-With / Origin / Referer / transEncryptLevel: "1" / Chrome 系 UA。
+   成功判定 = HTTP 200 且会话出现 fine_auth_token Cookie（精确名）；
+   失败时取响应 JSON 的 errorMsg/message/errorCode，并附登录页关键片段便于运维排查。
 2. POST /webroot/decision/v5/design/report/data/export?reportId=..&entryType=6&operationId=..，
    body = 配置文件（FINEBI_PAYLOAD_FILE）里的 JSON。创建成功也可能 Content-Length: 0，
    真正成败以下载结果为准。
@@ -15,6 +19,7 @@ operationId / sessionID 每次运行用 uuid 重新生成，绝不写死。
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import os
 import re
@@ -28,6 +33,8 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import HTTPCookieProcessor, Request, build_opener
 
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import padding
 from openpyxl import load_workbook
 from sqlalchemy.orm import Session
 
@@ -45,6 +52,13 @@ from app.historical_monitoring_sources import text_value
 LOGIN_PATH = "/webroot/decision/login"
 EXPORT_PATH = "/webroot/decision/v5/design/report/data/export"
 DOWNLOAD_PATH = "/webroot/decision/v5/design/report/data/export/download"
+AUTH_COOKIE_NAME = "fine_auth_token"
+DEC_SYSTEM_PATTERN = re.compile(r"Dec\.system\s*=\s*JSON\.parse\('((?:\\.|[^'])*)'\)")
+PASSWORD_CHUNK_SIZE = 50
+CHROME_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+)
 DEFAULT_TARGET_DIR = Path("outputs/historical_data/finebi_live")
 WEEK_LABEL_PATTERN = re.compile(r"\d{4}-\d{4}")
 REQUIRED_HEADER_COLUMNS = (*KEY_COLUMNS, *METRIC_COLUMNS)
@@ -205,50 +219,93 @@ def _login(session: UrllibSession, base: str, settings: Settings) -> None:
     if page.status != 200:
         raise FineBIPullError(f"FineBI 登录页获取失败：HTTP {page.status}，响应片段：{page.snippet()}")
     page_html = page.body.decode("utf-8", errors="replace")
-    fields = _login_page_fields(page_html)
-    fields.pop("username", None)
-    fields.pop("password", None)
+    dec_system = _parse_dec_system(page_html)
     payload: dict[str, object] = {
-        "validity": -1,
-        "keepAlive": False,
-        "sso": False,
-        "encrypted": False,
-        **fields,
         "username": settings.finebi_username,
-        "password": settings.finebi_password,
+        "password": _encrypt_password(settings.finebi_password, dec_system),
+        "validity": -2,
+        "sliderToken": "",
+        "origin": "",
+        "encrypted": True,
     }
-    before = session.cookie_names()
     response = session.request(
         "POST",
         login_url,
         data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
+        headers={
+            "Content-Type": "application/json",
+            "X-Requested-With": "XMLHttpRequest",
+            "Origin": base,
+            "Referer": login_url,
+            "transEncryptLevel": "1",
+            "User-Agent": CHROME_USER_AGENT,
+        },
     )
-    new_cookies = sorted(session.cookie_names() - before)
-    if response.status != 200 or not new_cookies:
+    if response.status != 200 or AUTH_COOKIE_NAME not in session.cookie_names():
         raise FineBIPullError(
-            f"FineBI 登录失败：HTTP {response.status}，新增认证 Cookie：{new_cookies or '无'}，"
-            f"登录响应片段：{response.snippet()}；登录页片段：{_page_snippet(page_html)}"
+            f"FineBI 登录失败：HTTP {response.status}，未获得 {AUTH_COOKIE_NAME} Cookie，"
+            f"错误信息：{_login_error_message(response)}；登录页片段：{_page_snippet(page_html)}"
         )
 
 
-def _login_page_fields(html: str) -> dict[str, str]:
-    fields: dict[str, str] = {}
-    for tag in re.findall(r"<input\b[^>]*>", html, flags=re.IGNORECASE):
-        if not re.search(r"type\s*=\s*[\"']hidden[\"']", tag, flags=re.IGNORECASE):
-            continue
-        name = _tag_attribute(tag, "name")
-        if name:
-            fields[name] = _tag_attribute(tag, "value")
-    origin = re.search(r"[\"']origin[\"']\s*:\s*[\"']([^\"']+)[\"']", html)
-    if origin:
-        fields.setdefault("origin", origin.group(1))
-    return fields
+def _parse_dec_system(html: str) -> dict[str, object]:
+    match = DEC_SYSTEM_PATTERN.search(html)
+    if not match:
+        raise FineBIPullError(f"FineBI 登录页未找到 Dec.system 配置；登录页片段：{_page_snippet(html)}")
+    try:
+        unescaped = json.loads(f'"{match.group(1)}"')
+        data = json.loads(unescaped)
+    except (json.JSONDecodeError, ValueError) as exc:
+        raise FineBIPullError(
+            f"FineBI 登录页 Dec.system 配置解析失败：{exc}；登录页片段：{_page_snippet(html)}"
+        ) from exc
+    if not isinstance(data, dict):
+        raise FineBIPullError(f"FineBI 登录页 Dec.system 配置不是对象；登录页片段：{_page_snippet(html)}")
+    return data
 
 
-def _tag_attribute(tag: str, name: str) -> str:
-    match = re.search(rf"{name}\s*=\s*[\"']([^\"']*)[\"']", tag, flags=re.IGNORECASE)
-    return match.group(1) if match else ""
+def _encrypt_password(password: str, dec_system: dict[str, object]) -> str:
+    encryption_type = dec_system.get("encryptionType")
+    encryption_key = str(dec_system.get("encryptionKey") or "").strip()
+    if encryption_type not in (0, "0") or not encryption_key:
+        raise FineBIPullError(
+            f"Unsupported encryption type: encryptionType={encryption_type!r}，"
+            f"encryptionKey {'存在' if encryption_key else '缺失'}"
+        )
+    public_key = _load_public_key(encryption_key)
+    chunks = [password[index:index + PASSWORD_CHUNK_SIZE] for index in range(0, len(password), PASSWORD_CHUNK_SIZE)]
+    return "---".join(
+        base64.b64encode(_rsa_encrypt(public_key, chunk.encode("utf-8"))).decode("ascii") for chunk in chunks
+    )
+
+
+def _public_key_pem(encryption_key: str) -> str:
+    body = re.sub(r"\s+", "", encryption_key)
+    lines = [body[index:index + 64] for index in range(0, len(body), 64)]
+    return "-----BEGIN PUBLIC KEY-----\n" + "\n".join(lines) + "\n-----END PUBLIC KEY-----\n"
+
+
+def _load_public_key(encryption_key: str):
+    try:
+        return serialization.load_pem_public_key(_public_key_pem(encryption_key).encode("ascii"))
+    except Exception as exc:
+        raise FineBIPullError(f"FineBI encryptionKey 不是合法 RSA 公钥：{exc}") from exc
+
+
+def _rsa_encrypt(public_key, chunk: bytes) -> bytes:
+    return public_key.encrypt(chunk, padding.PKCS1v15())
+
+
+def _login_error_message(response: HttpResponse) -> str:
+    try:
+        data = json.loads(response.body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return response.snippet()
+    if isinstance(data, dict):
+        parts = [str(data[key]) for key in ("errorMsg", "message", "errorCode") if data.get(key)]
+        if parts:
+            return "；".join(parts)
+    return response.snippet()
 
 
 def _page_snippet(html: str, limit: int = 400) -> str:
