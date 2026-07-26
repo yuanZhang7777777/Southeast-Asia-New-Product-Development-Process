@@ -34,7 +34,7 @@ def test_assignment_rules_filter_site_then_report_category_match() -> None:
 
     by_main_sku = {item.main_sku: item for item in suggestions}
     assert by_main_sku["MAIN-SITE"].suggested_assignee == "站点匹配"
-    assert by_main_sku["MAIN-SITE"].match_reason == "重点站点匹配；重点品类2匹配"
+    assert by_main_sku["MAIN-SITE"].match_reason == "重点站点匹配；重点类目匹配"
     assert by_main_sku["MAIN-CATEGORY"].suggested_assignee is None
     assert by_main_sku["MAIN-CATEGORY"].match_reason == "无站点匹配"
 
@@ -83,7 +83,7 @@ def test_assignment_rules_normalize_common_category_aliases() -> None:
     suggestions = preview_main_sku_assignment_groups(opportunities, profiles)
 
     assert suggestions[0].suggested_assignee == "汽摩配运营"
-    assert suggestions[0].match_reason == "重点站点匹配；重点品类1匹配"
+    assert suggestions[0].match_reason == "重点站点匹配；重点类目匹配"
 
 
 def test_assignment_rules_normalize_chinese_and_custom_site_codes() -> None:
@@ -209,7 +209,7 @@ def test_assignment_rules_prefer_lower_load_before_equal_category_matches() -> N
     )
 
     assert suggestions[0].suggested_assignee == "B-category1-light"
-    assert "重点品类" in suggestions[0].match_reason
+    assert "重点类目" in suggestions[0].match_reason
 
 
 def test_assignment_rules_balance_by_main_sku_group_not_sub_sku_count() -> None:

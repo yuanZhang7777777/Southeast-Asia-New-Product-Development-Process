@@ -295,7 +295,8 @@ test("主管筛选和选择固定在内部滚动的 16 列表格上方", () => {
 test("operator role and refresh state stay aligned with authenticated ownership", () => {
   const superAdminStart = app.indexOf('if (item.role === "super_admin")');
   const superAdminBranch = app.slice(superAdminStart, app.indexOf("} else", superAdminStart));
-  assert.doesNotMatch(superAdminBranch, /roles\.add\("operator"\)/);
+  assert.match(superAdminBranch, /roles\.add\("manager"\)/);
+  assert.match(superAdminBranch, /roles\.add\("operator"\)/);
   assert.match(app, /activeRole === "operator" && activeView !== "stock"/);
   assert.match(app, /activeView === "stock" \? authSession\.operator_name \|\| authSession\.user\.name/);
 

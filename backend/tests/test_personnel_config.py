@@ -79,6 +79,7 @@ def test_operator_profile_admin_crud_exposes_only_assignment_fields() -> None:
         "key_site",
         "key_category1",
         "key_category2",
+        "key_categories",
         "assignment_priority",
         "display_order",
         "enabled",
@@ -102,6 +103,108 @@ def test_operator_profile_admin_crud_exposes_only_assignment_fields() -> None:
     assert client.get("/admin/operator-profiles").json() == []
 
 
+def test_company_categories_import_from_company_category_sheet(tmp_path: Path) -> None:
+    workbook_path = tmp_path / "海外仓新品主攻类目.xlsx"
+    workbook = Workbook()
+    workbook.active.title = "Sheet1"
+    company_sheet = workbook.create_sheet("公司类目")
+    company_sheet.append(["一级类目", "二级类目"])
+    company_sheet.append(["家居厨卫", "收纳整理"])
+    company_sheet.append(["家居厨卫", "厨房工具"])
+    company_sheet.append(["汽配与摩配", "摩托车配件"])
+    workbook.save(workbook_path)
+
+    from app.company_category_importer import import_company_categories
+
+    with SessionLocal() as db:
+        result = import_company_categories(db, workbook_path)
+        db.commit()
+        categories = db.query(models.CompanyCategory).order_by(
+            models.CompanyCategory.level1,
+            models.CompanyCategory.level2,
+        ).all()
+
+    assert result == {"created_count": 3, "updated_count": 0, "skipped_count": 0}
+    assert [(item.level1, item.level2, item.enabled) for item in categories] == [
+        ("家居厨卫", "厨房工具", True),
+        ("家居厨卫", "收纳整理", True),
+        ("汽配与摩配", "摩托车配件", True),
+    ]
+
+
+def test_operator_profile_admin_crud_saves_multi_category_selection() -> None:
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    client = TestClient(app)
+    create_response = client.post(
+        "/admin/operator-profiles",
+        json={
+            "operator_name": "陈丽妹",
+            "key_site": "VN",
+            "key_categories": [
+                {"level1": "家居厨卫"},
+                {"level1": "汽配与摩配", "level2": "摩托车配件"},
+            ],
+            "enabled": True,
+        },
+    )
+
+    assert create_response.status_code == 200
+    body = create_response.json()
+    assert body["key_categories"] == [
+        {"level1": "家居厨卫", "level2": None},
+        {"level1": "汽配与摩配", "level2": "摩托车配件"},
+    ]
+
+    update_response = client.patch(
+        f"/admin/operator-profiles/{body['id']}",
+        json={"key_categories": [{"level1": "办公文教用品"}]},
+    )
+    assert update_response.status_code == 200
+    assert update_response.json()["key_categories"] == [{"level1": "办公文教用品", "level2": None}]
+
+
+def test_assignment_matches_any_configured_category_at_same_weight() -> None:
+    from types import SimpleNamespace
+
+    from app.assignment_rules import preview_main_sku_assignment_groups
+
+    opportunities = [
+        SimpleNamespace(
+            id="opp-1",
+            source_type="selection1",
+            batch="B1",
+            main_sku="MAIN-1",
+            site="PH",
+            country="PH",
+            category_level1="家居厨卫",
+        )
+    ]
+    profiles = [
+        SimpleNamespace(
+            operator_name="未命中",
+            key_site="PH",
+            key_categories=[{"level1": "办公文教用品"}],
+            assignment_priority=0,
+            display_order=1,
+            enabled=True,
+        ),
+        SimpleNamespace(
+            operator_name="命中",
+            key_site="PH",
+            key_categories=[{"level1": "汽配与摩配"}, {"level1": "家居厨卫", "level2": "收纳整理"}],
+            assignment_priority=0,
+            display_order=2,
+            enabled=True,
+        ),
+    ]
+
+    result = preview_main_sku_assignment_groups(opportunities, profiles, initial_loads={"未命中": 0, "命中": 0})
+
+    assert result[0].suggested_assignee == "命中"
+    assert result[0].match_reason == "重点站点匹配；重点类目匹配"
 def test_operator_profiles_keep_append_order_and_priority() -> None:
     from fastapi.testclient import TestClient
 

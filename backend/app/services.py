@@ -66,6 +66,10 @@ def current_business_period_start(day: date) -> date:
     return day - timedelta(days=(day.weekday() - 3) % 7)
 
 
+def next_complete_business_period_start(day: date) -> date:
+    return current_business_period_start(day) + timedelta(days=7)
+
+
 def validate_selectable_period_start(period_start: date, today: date) -> None:
     if period_start.weekday() != 3:
         raise ValueError("period_start must be a Thursday")
@@ -582,6 +586,7 @@ def preview_assignments(
                     key_site=None,
                     key_category1=None,
                     key_category2=None,
+                    key_categories=[],
                     enabled=True,
                 )
             )
@@ -1173,7 +1178,8 @@ def update_secondary_research_draft(
         raise PermissionError("secondary research record does not belong to current operator")
     if claim.downstream_status != CLAIM_WAITING_SECONDARY_RESEARCH:
         raise ValueError("only pending secondary research can be edited")
-    for field in payload.model_fields_set:
+    writable_fields = payload.model_fields_set - {"secondary_research_at"}
+    for field in writable_fields:
         setattr(claim, field, getattr(payload, field))
     claim.last_updated_at = datetime.now(timezone.utc)
     audit(
@@ -1181,7 +1187,7 @@ def update_secondary_research_draft(
         "secondary_research.draft_saved",
         "sales_claim_forecast",
         claim.id,
-        {"fields": sorted(payload.model_fields_set)},
+        {"fields": sorted(writable_fields)},
         salesperson_name,
     )
     return secondary_research_item(claim, opportunity, secondary_research_peers(db, claim))
@@ -1203,7 +1209,7 @@ def correct_secondary_research(
 
     before: dict[str, object] = {}
     after: dict[str, object] = {}
-    for field in payload.model_fields_set:
+    for field in payload.model_fields_set - {"secondary_research_at"}:
         old_value = getattr(claim, field)
         new_value = getattr(payload, field)
         if old_value == new_value:
@@ -1216,6 +1222,10 @@ def correct_secondary_research(
         raise ValueError("secondary_conclusion is required")
     if claim.product_positioning not in {"引流款", "利润款", "淘汰款", "稳定款", "清仓款"}:
         raise ValueError("product_positioning is required")
+    if not claim.secondary_target_daily_sales or claim.secondary_target_daily_sales <= 0:
+        raise ValueError("secondary_target_daily_sales is required")
+    if not _clean_text(claim.secondary_selling_points):
+        raise ValueError("secondary_selling_points is required")
     if not before:
         return secondary_research_item(claim, opportunity, secondary_research_peers(db, claim))
 
@@ -1281,14 +1291,16 @@ def submit_secondary_research_group(
         for claim, opportunity in selected
         if not _clean_text(claim.secondary_conclusion)
         or claim.product_positioning not in {"引流款", "利润款", "淘汰款", "稳定款", "清仓款"}
+        or not claim.secondary_target_daily_sales
+        or claim.secondary_target_daily_sales <= 0
+        or not _clean_text(claim.secondary_selling_points)
     ]
     if missing:
         raise ValueError(f"secondary research is incomplete for: {', '.join(missing)}")
     now = datetime.now(timezone.utc)
     result = []
     for claim, opportunity in selected:
-        if not claim.secondary_research_at:
-            claim.secondary_research_at = now
+        claim.secondary_research_at = now
         claim.secondary_research_submitted_at = now
         claim.downstream_status = (
             CLAIM_DISABLED if claim.product_positioning in {"淘汰款", "清仓款"} else CLAIM_WAITING_LISTING
@@ -1303,6 +1315,102 @@ def submit_secondary_research_group(
         )
         result.append(secondary_research_item(claim, opportunity, secondary_research_peers(db, claim)))
     return result
+
+
+def list_secondary_research_export_rows(
+    db: Session,
+    salesperson_name: str | None = None,
+    business_period: str | None = None,
+    scenario: str = "pending",
+    country: str | None = None,
+    query: str | None = None,
+) -> list[tuple[models.SalesClaimForecast, models.NewProductOpportunity]]:
+    if scenario not in {"pending", "submitted", "all"}:
+        raise ValueError("invalid secondary research export scenario")
+    filters = [models.SalesClaimForecast.downstream_status.is_not(None)]
+    if salesperson_name:
+        filters.append(models.SalesClaimForecast.salesperson_name == salesperson_name)
+    if business_period:
+        filters.append(models.NewProductOpportunity.batch == business_period)
+    if country:
+        filters.append(models.NewProductOpportunity.country == country)
+    pending = models.SalesClaimForecast.downstream_status == CLAIM_WAITING_SECONDARY_RESEARCH
+    submitted = models.SalesClaimForecast.secondary_research_submitted_at.is_not(None)
+    if scenario == "pending":
+        filters.extend([pending, models.SalesClaimForecast.secondary_research_submitted_at.is_(None)])
+    elif scenario == "submitted":
+        filters.append(submitted)
+    else:
+        filters.append(or_(pending, submitted))
+    rows = db.execute(
+        select(models.SalesClaimForecast, models.NewProductOpportunity)
+        .join(models.NewProductOpportunity, models.NewProductOpportunity.id == models.SalesClaimForecast.opportunity_id)
+        .where(*filters)
+        .order_by(
+            models.NewProductOpportunity.batch.desc(),
+            models.NewProductOpportunity.main_sku,
+            models.NewProductOpportunity.sub_sku,
+            models.SalesClaimForecast.salesperson_name,
+        )
+    ).all()
+    needle = (query or "").strip().lower()
+    if not needle:
+        return list(rows)
+    return [
+        row for row in rows
+        if any((value or "").lower().find(needle) >= 0 for value in (
+            row[1].main_sku,
+            row[1].main_sku_name,
+            row[1].sub_sku,
+            row[1].sub_sku_name,
+            row[1].keyword,
+            row[0].salesperson_name,
+        ))
+    ]
+
+
+def build_secondary_research_export_workbook(rows: list[tuple[models.SalesClaimForecast, models.NewProductOpportunity]]) -> bytes:
+    headers = [
+        "业务期", "国家", "站点", "负责人", "主 SKU", "主 SKU 名称", "子 SKU", "子 SKU 名称",
+        "复查结论", "商品定位", "锚定链接", "目标单销", "卖点总结", "提交时间", "调研时间", "图片数",
+        "类目", "关键词", "开品理由", "来源文件", "来源 Sheet", "来源行",
+    ]
+    workbook = Workbook()
+    worksheet = workbook.active
+    worksheet.title = "二次调研"
+    worksheet.append(headers)
+    for claim, opportunity in rows:
+        worksheet.append([
+            opportunity.batch,
+            opportunity.country,
+            opportunity.site,
+            claim.salesperson_name,
+            opportunity.main_sku,
+            opportunity.main_sku_name,
+            opportunity.sub_sku,
+            opportunity.sub_sku_name,
+            claim.secondary_conclusion,
+            claim.product_positioning,
+            claim.secondary_competitor_url,
+            claim.secondary_target_daily_sales,
+            claim.secondary_selling_points,
+            excel_value(claim.secondary_research_submitted_at),
+            excel_value(claim.secondary_research_at),
+            len(claim.secondary_evidence_images or []),
+            opportunity.category_level1,
+            opportunity.keyword,
+            opportunity.reason,
+            opportunity.source_file,
+            opportunity.source_sheet,
+            opportunity.source_row,
+        ])
+    style_worksheet(worksheet, max_width=36, fill="D9EAF7")
+    for column in ("N", "O"):
+        for cell in worksheet[column][1:]:
+            cell.number_format = "yyyy-mm-dd hh:mm"
+    buffer = BytesIO()
+    workbook.save(buffer)
+    return buffer.getvalue()
 
 
 def secondary_research_claim(
@@ -1373,6 +1481,8 @@ def secondary_research_item(
         "secondary_competitor_url": claim.secondary_competitor_url,
         "secondary_conclusion": claim.secondary_conclusion,
         "product_positioning": claim.product_positioning,
+        "secondary_target_daily_sales": claim.secondary_target_daily_sales,
+        "secondary_selling_points": claim.secondary_selling_points,
         "secondary_evidence_images": claim.secondary_evidence_images or [],
         "secondary_research_submitted_at": claim.secondary_research_submitted_at,
         "sub_sku": opportunity.sub_sku,
@@ -1388,6 +1498,8 @@ def secondary_research_item(
                 "secondary_competitor_url": peer.secondary_competitor_url,
                 "secondary_conclusion": peer.secondary_conclusion,
                 "product_positioning": peer.product_positioning,
+                "secondary_target_daily_sales": peer.secondary_target_daily_sales,
+                "secondary_selling_points": peer.secondary_selling_points,
                 "secondary_research_submitted_at": peer.secondary_research_submitted_at,
             }
             for peer in peers
@@ -1511,6 +1623,7 @@ def create_listing_batch(
     actor_is_manager: bool,
     operator_name: str | None = None,
     reuse_listing_ids: list[str] | None = None,
+    manual_context: schemas.ManualListingContext | None = None,
     today: date | None = None,
 ) -> list[models.ListingRecord]:
     reuse_listing_ids = list(dict.fromkeys(reuse_listing_ids or []))
@@ -1524,18 +1637,40 @@ def create_listing_batch(
             .order_by(models.ListingRecord.created_at)
         )
         if existing_task is None:
-            raise LookupError("listing task not found")
-        task = {
-            "task_key": task_key,
-            "source_type": existing_task.source_type,
-            "business_period": existing_task.business_period,
-            "country": existing_task.country,
-            "site": existing_task.site,
-            "main_sku": existing_task.main_sku,
-            "main_sku_name": existing_task.main_sku_name,
-            "salesperson_name": existing_task.salesperson_name,
-            "claim_record_ids": existing_task.source_claim_ids,
-        }
+            if manual_context is None:
+                raise LookupError("listing task not found")
+            main_sku = _clean_text(manual_context.main_sku)
+            salesperson_name = _clean_text(manual_context.salesperson_name)
+            site_or_country = _clean_text(manual_context.site) or _clean_text(manual_context.country)
+            if not main_sku or not salesperson_name or not site_or_country:
+                raise RowValidationError([
+                    {"row_index": 0, "field": "manual_context", "message": "main_sku, salesperson_name and country/site are required"}
+                ])
+            task = {
+                "task_key": task_key,
+                "source_type": "manual_listing",
+                "business_period": _clean_text(manual_context.business_period),
+                "country": _clean_text(manual_context.country) or site_or_country,
+                "site": _clean_text(manual_context.site) or site_or_country,
+                "main_sku": main_sku,
+                "main_sku_name": _clean_text(manual_context.main_sku_name),
+                "salesperson_name": salesperson_name,
+                "claim_record_ids": [],
+                "requires_confirmation": False,
+                "reusable_listing_ids": [],
+            }
+        else:
+            task = {
+                "task_key": task_key,
+                "source_type": existing_task.source_type,
+                "business_period": existing_task.business_period,
+                "country": existing_task.country,
+                "site": existing_task.site,
+                "main_sku": existing_task.main_sku,
+                "main_sku_name": existing_task.main_sku_name,
+                "salesperson_name": existing_task.salesperson_name,
+                "claim_record_ids": existing_task.source_claim_ids,
+            }
     if not actor_is_manager and task["salesperson_name"] != (operator_name or actor_name):
         raise PermissionError("listing task does not belong to current operator")
 
@@ -1557,6 +1692,7 @@ def create_listing_batch(
         raise ValueError("listing task is no longer pending")
 
     check_day = today or datetime.now(EXCEL_TIMEZONE).date()
+    first_period_start = next_complete_business_period_start(check_day)
     row_errors: list[dict] = []
     cleaned: list[dict] = []
     for row_index, row in enumerate(rows):
@@ -1568,15 +1704,7 @@ def create_listing_batch(
         for field in ("shop", "item", "listing_strategy"):
             if not values[field]:
                 row_errors.append({"row_index": row_index, "field": field, "message": f"{field} is required"})
-        try:
-            period_start = date.fromisoformat(row.first_period_start)
-            validate_selectable_period_start(period_start, check_day)
-        except (TypeError, ValueError) as exc:
-            row_errors.append(
-                {"row_index": row_index, "field": "first_period_start", "message": str(exc) or "invalid date"}
-            )
-            period_start = None
-        cleaned.append({**values, "first_period_start": period_start})
+        cleaned.append({**values, "first_period_start": first_period_start})
 
     item_rows: dict[str, list[int]] = defaultdict(list)
     for row_index, values in enumerate(cleaned):
@@ -1624,7 +1752,8 @@ def create_listing_batch(
         or reusable[listing_id].salesperson_name != task["salesperson_name"]
     ]
     if row_errors or reuse_errors:
-        row_errors.sort(key=lambda error: (error["row_index"], ("shop", "item", "listing_strategy", "first_period_start").index(error["field"])))
+        field_order = {"shop": 0, "item": 1, "listing_strategy": 2, "first_period_start": 3}
+        row_errors.sort(key=lambda error: (error["row_index"], field_order.get(error["field"], 99)))
         conflict = any("duplicated" in error["message"] or "already exists" in error["message"] for error in row_errors)
         raise RowValidationError([*row_errors, *reuse_errors], 409 if conflict else 400)
 

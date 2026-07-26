@@ -131,6 +131,19 @@ def test_super_admin_role_can_call_manager_api_without_hardcoded_account() -> No
     assert response.status_code == 200
 
 
+def test_super_admin_role_can_call_operator_api_as_self() -> None:
+    with SessionLocal() as db:
+        db.add(models.RoleMapping(name="刘学城", role="super_admin", enabled=True))
+        db.commit()
+
+    login = client.post("/auth/login", json={"name": "刘学城", "password": "lxc123456"})
+    token = login.json()["access_token"]
+
+    response = client.get("/stocking/my-requests", headers={"Authorization": f"Bearer {token}"})
+
+    assert response.status_code == 200
+
+
 def test_first_version_supervisor_can_call_manager_api() -> None:
     with SessionLocal() as db:
         db.add(models.RoleMapping(name="练玉君", role="manager", enabled=True))

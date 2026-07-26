@@ -55,9 +55,9 @@
   width: auto;
 }
 
-.listing-period-overview > input {
-  min-height: auto;
+.listing-period-select-cell input {
   width: auto;
+  min-height: auto;
 }
 
 .listing-main-group-header {
@@ -98,7 +98,7 @@
   padding: 8px 10px;
 }
 
-.listing-period-review textarea {
+.listing-period-field textarea {
   min-height: 44px;
 }
 
@@ -113,5 +113,62 @@
   .listing-batchbar {
     align-items: stretch;
     flex-direction: column;
+  }
+}
+.listing-period-overview {
+  grid-template-columns: auto minmax(145px, 0.65fr) minmax(300px, 1.2fr) minmax(120px, 0.45fr) minmax(240px, 1fr) auto;
+}
+
+.listing-period-select-cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+}
+
+.listing-period-field {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  color: #475569;
+  font-size: 12px;
+}
+
+.listing-period-field > span {
+  color: #64748b;
+}
+
+.listing-period-field select,
+.listing-period-field textarea {
+  width: 100%;
+}
+
+.listing-period-field textarea {
+  min-height: 38px;
+  resize: vertical;
+}
+
+.listing-period-field strong,
+.listing-optimization-summary summary {
+  overflow: hidden;
+  color: #334155;
+  font-size: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.listing-optimization-summary summary {
+  cursor: pointer;
+}
+
+.listing-optimization-summary span {
+  display: block;
+  margin-top: 6px;
+  color: #334155;
+  white-space: pre-wrap;
+}
+@media (max-width: 1180px) {
+  .listing-period-overview {
+    grid-template-columns: 1fr;
   }
 }

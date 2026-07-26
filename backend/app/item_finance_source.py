@@ -26,20 +26,21 @@ def read_item_finance_period(period: str, source_path: Path) -> list[dict[str, A
     source_sha256 = sha256_file(source_path)
     records: list[dict[str, Any]] = []
     found_data_sheet = False
-    workbook = load_workbook(source_path, read_only=True, data_only=True, keep_links=False)
+    workbook = load_workbook(source_path, read_only=False, data_only=True, keep_links=False)
     try:
         for worksheet in workbook.worksheets:
-            worksheet.reset_dimensions()
-            rows = worksheet.iter_rows(values_only=True)
-            header_row, header = next(enumerate(rows, start=1), (0, ()))
+            rows = worksheet.iter_rows()
+            header_row, header_cells = next(enumerate(rows, start=1), (0, ()))
+            header = tuple(cell.value for cell in header_cells)
             columns = required_columns(header)
             if columns is None:
                 continue
             found_data_sheet = True
+            merged_values = merged_cell_values(worksheet, set(columns.values()))
             for source_row, row in enumerate(rows, start=header_row + 1):
-                item_id = item_id_text(cell(row, columns["ITEMID"]))
-                main_sku = normalize_main_sku(cell(row, columns["主SKU"]))
-                shop = text_value(cell(row, columns["店铺"]))
+                item_id = item_id_text(display_cell(row, columns["ITEMID"], source_row, merged_values))
+                main_sku = normalize_main_sku(display_cell(row, columns["主SKU"], source_row, merged_values))
+                shop = text_value(display_cell(row, columns["店铺"], source_row, merged_values))
                 country = country_from_shop(shop)
                 if not item_id or not main_sku or not shop or not country:
                     continue
@@ -49,7 +50,7 @@ def read_item_finance_period(period: str, source_path: Path) -> list[dict[str, A
                         "main_sku": main_sku,
                         "shop": shop,
                         "item_id": item_id,
-                        "audit_time": time_value(cell(row, columns["审核时间"])),
+                        "audit_time": time_value(display_cell(row, columns["审核时间"], source_row, merged_values)),
                         "source_reference": {
                             "period": period,
                             "source_file": source_path.name,
@@ -172,6 +173,24 @@ def required_columns(header: tuple[Any, ...]) -> dict[str, int] | None:
     columns = {normalized_header(value): index for index, value in enumerate(header) if normalized_header(value)}
     return {name: columns[normalized_header(name)] for name in REQUIRED_COLUMNS} if all(normalized_header(name) in columns for name in REQUIRED_COLUMNS) else None
 
+
+def merged_cell_values(worksheet: Any, zero_based_columns: set[int]) -> dict[tuple[int, int], Any]:
+    values: dict[tuple[int, int], Any] = {}
+    one_based_columns = {column + 1 for column in zero_based_columns}
+    for merged_range in worksheet.merged_cells.ranges:
+        columns = [column for column in one_based_columns if merged_range.min_col <= column <= merged_range.max_col]
+        if not columns:
+            continue
+        value = worksheet.cell(merged_range.min_row, merged_range.min_col).value
+        for row in range(merged_range.min_row, merged_range.max_row + 1):
+            for column in columns:
+                values[row, column] = value
+    return values
+
+
+def display_cell(row: tuple[Any, ...], index: int, source_row: int, merged_values: dict[tuple[int, int], Any]) -> Any:
+    value = row[index].value if index < len(row) else None
+    return value if value is not None else merged_values.get((source_row, index + 1))
 
 
 def normalized_header(value: object) -> str:

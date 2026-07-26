@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 
 from app import models, schemas
 from app.auth import require_roles
+from app.company_category_importer import import_company_categories as import_company_category_workbook
 from app.config import Settings, get_settings
 from app.db import get_db
 from app.dingtalk_user_sync import sync_configured_dingtalk_user_ids
@@ -27,6 +28,28 @@ def create_role_mapping(
     db.commit()
     db.refresh(item)
     return item
+
+
+@router.get("/company-categories", response_model=list[schemas.CompanyCategoryRead])
+def company_categories(db: Session = Depends(get_db)) -> list[models.CompanyCategory]:
+    return list(
+        db.scalars(
+            select(models.CompanyCategory)
+            .where(models.CompanyCategory.enabled.is_(True))
+            .order_by(models.CompanyCategory.level1, models.CompanyCategory.level2)
+        )
+    )
+
+
+@router.post("/company-categories/import", response_model=schemas.CompanyCategoryImportResponse)
+def import_company_categories(
+    payload: schemas.CompanyCategoryImportRequest,
+    db: Session = Depends(get_db),
+    _auth: object = Depends(require_roles("super_admin")),
+) -> dict[str, int]:
+    report = import_company_category_workbook(db, payload.source_file, payload.source_sheet)
+    db.commit()
+    return report
 
 
 @router.get("/operator-profiles", response_model=list[schemas.OperatorAssignmentProfileRead])
@@ -100,7 +123,7 @@ def sync_dingtalk_user_ids(
 
 
 def _apply_operator_profile(item: models.OperatorAssignmentProfile, values: dict[str, object]) -> None:
-    for field in ("operator_name", "key_site", "key_category1", "key_category2", "assignment_priority", "display_order", "enabled"):
+    for field in ("operator_name", "key_site", "key_category1", "key_category2", "key_categories", "assignment_priority", "display_order", "enabled"):
         if field in values:
             setattr(item, field, values[field])
 

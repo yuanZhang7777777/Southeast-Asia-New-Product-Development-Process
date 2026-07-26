@@ -95,6 +95,56 @@ export function summarizeVisibleObservationPeriods(
   };
 }
 
+export function sortStartedObservationPeriods<T extends Pick<ObservationPeriodRow, "status" | "period_start" | "period_end" | "week_number">>(
+  rows: readonly T[],
+  dayText = shanghaiDateText()
+): T[] {
+  const priority = (row: T) => {
+    const display = observationPeriodDisplay(row, dayText);
+    if (row.status === "pending_review" || display === "in_progress") return 0;
+    if (display === "data_pending") return 1;
+    if (row.status === "completed") return 2;
+    return 3;
+  };
+  return [...rows].sort((left, right) =>
+    priority(left) - priority(right)
+    || right.week_number - left.week_number
+    || right.period_start.localeCompare(left.period_start)
+  );
+}
+
+export function latestObservationMetricRow<T extends Pick<ObservationPeriodRow, "status" | "period_start" | "period_end" | "week_number">>(
+  rows: readonly T[],
+  dayText = shanghaiDateText()
+): T | null {
+  return sortStartedObservationPeriods(rows, dayText).find((row) =>
+    observationPeriodDisplay(row, dayText) !== "hidden" && row.status !== "pending_data"
+  ) || null;
+}
+
+
+export function observationItemStatusLabel(
+  record: Pick<ListingRecord, "status" | "tracking_status" | "first_round_completed_at">,
+  rows: readonly Pick<ObservationPeriodRow, "status" | "period_start" | "period_end" | "week_number">[],
+  dayText = shanghaiDateText()
+) {
+  if (record.status === "voided") return "已作废";
+  if (record.tracking_status === "stopped") return "停止跟踪";
+  const sorted = sortStartedObservationPeriods(rows, dayText);
+  const started = sorted.filter((row) => observationPeriodDisplay(row, dayText) !== "hidden");
+  const review = started.find((row) => row.status === "pending_review");
+  if (review) return `第${review.week_number}周待复盘`;
+  const inProgress = started.find((row) => observationPeriodDisplay(row, dayText) === "in_progress");
+  if (inProgress) return `第${inProgress.week_number}周进行中`;
+  const dataPending = started.find((row) => observationPeriodDisplay(row, dayText) === "data_pending");
+  if (dataPending) return `第${dataPending.week_number}周数据准备中`;
+  if (record.first_round_completed_at && summarizeVisibleObservationPeriods(started).firstRoundCompleted) return "首轮观察完成";
+  const completed = started.find((row) => row.status === "completed");
+  if (completed) return `已复盘至第${completed.week_number}周`;
+  return rows.length ? "尚未开始" : "观察中";
+}
+
+
 export function expectedObservationMetricsDate(periodEnd: string) {
   const [year, month, day] = periodEnd.split("-").map(Number);
   const value = new Date(Date.UTC(year, month - 1, day));

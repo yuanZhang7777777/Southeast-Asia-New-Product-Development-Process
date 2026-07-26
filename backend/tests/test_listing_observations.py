@@ -58,6 +58,32 @@ def test_initial_observation_periods_are_four_independent_weeks() -> None:
     ]
 
 
+def test_listing_creation_overrides_manual_first_period_to_next_complete_cycle() -> None:
+    create_waiting_listing_group("销售A", "MAIN-A")
+    with SessionLocal() as db:
+        task = next(task for task in services.list_pending_listing_tasks(db) if task["main_sku"] == "MAIN-A")
+        records = services.create_listing_batch(
+            db,
+            task["task_key"],
+            [schemas.ListingBatchRow(
+                shop="Shopee-PH-A",
+                item="10001",
+                listing_strategy="低价切入",
+                first_period_start="2026-07-23",
+            )],
+            actor_name="销售A",
+            actor_user_id="user-a",
+            actor_is_manager=False,
+            operator_name="销售A",
+            today=date(2026, 7, 24),
+        )
+        db.flush()
+        period_starts = [period.period_start for period in records[0].periods]
+
+    assert records[0].first_period_start == date(2026, 7, 30)
+    assert period_starts[:2] == [date(2026, 7, 30), date(2026, 8, 6)]
+
+
 def test_batch_creation_adds_multiple_items_and_four_periods_each() -> None:
     headers = login("销售A", "operator", "dt-a")
     create_waiting_listing_group("销售A", "MAIN-A")
@@ -104,6 +130,49 @@ def test_batch_creation_adds_multiple_items_and_four_periods_each() -> None:
     assert len(workbench["period_rows"]) == 8
 
 
+def test_manual_listing_batch_creates_new_main_sku_without_claim_source() -> None:
+    headers = login("销售A", "operator", "dt-a")
+    current = services.current_business_period_start(date.today()).isoformat()
+
+    response = client.post(
+        "/listing-workbench/listings/batch",
+        headers=headers,
+        json={
+            "task_key": "manual:MAIN-MANUAL:PH:销售A",
+            "manual_context": {
+                "main_sku": "MAIN-MANUAL",
+                "main_sku_name": "手工新增商品",
+                "country": "PH",
+                "site": "PH",
+                "salesperson_name": "销售A",
+            },
+            "rows": [
+                {
+                    "shop": "Manual Shop",
+                    "item": "MANUAL-ITEM-1",
+                    "listing_strategy": "运营手工新增",
+                    "first_period_start": current,
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body[0]["main_sku"] == "MAIN-MANUAL"
+    assert body[0]["source_business_periods"] == []
+    with SessionLocal() as db:
+        listing = db.query(models.ListingRecord).filter_by(item="MANUAL-ITEM-1").one()
+        assert listing.source_type == "manual_listing"
+        assert listing.source_claim_ids == []
+        assert listing.country == "PH"
+        assert listing.site == "PH"
+        assert listing.salesperson_name == "销售A"
+        assert db.query(models.ItemObservationPeriod).filter_by(listing_record_id=listing.id).count() == 4
+        assert db.query(models.AuditLog).filter_by(action="listing.created", target_id=listing.id).count() == 1
+
+    workbench = client.get("/listing-workbench", headers=headers).json()
+    assert any(item["main_sku"] == "MAIN-MANUAL" for item in workbench["listing_records"])
 def test_listing_batch_rechecks_locked_claim_status_before_creation(monkeypatch) -> None:
     claim_ids = create_waiting_listing_group("销售A", "MAIN-RACE")
     with SessionLocal() as db:

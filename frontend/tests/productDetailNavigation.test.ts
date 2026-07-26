@@ -36,3 +36,13 @@ test("二次调研历史查询可显式请求全部下游状态", () => {
   assert.match(apiSource, /secondaryResearchQuery\(salespersonName, businessPeriod, downstreamStatus\)/);
   assert.match(apiSource, /downstream_status/);
 });
+
+test("商品详情打开时不卸载来源工作台以便返回原场景", () => {
+  assert.match(appSource, /detailGroup && \(/);
+  assert.match(appSource, /style=\{\{ display: detailGroup \? "none" : undefined \}\}/);
+});
+test("历史回填 development_source 可作为商品详情字段兜底", () => {
+  assert.match(appSource, /historicalDevelopmentColumns/);
+  assert.match(appSource, /development_source/);
+  assert.match(appSource, /snapshotColumnText[\s\S]*historicalDevelopmentColumnText/);
+});

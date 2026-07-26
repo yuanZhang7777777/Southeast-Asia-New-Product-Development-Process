@@ -18,8 +18,6 @@ def build_historical_watchlist(source_files: Iterable[Path]) -> list[dict[str, A
     merged: dict[tuple[str, str], dict[str, Any]] = {}
     for source_path in sorted((Path(path) for path in source_files), key=lambda path: path.name):
         source_country = normalize_country(source_path.stem)
-        if not source_country:
-            raise ValueError(f"cannot infer country from source file: {source_path}")
         source_sha256 = sha256_file(source_path)
         workbook = load_workbook(source_path, read_only=True, data_only=True)
         try:
@@ -30,8 +28,9 @@ def build_historical_watchlist(source_files: Iterable[Path]) -> list[dict[str, A
                 second_header = tuple(next(rows, ()))
                 main_column = find_sku_column(first_header, second_header, "主SKU", "MAINSKU")
                 child_column = find_sku_column(first_header, second_header, "子SKU", "SUBSKU")
+                all_claim_columns = find_claim_columns(first_header, second_header)
                 claim_columns = [
-                    column for column in find_claim_columns(first_header, second_header) if column[0] == source_country
+                    column for column in all_claim_columns if source_country is None or column[0] == source_country
                 ]
                 if main_column is None or child_column is None or not claim_columns:
                     continue

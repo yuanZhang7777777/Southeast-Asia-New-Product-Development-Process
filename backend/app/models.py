@@ -65,10 +65,22 @@ class OperatorAssignmentProfile(TimestampMixin, Base):
     key_site: Mapped[str | None] = mapped_column(String(32))
     key_category1: Mapped[str | None] = mapped_column(String(128))
     key_category2: Mapped[str | None] = mapped_column(String(128))
+    key_categories: Mapped[list[dict]] = mapped_column(JSON, default=list)
     assignment_priority: Mapped[int] = mapped_column(Integer, default=0)
     display_order: Mapped[int] = mapped_column(Integer, default=0)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
 
+class CompanyCategory(TimestampMixin, Base):
+    __tablename__ = "company_category"
+    __table_args__ = (UniqueConstraint("level1", "level2", name="uq_company_category_pair"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    level1: Mapped[str] = mapped_column(String(128), index=True)
+    level2: Mapped[str] = mapped_column(String(128), default="")
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    source_file: Mapped[str | None] = mapped_column(String(255))
+    source_sheet: Mapped[str | None] = mapped_column(String(128))
+    source_row: Mapped[int | None] = mapped_column(Integer)
 
 class NewProductOpportunity(TimestampMixin, Base):
     __tablename__ = "new_product_opportunity"
@@ -215,6 +227,8 @@ class SalesClaimForecast(TimestampMixin, Base):
     secondary_competitor_url: Mapped[str | None] = mapped_column(Text)
     secondary_conclusion: Mapped[str | None] = mapped_column(Text)
     product_positioning: Mapped[str | None] = mapped_column(String(32))
+    secondary_target_daily_sales: Mapped[float | None] = mapped_column(Float)
+    secondary_selling_points: Mapped[str | None] = mapped_column(Text)
     secondary_evidence_images: Mapped[list[dict] | None] = mapped_column(JSON, default=list)
     secondary_research_submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 

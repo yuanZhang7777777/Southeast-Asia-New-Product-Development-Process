@@ -136,3 +136,11 @@ test("运营配置站点使用动态选项和明确的国家代码标签", () =>
   assert.match(app, /siteOptionLabel\(site\)/);
   assert.match(app, /负责站点/);
 });
+test("运营配置重点类目使用字典多选而不是自由文本", () => {
+  const assignView = app.slice(app.indexOf("function AssignView"), app.indexOf("function assignmentItemKey"));
+
+  assert.match(assignView, /CategoryMultiSelect/);
+  assert.match(assignView, /companyCategories/);
+  assert.doesNotMatch(assignView, /patchProfile\(profile\.id, \{ key_category1: event\.target\.value \}\)/);
+  assert.doesNotMatch(assignView, /patchProfile\(profile\.id, \{ key_category2: event\.target\.value \}\)/);
+});

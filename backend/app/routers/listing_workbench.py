@@ -84,6 +84,7 @@ def create_listings_batch(
             manager_access(auth),
             auth.operator_name if auth else None,
             reuse_listing_ids=payload.reuse_listing_ids,
+            manual_context=payload.manual_context,
         )
     except services.RowValidationError as exc:
         raise HTTPException(status_code=exc.status_code, detail={"row_errors": exc.row_errors}) from exc

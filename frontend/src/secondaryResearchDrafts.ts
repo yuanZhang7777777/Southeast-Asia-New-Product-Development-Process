@@ -33,38 +33,42 @@ export function latestSecondaryResearchPeriod<T extends SecondaryResearchFilterG
 }
 
 export type SecondaryResearchDraft<TImage = Record<string, unknown>> = {
-  researchedAt: string;
   competitorUrl: string;
   conclusion: string;
   positioning: SecondaryResearchPositioning;
+  targetDailySales: string;
+  sellingPoints: string;
   evidenceImages: TImage[];
   directlyEdited?: boolean;
 };
 
 type SecondaryResearchSource<TImage> = {
-  secondary_research_at?: string | null;
   secondary_competitor_url?: string | null;
   secondary_conclusion?: string | null;
   product_positioning?: string | null;
+  secondary_target_daily_sales?: number | string | null;
+  secondary_selling_points?: string | null;
   secondary_evidence_images?: TImage[] | null;
 };
 
 export function createSecondaryResearchDraft<TImage = Record<string, unknown>>(
   source: SecondaryResearchSource<TImage> = {},
-  now = new Date()
+  _now = new Date()
 ): SecondaryResearchDraft<TImage> {
   const hasServerDraft = Boolean(
-    source.secondary_research_at ||
     source.secondary_competitor_url ||
     source.secondary_conclusion ||
     source.product_positioning ||
+    source.secondary_target_daily_sales ||
+    source.secondary_selling_points ||
     source.secondary_evidence_images?.length
   );
   return {
-    researchedAt: source.secondary_research_at?.slice(0, 16) || localDateTimeValue(now),
     competitorUrl: source.secondary_competitor_url || "",
     conclusion: source.secondary_conclusion || "",
     positioning: (source.product_positioning || "") as SecondaryResearchPositioning,
+    targetDailySales: source.secondary_target_daily_sales == null ? "" : String(source.secondary_target_daily_sales),
+    sellingPoints: source.secondary_selling_points || "",
     evidenceImages: source.secondary_evidence_images || [],
     directlyEdited: hasServerDraft
   };
@@ -96,7 +100,7 @@ export function syncSecondaryResearchDraftPatch<TImage>(
     const draft = next[item.claim_record_id] || createSecondaryResearchDraft<TImage>();
     if (draft.directlyEdited) continue;
     const synced = { ...draft };
-    for (const key of ["researchedAt", "competitorUrl", "conclusion", "positioning"] as const) {
+    for (const key of ["competitorUrl", "conclusion", "positioning", "targetDailySales", "sellingPoints"] as const) {
       if (key in patch) synced[key] = patch[key] as never;
     }
     next[item.claim_record_id] = synced;
@@ -111,12 +115,8 @@ export function incompleteSecondaryResearchItems<TImage>(
   return items
     .filter((item) => {
       const draft = drafts[item.claim_record_id] || createSecondaryResearchDraft<TImage>();
-      return !draft.conclusion.trim() || !draft.positioning;
+      const target = Number(draft.targetDailySales);
+      return !draft.conclusion.trim() || !draft.positioning || !Number.isFinite(target) || target <= 0 || !draft.sellingPoints.trim();
     })
     .map((item) => item.sub_sku);
-}
-
-function localDateTimeValue(value: Date) {
-  const offset = value.getTimezoneOffset() * 60000;
-  return new Date(value.getTime() - offset).toISOString().slice(0, 16);
 }

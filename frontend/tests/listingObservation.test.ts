@@ -15,12 +15,15 @@ import {
   formatObservationMetric,
   formatPercent,
   hasFetchedMetrics,
+  latestObservationMetricRow,
   latestPeriodIdsByListing,
   mapReviewServerRowErrors,
   mapServerRowErrors,
   observationPeriodDisplay,
+  observationItemStatusLabel,
   productListingSummary,
   resolveWorkbenchScope,
+  sortStartedObservationPeriods,
   summarizeVisibleObservationPeriods,
   summarySalespersonScope,
   sortObservationRows,
@@ -268,6 +271,58 @@ test("周期摘要只统计当前可见周，未来测试数据不能提前显�
   });
 });
 
+test("Item 主行指标只取最近已取数周", () => {
+  const week1 = observationRow({
+    id: "week-1",
+    week_number: 1,
+    status: "completed",
+    period_start: "2026-07-16",
+    period_end: "2026-07-22",
+    order_count: 11,
+    total_revenue: 1175,
+    gross_profit_amount: 152.75,
+    gross_profit_rate: 0.13,
+    product_positioning: "引流款"
+  });
+  const week2Running = observationRow({
+    id: "week-2-running",
+    week_number: 2,
+    status: "pending_data",
+    period_start: "2026-07-23",
+    period_end: "2026-07-29"
+  });
+  const week2Ready = observationRow({
+    id: "week-2-ready",
+    week_number: 2,
+    status: "pending_review",
+    period_start: "2026-07-23",
+    period_end: "2026-07-29",
+    order_count: 12,
+    total_revenue: 1250,
+    gross_profit_amount: 175,
+    gross_profit_rate: 0.14,
+    product_positioning: "利润款"
+  });
+
+  assert.equal(latestObservationMetricRow([week1, week2Running], "2026-07-24")?.id, "week-1");
+  assert.equal(latestObservationMetricRow([week1, week2Ready], "2026-07-24")?.id, "week-2-ready");
+  assert.equal(latestObservationMetricRow([week2Running], "2026-07-24"), null);
+});
+test("Item 摘要显示当前周次或终止态，已开始周期当前优先", () => {
+  const rows = [
+    observationRow({ id: "week-1", week_number: 1, status: "completed", period_start: "2026-07-16", period_end: "2026-07-22" }),
+    observationRow({ id: "week-2", week_number: 2, status: "pending_data", period_start: "2026-07-23", period_end: "2026-07-29" })
+  ];
+  const firstWeekOnly = [observationRow({ id: "week-1-live", week_number: 1, status: "pending_data", period_start: "2026-07-16", period_end: "2026-07-22" })];
+
+  assert.equal(observationItemStatusLabel(listingRecord(), [observationRow({ id: "future", week_number: 1, status: "pending_data", period_start: "2026-07-30", period_end: "2026-08-05" })], "2026-07-24"), "尚未开始");
+  assert.equal(observationItemStatusLabel(listingRecord(), firstWeekOnly, "2026-07-17"), "第1周进行中");
+  assert.equal(observationItemStatusLabel(listingRecord(), rows, "2026-07-24"), "第2周进行中");
+  assert.deepEqual(sortStartedObservationPeriods(rows, "2026-07-24").map((row) => row.id), ["week-2", "week-1"]);
+  assert.equal(observationItemStatusLabel(listingRecord({ tracking_status: "stopped" }), rows, "2026-07-24"), "停止跟踪");
+  assert.equal(observationItemStatusLabel(listingRecord({ status: "voided" }), rows, "2026-07-24"), "已作废");
+});
+
 test("刊登观察页面使用单表和业务状态筛选且不暴露内部待取数", () => {
   assert.doesNotMatch(listingObservationViewSource, /const TABS/);
   assert.doesNotMatch(listingObservationViewSource, /listing-tabs/);
@@ -276,7 +331,7 @@ test("刊登观察页面使用单表和业务状态筛选且不暴露内部待�
   assert.doesNotMatch(listingObservationViewSource, /待取数/);
   assert.match(listingObservationViewSource, /业务状态/);
   assert.match(listingObservationViewSource, /观察中/);
-  assert.match(listingObservationViewSource, /新增店铺 \+ Item/);
+  assert.match(listingObservationViewSource, /新增刊登 Item/);
 });
 
 test("刊登观察工作台使用固定操作区和分组卡片且不再依赖超宽表", () => {
@@ -285,6 +340,8 @@ test("刊登观察工作台使用固定操作区和分组卡片且不再依赖�
   assert.match(listingObservationViewSource, /listing-item-card/);
   assert.match(listingObservationViewSource, /提交选中周记录（\{visibleSelectedIds\.length\}）/);
   assert.match(listingObservationViewSource, /observationPeriodDisplay\(row\)/);
+  assert.match(listingObservationViewSource, /const itemStatusRows = sortStartedObservationPeriods\(data\.period_rows\.filter\(\(row\) => row\.listing_record_id === listing\.id\)\);/);
+  assert.match(listingObservationViewSource, /itemStatus: observationItemStatusLabel\(listing, itemStatusRows\)/);
   assert.doesNotMatch(listingStylesSource, /min-width:\s*1900px/);
   assert.doesNotMatch(listingObservationViewSource, /已有刊登记录/);
   assert.equal(
@@ -298,6 +355,8 @@ test("刊登观察只读汇总使用 Item 周期卡片并隐藏未来周期", ()
   const summarySource = listingObservationViewSource.match(/export function ListingObservationSummary[\s\S]*?function PendingListingTasks/)?.[0] || "";
   assert.match(summarySource, /listing-summary-items/);
   assert.match(summarySource, /observationPeriodDisplay\(period\) !== "hidden"/);
+  assert.match(summarySource, /sortStartedObservationPeriods\(group\.periods\.filter/);
+  assert.match(summarySource, /observationItemStatusLabel\(listing, periods\)/);
   assert.match(summarySource, /listing-period-notice/);
   assert.match(summarySource, /listing-period-metrics/);
   assert.doesNotMatch(summarySource, /listing-summary-table/);
@@ -416,9 +475,11 @@ test("周期复盘要求定位和优化操作且第 4 周要求总结", () => {
   });
 });
 
-test("新增后续周期默认下一业务周期且不会沿用过期日期", () => {
+test("新增和刊登默认下一个完整周四周期且不会沿用当天周四", () => {
   assert.equal(defaultNextBusinessPeriodStart("2026-07-16"), "2026-07-23");
   assert.equal(defaultNextBusinessPeriodStart("2026-07-22"), "2026-07-23");
+  assert.equal(defaultNextBusinessPeriodStart("2026-07-23"), "2026-07-30");
+  assert.equal(defaultNextBusinessPeriodStart("2026-07-24"), "2026-07-30");
 });
 
 test("周次筛选选择第 5 周及以后时包含所有后续周期", () => {

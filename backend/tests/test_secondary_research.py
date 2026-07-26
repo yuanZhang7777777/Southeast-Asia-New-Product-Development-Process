@@ -12,7 +12,7 @@ from app import models, schemas, services  # noqa: E402
 from app.auth import AuthContext  # noqa: E402
 from app.db import Base, SessionLocal, engine  # noqa: E402
 from app.main import app  # noqa: E402
-from app.routers.secondary_research import secondary_research_owner  # noqa: E402
+from app.routers.secondary_research import secondary_research_owner, secondary_research_write_owner  # noqa: E402
 
 
 client = TestClient(app)
@@ -32,6 +32,16 @@ def test_secondary_research_read_scope_allows_managers_and_locks_operators() -> 
     assert secondary_research_owner(manager, "运营乙") == "运营乙"
     assert secondary_research_owner(operator, None) == "运营甲"
     assert secondary_research_owner(operator, "运营乙") == "运营甲"
+
+
+def test_secondary_research_write_scope_uses_selected_owner_for_super_admin() -> None:
+    user = models.User(name="刘学城", enabled=True)
+    super_admin = AuthContext(user=user, roles=[schemas.AuthRoleRead(role="super_admin", name="刘学城")])
+    operator = AuthContext(user=user, roles=[schemas.AuthRoleRead(role="operator", name="运营甲")])
+
+    assert secondary_research_write_owner(super_admin, "江琴") == "江琴"
+    assert secondary_research_write_owner(super_admin, None) == "刘学城"
+    assert secondary_research_write_owner(operator, "江琴") == "运营甲"
 
 
 def test_approved_review_marks_the_specific_claim_waiting_for_stocking_request() -> None:
@@ -200,6 +210,8 @@ def test_saving_draft_keeps_status_and_rejects_editing_another_operator() -> Non
             "secondary_competitor_url": "https://shopee.ph/item/1",
             "secondary_conclusion": "无变化",
             "product_positioning": "利润款",
+            "secondary_target_daily_sales": 12,
+            "secondary_selling_points": "可折叠，适合海外仓",
         },
     )
 
@@ -208,6 +220,9 @@ def test_saving_draft_keeps_status_and_rejects_editing_another_operator() -> Non
     with SessionLocal() as db:
         saved = db.get(models.SalesClaimForecast, claim_id)
     assert saved.secondary_conclusion == "无变化"
+    assert saved.secondary_research_at is None
+    assert saved.secondary_target_daily_sales == 12
+    assert saved.secondary_selling_points == "可折叠，适合海外仓"
     assert saved.secondary_research_submitted_at is None
 
     denied = client.patch(
@@ -268,7 +283,12 @@ def test_group_submit_accepts_stable_and_disables_clearance_positioning() -> Non
         saved = client.patch(
             f"/secondary-research/{claim_id}",
             params={"salesperson_name": "销售A"},
-            json={"secondary_conclusion": "已完成复盘", "product_positioning": positioning},
+            json={
+                "secondary_conclusion": "已完成复盘",
+                "product_positioning": positioning,
+                "secondary_target_daily_sales": 10,
+                "secondary_selling_points": "卖点清晰",
+            },
         )
         assert saved.status_code == 200
 
@@ -285,15 +305,19 @@ def test_group_submit_accepts_stable_and_disables_clearance_positioning() -> Non
     }
 
 
-def test_group_submit_allows_blank_competitor_url_defaults_al_and_preserves_user_al() -> None:
+def test_group_submit_allows_blank_anchor_url_and_overwrites_al_with_submit_time() -> None:
     opportunity_a, claim_a = make_claim("SUB-A", "销售A", downstream_status="waiting_secondary_research")
     opportunity_b, claim_b = make_claim("SUB-B", "销售A", downstream_status="waiting_secondary_research")
     user_time = datetime(2026, 7, 12, 14, 8, tzinfo=timezone.utc)
     claim_a.secondary_conclusion = "仍有利润"
     claim_a.product_positioning = "利润款"
+    claim_a.secondary_target_daily_sales = 11
+    claim_a.secondary_selling_points = "利润稳定"
     claim_b.secondary_research_at = user_time
     claim_b.secondary_conclusion = "价格无优势"
     claim_b.product_positioning = "淘汰款"
+    claim_b.secondary_target_daily_sales = 9
+    claim_b.secondary_selling_points = "低价切入"
     with SessionLocal() as db:
         db.add_all([opportunity_a, opportunity_b, claim_a, claim_b])
         db.commit()
@@ -315,7 +339,7 @@ def test_group_submit_allows_blank_competitor_url_defaults_al_and_preserves_user
     saved_b_time = ensure_utc(saved_b.secondary_research_at)
     assert saved_a.secondary_competitor_url is None
     assert before <= saved_a_time <= after
-    assert saved_b_time == user_time
+    assert before <= saved_b_time <= after
 
 
 def test_submitted_secondary_research_correction_preserves_submit_time_and_audits_changes() -> None:
@@ -530,6 +554,8 @@ def fill_research(claim: models.SalesClaimForecast, positioning: str, conclusion
     claim.secondary_competitor_url = "https://shopee.ph/item/recheck"
     claim.secondary_conclusion = conclusion
     claim.product_positioning = positioning
+    claim.secondary_target_daily_sales = 12
+    claim.secondary_selling_points = "卖点明确"
 
 
 def ensure_utc(value: datetime) -> datetime:

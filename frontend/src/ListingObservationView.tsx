@@ -23,10 +23,12 @@ import {
   formatObservationMetric,
   formatPercent,
   hasFetchedMetrics,
+  latestObservationMetricRow,
   ListingDraft,
   ListingDraftErrors,
   mapReviewServerRowErrors,
   mapServerRowErrors,
+  observationItemStatusLabel,
   ObservationFilters,
   ObservationReviewDraft,
   ObservationReviewErrors,
@@ -37,6 +39,7 @@ import {
   resolveWorkbenchScope,
   restoreListingDrafts,
   restoreObservationReviewDraft,
+  sortStartedObservationPeriods,
   saveListingDrafts,
   saveObservationReviewDraft,
   summarizeVisibleObservationPeriods,
@@ -58,6 +61,17 @@ export type ListingProductLink = {
   business_period?: string | null;
   image_url?: string | null;
 };
+
+type ManualListingDraft = ListingDraft & {
+  main_sku: string;
+  main_sku_name: string;
+  country: string;
+  site: string;
+  salesperson_name: string;
+  business_period: string;
+};
+
+type ManualListingErrors = Partial<Record<keyof ManualListingDraft, string>>;
 
 const DEFAULT_FILTERS: WorkbenchFilters = {
   business_status: "all",
@@ -85,11 +99,12 @@ export function ListingObservationView(props: {
   const [filters, setFilters] = useState<WorkbenchFilters>(DEFAULT_FILTERS);
   const [scenario, setScenario] = useState<"listing" | "observation">("observation");
   const [correctingPeriods, setCorrectingPeriods] = useState<string[]>([]);
-  const [advancedOpen, setAdvancedOpen] = useState(false);
   const [expandedGroups, setExpandedGroups] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [listingDrafts, setListingDrafts] = useState<Record<string, ListingDraft[]>>({});
   const [listingErrors, setListingErrors] = useState<Record<string, ListingDraftErrors[]>>({});
+  const [manualListing, setManualListing] = useState<ManualListingDraft | null>(null);
+  const [manualListingErrors, setManualListingErrors] = useState<ManualListingErrors>({});
   const [reviewDrafts, setReviewDrafts] = useState<Record<string, ObservationReviewDraft>>({});
   const [reviewErrors, setReviewErrors] = useState<Record<string, ObservationReviewErrors>>({});
   const [selectedPeriods, setSelectedPeriods] = useState<string[]>([]);
@@ -107,6 +122,7 @@ export function ListingObservationView(props: {
   const workbenchRoot = useRef<HTMLDivElement | null>(null);
   const dialogReturnFocus = useRef<HTMLElement | null>(null);
   const summaryDialog = useRef<HTMLDivElement | null>(null);
+  const manualListingDialog = useRef<HTMLDivElement | null>(null);
   const newPeriodDialog = useRef<HTMLDivElement | null>(null);
   const editDialog = useRef<HTMLDivElement | null>(null);
   const voidDialog = useRef<HTMLDivElement | null>(null);
@@ -135,18 +151,25 @@ export function ListingObservationView(props: {
         ...response.pending_listing_tasks.map((task) => task.task_key),
         ...response.listing_records.map((listing) => listing.task_key)
       ]);
+      const defaultListingDrafts = new Map(response.pending_listing_tasks.map((task) => [
+        task.task_key,
+        [{ shop: "", item: "", listing_strategy: "", first_period_start: task.default_first_period_start }]
+      ]));
       setData(response);
       setSelectedPeriods([]);
-      setListingDrafts(Object.fromEntries(taskKeys.map((taskKey) => [
-        taskKey,
-        storage ? restoreListingDrafts(
-          storage,
-          props.draftUserId,
+      setListingDrafts(Object.fromEntries(taskKeys.map((taskKey) => {
+        const fallback = defaultListingDrafts.get(taskKey) || [];
+        return [
           taskKey,
-          [],
-          submittedListingDraftKeys.current.has(taskKey)
-        ) : []
-      ])));
+          storage ? restoreListingDrafts(
+            storage,
+            props.draftUserId,
+            taskKey,
+            fallback,
+            submittedListingDraftKeys.current.has(taskKey)
+          ) : fallback
+        ];
+      })));
       setReviewDrafts(Object.fromEntries(response.period_rows.map((row) => [
         row.id,
         storage ? restoreObservationReviewDraft(
@@ -168,6 +191,7 @@ export function ListingObservationView(props: {
   }, [props.role, props.canManage, props.operatorName, props.draftUserId]);
 
   useEffect(() => { if (summaryPeriodId) summaryDialog.current?.focus(); }, [summaryPeriodId]);
+  useEffect(() => { if (manualListing) manualListingDialog.current?.focus(); }, [manualListing]);
   useEffect(() => { if (newPeriod) newPeriodDialog.current?.focus(); }, [newPeriod?.listingId]);
   useEffect(() => { if (editingListing) editDialog.current?.focus(); }, [editingListing?.record.id]);
   useEffect(() => { if (voidingListing) voidDialog.current?.focus(); }, [voidingListing?.record.id]);
@@ -308,6 +332,96 @@ export function ListingObservationView(props: {
   function closeVoidListing() {
     setVoidingListing(null);
     restoreDialogFocus();
+  }
+
+  function openManualListing() {
+    rememberDialogFocus();
+    setManualListingErrors({});
+    setManualListing({
+      main_sku: "",
+      main_sku_name: "",
+      country: filters.country || "",
+      site: filters.country || "",
+      salesperson_name: props.role === "operator" ? props.operatorName : (filters.salesperson_name || ""),
+      business_period: "",
+      shop: "",
+      item: "",
+      listing_strategy: "",
+      first_period_start: defaultNextBusinessPeriodStart()
+    });
+  }
+
+  function closeManualListing() {
+    setManualListing(null);
+    setManualListingErrors({});
+    restoreDialogFocus();
+  }
+
+  function updateManualListing(field: keyof ManualListingDraft, value: string) {
+    setManualListing((current) => current ? { ...current, [field]: value } : current);
+    setManualListingErrors((current) => ({ ...current, [field]: undefined }));
+  }
+
+  function validateManualListingDraft(draft: ManualListingDraft) {
+    const errors: ManualListingErrors = { ...validateListingDrafts([draft])[0] };
+    if (!draft.main_sku.trim()) errors.main_sku = "请填写主 SKU";
+    if (!(draft.country.trim() || draft.site.trim())) errors.country = "请填写国家或站点";
+    if (!draft.salesperson_name.trim()) errors.salesperson_name = "请填写负责人";
+    return errors;
+  }
+
+  async function submitManualListing() {
+    const isCurrentScope = captureWorkbenchScope();
+    if (!isCurrentScope()) return;
+    if (!manualListing) return;
+    const errors = validateManualListingDraft(manualListing);
+    setManualListingErrors(errors);
+    if (Object.keys(errors).length) {
+      props.onStatus("请补全手工新增刊登信息");
+      return;
+    }
+    const mainSku = manualListing.main_sku.trim();
+    const siteOrCountry = manualListing.site.trim() || manualListing.country.trim();
+    const salespersonName = manualListing.salesperson_name.trim();
+    setLoading(true);
+    try {
+      await api.createListingsBatch({
+        task_key: `manual:${mainSku}:${normalizeSiteText(siteOrCountry)}:${salespersonName}`,
+        manual_context: {
+          main_sku: mainSku,
+          main_sku_name: manualListing.main_sku_name.trim() || null,
+          country: manualListing.country.trim() || siteOrCountry,
+          site: manualListing.site.trim() || siteOrCountry,
+          salesperson_name: salespersonName,
+          business_period: manualListing.business_period.trim() || null
+        },
+        rows: [{
+          shop: manualListing.shop.trim(),
+          item: manualListing.item.trim(),
+          listing_strategy: manualListing.listing_strategy.trim(),
+          first_period_start: manualListing.first_period_start
+        }]
+      });
+      if (!isCurrentScope()) return;
+      setManualListing(null);
+      setManualListingErrors({});
+      restoreDialogFocus();
+      setScenario("observation");
+      setFilter("business_status", "all");
+      props.onStatus(`${mainSku} 已新增刊登 Item`);
+      await loadWorkbench();
+    } catch (error) {
+      if (!isCurrentScope()) return;
+      const rowErrors = mapServerRowErrors(error)[0];
+      if (rowErrors) {
+        setManualListingErrors((current) => ({ ...current, ...rowErrors }));
+        props.onStatus("新增失败，请修正标红字段；本次没有写入数据");
+      } else {
+        props.onStatus(errorMessage(error, "新增主 SKU 刊登失败"));
+      }
+    } finally {
+      if (isCurrentScope()) setLoading(false);
+    }
   }
 
   function addListingDraft(task: PendingListingTask) {
@@ -564,7 +678,7 @@ export function ListingObservationView(props: {
     const isCurrentScope = captureWorkbenchScope();
     if (!isCurrentScope()) return;
     if (!newPeriod?.periodStart) {
-      props.onStatus("请选择新增周期的开始日期");
+      props.onStatus("请选择延长观察的开始日期");
       return;
     }
     setLoading(true);
@@ -576,7 +690,7 @@ export function ListingObservationView(props: {
       await loadWorkbench();
     } catch (error) {
       if (!isCurrentScope()) return;
-      props.onStatus(errorMessage(error, "新增周期失败"));
+      props.onStatus(errorMessage(error, "延长观察失败"));
     } finally {
       if (isCurrentScope()) setLoading(false);
     }
@@ -611,70 +725,68 @@ export function ListingObservationView(props: {
             </label>
           )}
           {scenario === "observation" && (
-            <label>
-              业务周期
-              <input type="date" value={filters.period_start} onChange={(event) => setFilter("period_start", event.target.value)} />
-            </label>
+            <>
+              <label>
+                业务周期
+                <input type="date" value={filters.period_start} onChange={(event) => setFilter("period_start", event.target.value)} />
+              </label>
+              <label>
+                业务状态
+                <select value={filters.business_status} onChange={(event) => setFilter("business_status", event.target.value as WorkbenchBusinessStatus)}>
+                  <option value="all">全部</option>
+                  <option value="pending_review">待复盘</option>
+                  <option value="first_round_completed">首轮观察完成</option>
+                  <option value="stopped">停止跟踪</option>
+                  <option value="voided">已作废</option>
+                </select>
+              </label>
+              <label>
+                店铺
+                <input value={filters.shop} onChange={(event) => setFilter("shop", event.target.value)} placeholder="包含匹配" />
+              </label>
+              <label>
+                周次
+                <select value={filters.week_number} onChange={(event) => setFilter("week_number", event.target.value ? Number(event.target.value) : "")}>
+                  <option value="">全部</option>
+                  {[1, 2, 3, 4].map((week) => <option value={week} key={week}>第 {week} 周</option>)}
+                  <option value="5">第 5 周及以后</option>
+                </select>
+              </label>
+              <label>
+                周期处理状态
+                <select value={filters.status} onChange={(event) => setFilter("status", event.target.value)}>
+                  <option value="">全部</option>
+                  <option value="pending_review">待复盘</option>
+                  <option value="completed">本周已复盘</option>
+                </select>
+              </label>
+              <label>
+                产品定位
+                <select value={filters.product_positioning} onChange={(event) => setFilter("product_positioning", event.target.value)}>
+                  <option value="">全部</option>
+                  {PRODUCT_POSITIONINGS.map((positioning) => <option value={positioning} key={positioning}>{positioning}</option>)}
+                </select>
+              </label>
+              <label>
+                跟踪状态
+                <select value={filters.tracking_status} onChange={(event) => setFilter("tracking_status", event.target.value)}>
+                  <option value="">全部</option>
+                  <option value="active">正常跟踪</option>
+                  <option value="stopped">停止跟踪</option>
+                </select>
+              </label>
+            </>
           )}
           <button className="btn" type="button" onClick={() => setFilters({ ...DEFAULT_FILTERS, business_status: scenario === "observation" ? "all" : "pending_listing" })}>清空筛选</button>
           <button className="btn" type="button" onClick={() => void loadWorkbench()} disabled={loading}>
             <RefreshCw size={14} />刷新
           </button>
-          {scenario === "observation" && (
-            <button className="btn" type="button" onClick={() => setAdvancedOpen((open) => !open)}>
-              高级筛选{advancedOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+          {scenario === "listing" && (
+            <button className="btn primary" type="button" disabled={loading || (props.role === "operator" && props.canManage && !props.operatorName)} onClick={openManualListing}>
+              <Plus size={14} />新增主 SKU 刊登
             </button>
           )}
         </div>
-        {scenario === "observation" && advancedOpen && (
-          <div className="listing-advanced-filters">
-            <label>
-              业务状态
-              <select value={filters.business_status} onChange={(event) => setFilter("business_status", event.target.value as WorkbenchBusinessStatus)}>
-                <option value="all">全部</option>
-                <option value="pending_review">待复盘</option>
-                <option value="first_round_completed">首轮观察完成</option>
-                <option value="stopped">停止跟踪</option>
-                <option value="voided">已作废</option>
-              </select>
-            </label>
-            <label>
-              店铺
-              <input value={filters.shop} onChange={(event) => setFilter("shop", event.target.value)} placeholder="包含匹配" />
-            </label>
-            <label>
-              周次
-              <select value={filters.week_number} onChange={(event) => setFilter("week_number", event.target.value ? Number(event.target.value) : "")}>
-                <option value="">全部</option>
-                {[1, 2, 3, 4].map((week) => <option value={week} key={week}>第 {week} 周</option>)}
-                <option value="5">第 5 周及以后</option>
-              </select>
-            </label>
-            <label>
-              周期处理状态
-              <select value={filters.status} onChange={(event) => setFilter("status", event.target.value)}>
-                <option value="">全部</option>
-                <option value="pending_review">待复盘</option>
-                <option value="completed">本周已复盘</option>
-              </select>
-            </label>
-            <label>
-              产品定位
-              <select value={filters.product_positioning} onChange={(event) => setFilter("product_positioning", event.target.value)}>
-                <option value="">全部</option>
-                {PRODUCT_POSITIONINGS.map((positioning) => <option value={positioning} key={positioning}>{positioning}</option>)}
-              </select>
-            </label>
-            <label>
-              跟踪状态
-              <select value={filters.tracking_status} onChange={(event) => setFilter("tracking_status", event.target.value)}>
-                <option value="">全部</option>
-                <option value="active">正常跟踪</option>
-                <option value="stopped">停止跟踪</option>
-              </select>
-            </label>
-          </div>
-        )}
         <div className="listing-batchbar">
           <label className="listing-select-all">
             <input
@@ -700,6 +812,17 @@ export function ListingObservationView(props: {
         ) : visibleGroups.length ? visibleGroups.map((group) => {
           const expanded = expandedGroups.includes(group.context.task_key);
           const productLink = findListingProductLink(props.productLinks, group.context.main_sku, group.context.country, group.context.business_period);
+          const itemSummaries = group.listings.map((listing) => {
+            const rows = sortStartedObservationPeriods(group.periodRows.filter((row) => row.listing_record_id === listing.id));
+            const itemStatusRows = sortStartedObservationPeriods(data.period_rows.filter((row) => row.listing_record_id === listing.id));
+            return {
+              listing,
+              rows,
+              periodSummary: summarizeVisibleObservationPeriods(rows),
+              itemStatus: observationItemStatusLabel(listing, itemStatusRows),
+              latestMetricRow: latestObservationMetricRow(itemStatusRows)
+            };
+          });
           return (
             <section className="listing-main-group" key={group.context.task_key}>
               <header className="listing-main-group-header">
@@ -731,13 +854,36 @@ export function ListingObservationView(props: {
                   {group.pendingListing && <span className="pill amber">待刊登</span>}
                   <small>{group.listings.length} 个 Item</small>
                 </div>
-                <button type="button" className="btn small" onClick={() => {
+                {scenario === "observation" && itemSummaries.length > 0 && (
+                  <div className="listing-group-status-strip" aria-label="当前 Item 观察状态">
+                    {itemSummaries.slice(0, 3).map(({ listing, itemStatus, periodSummary, latestMetricRow }) => (
+                      <span className="listing-group-status-chip" key={listing.id}>
+                        <b>{listing.shop}</b>
+                        <span>{listing.item}</span>
+                        <span className="pill gray">{itemStatus}</span>
+                        {latestMetricRow && (
+                          <span className="listing-group-metric-strip">
+                            <small>第{latestMetricRow.week_number}周</small>
+                            <small>订单 <b>{formatObservationMetric(latestMetricRow.order_count)}</b></small>
+                            <small>收入 <b>{formatObservationMetric(latestMetricRow.total_revenue)}</b></small>
+                            <small>毛利 <b>{formatObservationMetric(latestMetricRow.gross_profit_amount)}</b></small>
+                            <small>毛利率 <b>{formatPercent(latestMetricRow.gross_profit_rate)}</b></small>
+                            <small>定位 <b>{latestMetricRow.product_positioning || latestMetricRow.default_product_positioning || "-"}</b></small>
+                          </span>
+                        )}
+                        <small>已复盘 {periodSummary.completedWeeks}/{periodSummary.totalWeeks} 周</small>
+                      </span>
+                    ))}
+                    {itemSummaries.length > 3 && <span className="listing-group-status-more">+{itemSummaries.length - 3}</span>}
+                  </div>
+                )}
+                <button className="btn small listing-group-add-item" type="button" onClick={() => {
                   setExpandedGroups((current) => current.includes(group.context.task_key)
                     ? current
                     : [...current, group.context.task_key]);
                   addListingDraft(group.context);
                 }}>
-                  <Plus size={13} />{group.pendingListing ? "填写刊登" : "新增店铺 + Item"}
+                  <Plus size={13} />新增刊登 Item
                 </button>
               </header>
 
@@ -754,9 +900,7 @@ export function ListingObservationView(props: {
                     onSubmit={(task) => void submitListings(task)}
                   />
 
-                  {group.listings.map((listing) => {
-                    const rows = group.periodRows.filter((row) => row.listing_record_id === listing.id);
-                    const periodSummary = summarizeVisibleObservationPeriods(rows);
+                  {itemSummaries.map(({ listing, rows, periodSummary, itemStatus }) => {
                     return (
                       <article className="listing-item-card" key={listing.id}>
                         <header className="listing-item-header">
@@ -767,7 +911,7 @@ export function ListingObservationView(props: {
                           </div>
                           <div className="listing-item-meta">
                             <span>首周 {listing.first_period_start}</span>
-                            <span className="pill gray">{listingStatusLabel(listing, periodSummary.firstRoundCompleted)}</span>
+                            <span className="pill gray">{itemStatus}</span>
                             <span>已复盘 {periodSummary.completedWeeks} / {periodSummary.totalWeeks} 周</span>
                           </div>
                           <details className="listing-more-menu">
@@ -775,7 +919,7 @@ export function ListingObservationView(props: {
                             <div>
                               {listing.status === "active" && <button type="button" onClick={() => openListingEditor(listing)}>纠错</button>}
                               {listing.status === "active" && <button type="button" disabled={loading} onClick={() => void changeListingTracking(listing)}>{listing.tracking_status === "active" ? "停止跟踪" : "恢复跟踪"}</button>}
-                              {listing.status === "active" && listing.first_round_completed_at && <button type="button" onClick={() => openNewPeriod(listing.id)}>新增周期</button>}
+                              {listing.status === "active" && listing.first_round_completed_at && <button type="button" title="首轮结束后继续追加第 5 周及以后观察" onClick={() => openNewPeriod(listing.id)}>延长观察</button>}
                               {props.canManage && listing.status === "active" && <button type="button" onClick={() => openVoidListing(listing)}>作废</button>}
                             </div>
                           </details>
@@ -802,16 +946,18 @@ export function ListingObservationView(props: {
                               return (
                                 <section className={`listing-period-card ${correcting ? "correction-active" : ""}`} key={row.id}>
                                   <div className="listing-period-overview">
-                                    {editable && (
-                                      <input
-                                        type="checkbox"
-                                        aria-label={`选择 ${row.item} 第 ${row.week_number} 周`}
-                                        checked={selectedPeriods.includes(row.id)}
-                                        onChange={(event) => setSelectedPeriods((current) => event.target.checked
-                                          ? unique([...current, row.id])
-                                          : current.filter((id) => id !== row.id))}
-                                      />
-                                    )}
+                                    <div className="listing-period-select-cell">
+                                      {editable && (
+                                        <input
+                                          type="checkbox"
+                                          aria-label={`选择 ${row.item} 第 ${row.week_number} 周`}
+                                          checked={selectedPeriods.includes(row.id)}
+                                          onChange={(event) => setSelectedPeriods((current) => event.target.checked
+                                            ? unique([...current, row.id])
+                                            : current.filter((id) => id !== row.id))}
+                                        />
+                                      )}
+                                    </div>
                                     <div className="listing-period-title">
                                       <b>第 {row.week_number} 周</b>
                                       <span>{row.period_start} 至 {row.period_end}</span>
@@ -823,10 +969,8 @@ export function ListingObservationView(props: {
                                       <div><span>一次毛利额</span><b>{formatObservationMetric(row.gross_profit_amount)}</b></div>
                                       <div><span>一次毛利率</span><b>{formatPercent(row.gross_profit_rate)}</b></div>
                                     </div>
-                                  </div>
-                                  <div className="listing-period-review">
-                                    <label>
-                                      产品定位 *
+                                    <label className="listing-period-field listing-review-positioning">
+                                      <span>产品定位 *</span>
                                       {editable ? (
                                         <>
                                           <select
@@ -839,13 +983,14 @@ export function ListingObservationView(props: {
                                           </select>
                                           <FieldError message={reviewErrors[row.id]?.product_positioning} />
                                         </>
-                                      ) : <span>{draft.product_positioning || "-"}</span>}
+                                      ) : <strong>{draft.product_positioning || "-"}</strong>}
                                     </label>
-                                    <label className="listing-optimization-field">
-                                      优化操作 *
+                                    <label className="listing-period-field listing-review-optimization">
+                                      <span>优化操作 *</span>
                                       {editable ? (
                                         <>
                                           <textarea
+                                            rows={1}
                                             className={reviewErrors[row.id]?.optimization_action ? "listing-error-input" : ""}
                                             value={draft.optimization_action}
                                             onChange={(event) => updateReview(row.id, { optimization_action: event.target.value })}
@@ -853,7 +998,7 @@ export function ListingObservationView(props: {
                                           />
                                           <FieldError message={reviewErrors[row.id]?.optimization_action} />
                                         </>
-                                      ) : <details><summary>{draft.optimization_action ? "查看优化操作" : "-"}</summary><span>{draft.optimization_action}</span></details>}
+                                      ) : <details className="listing-optimization-summary"><summary>{draft.optimization_action || "-"}</summary><span>{draft.optimization_action}</span></details>}
                                     </label>
                                     <div className="listing-period-actions">
                                       {row.status === "completed" && !correcting && <button className="btn small" type="button" onClick={() => setCorrectingPeriods((current) => [...current, row.id])}>纠错</button>}
@@ -886,6 +1031,39 @@ export function ListingObservationView(props: {
           </div>
         )}
       </div>
+
+      {manualListing && (
+        <div className="listing-overlay">
+          <div
+            className="listing-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="manual-listing-title"
+            tabIndex={-1}
+            ref={manualListingDialog}
+            onKeyDown={(event) => handleDialogKeyDown(event, closeManualListing)}
+          >
+            <button aria-label="关闭新增主 SKU 刊登" className="listing-dialog-close" type="button" onClick={closeManualListing}><X size={18} /></button>
+            <h2 id="manual-listing-title">新增主 SKU 刊登</h2>
+            <div className="manual-listing-grid">
+              <label>主 SKU *<input className={manualListingErrors.main_sku ? "listing-error-input" : ""} value={manualListing.main_sku} onChange={(event) => updateManualListing("main_sku", event.target.value)} /><FieldError message={manualListingErrors.main_sku} /></label>
+              <label>商品名称<input value={manualListing.main_sku_name} onChange={(event) => updateManualListing("main_sku_name", event.target.value)} /></label>
+              <label>国家 *<input className={manualListingErrors.country ? "listing-error-input" : ""} value={manualListing.country} onChange={(event) => updateManualListing("country", event.target.value)} /><FieldError message={manualListingErrors.country} /></label>
+              <label>站点<input value={manualListing.site} onChange={(event) => updateManualListing("site", event.target.value)} /></label>
+              <label>负责人 *<input disabled={props.role === "operator"} className={manualListingErrors.salesperson_name ? "listing-error-input" : ""} value={manualListing.salesperson_name} onChange={(event) => updateManualListing("salesperson_name", event.target.value)} /><FieldError message={manualListingErrors.salesperson_name} /></label>
+              <label>业务期<input value={manualListing.business_period} onChange={(event) => updateManualListing("business_period", event.target.value)} placeholder="如 UAT-SR-20260724" /></label>
+              <label>店铺 *<input className={manualListingErrors.shop ? "listing-error-input" : ""} value={manualListing.shop} onChange={(event) => updateManualListing("shop", event.target.value)} /><FieldError message={manualListingErrors.shop} /></label>
+              <label>Item *<input className={manualListingErrors.item ? "listing-error-input" : ""} value={manualListing.item} onChange={(event) => updateManualListing("item", event.target.value)} /><FieldError message={manualListingErrors.item} /></label>
+              <div className="listing-readonly-field"><span>首周周期</span><b>{periodRangeText(manualListing.first_period_start)}</b><small>系统自动按下一个完整周四到周三计算</small><FieldError message={manualListingErrors.first_period_start} /></div>
+              <label className="manual-listing-strategy">刊登策略 *<textarea className={manualListingErrors.listing_strategy ? "listing-error-input" : ""} value={manualListing.listing_strategy} onChange={(event) => updateManualListing("listing_strategy", event.target.value)} /><FieldError message={manualListingErrors.listing_strategy} /></label>
+            </div>
+            <div className="listing-dialog-actions">
+              <button className="btn" type="button" onClick={closeManualListing}>取消</button>
+              <button className="btn primary" type="button" disabled={loading} onClick={() => void submitManualListing()}>确认新增</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {summaryRow && (
         <div className="listing-overlay">
@@ -929,15 +1107,15 @@ export function ListingObservationView(props: {
             ref={newPeriodDialog}
             onKeyDown={(event) => handleDialogKeyDown(event, closeNewPeriod)}
           >
-            <button aria-label="关闭新增周期" className="listing-dialog-close" type="button" onClick={closeNewPeriod}><X size={18} /></button>
-            <h2 id="listing-period-title">新增后续周期</h2>
+            <button aria-label="关闭延长观察" className="listing-dialog-close" type="button" onClick={closeNewPeriod}><X size={18} /></button>
+            <h2 id="listing-period-title">延长观察</h2>
             <label>
               周期开始日
               <input type="date" value={newPeriod.periodStart} onChange={(event) => setNewPeriod({ ...newPeriod, periodStart: event.target.value })} />
             </label>
             <div className="listing-dialog-actions">
               <button className="btn" type="button" onClick={closeNewPeriod}>取消</button>
-              <button className="btn primary" type="button" disabled={loading} onClick={() => void submitNewPeriod()}>确认新增</button>
+              <button className="btn primary" type="button" disabled={loading} onClick={() => void submitNewPeriod()}>确认延长</button>
             </div>
           </div>
         </div>
@@ -960,7 +1138,7 @@ export function ListingObservationView(props: {
             <div className="listing-edit-grid">
               <label>店铺<input disabled={editingListing.hasMetrics} value={editingListing.draft.shop} onChange={(event) => setEditingListing({ ...editingListing, draft: { ...editingListing.draft, shop: event.target.value } })} /></label>
               <label>Item<input disabled={editingListing.hasMetrics} value={editingListing.draft.item} onChange={(event) => setEditingListing({ ...editingListing, draft: { ...editingListing.draft, item: event.target.value } })} /></label>
-              <label>第一周起始周期<input disabled={editingListing.hasMetrics} type="date" value={editingListing.draft.first_period_start} onChange={(event) => setEditingListing({ ...editingListing, draft: { ...editingListing.draft, first_period_start: event.target.value } })} /></label>
+              <div className="listing-readonly-field"><span>首周周期</span><b>{periodRangeText(editingListing.draft.first_period_start)}</b><small>已由系统自动计算</small></div>
               <label>刊登策略<textarea value={editingListing.draft.listing_strategy} onChange={(event) => setEditingListing({ ...editingListing, draft: { ...editingListing.draft, listing_strategy: event.target.value } })} /></label>
             </div>
             <FieldError message={editErrors.shop || editErrors.item || editErrors.first_period_start || editErrors.listing_strategy} />
@@ -1045,10 +1223,10 @@ export function ListingObservationSummary(props: {
           <summary>{group.business_period || "未标记业务期"} · {group.listings.length} 个 Item</summary>
           <div className="listing-summary-items">
             {group.listings.map((listing) => {
-              const periods = sortObservationRows(group.periods.filter((period) =>
+              const periods = sortStartedObservationPeriods(group.periods.filter((period) =>
                 period.listing_record_id === listing.id && observationPeriodDisplay(period) !== "hidden"
               ));
-              const periodSummary = summarizeVisibleObservationPeriods(periods);
+              const itemStatus = observationItemStatusLabel(listing, periods);
               return (
                 <article className="listing-item-card listing-summary-item" key={listing.id}>
                   <header className="listing-item-header">
@@ -1060,7 +1238,7 @@ export function ListingObservationSummary(props: {
                     <div className="listing-item-meta">
                       <span>负责人 {listing.salesperson_name}</span>
                       <span>首周 {listing.first_period_start}</span>
-                      <span className="pill gray">{listingStatusLabel(listing, periodSummary.firstRoundCompleted)}</span>
+                      <span className="pill gray">{itemStatus}</span>
                     </div>
                   </header>
                   {periods.length ? (
@@ -1140,14 +1318,14 @@ function PendingListingTasks(props: {
             {rows.length ? (
               <div className="pending-listing-table-scroll">
                 <table className="pending-listing-table">
-                  <thead><tr><th>店铺 *</th><th>Item *</th><th>刊登策略 *</th><th>第一周起始周期 *</th><th /></tr></thead>
+                  <thead><tr><th>店铺 *</th><th>Item *</th><th>刊登策略 *</th><th>首周周期</th><th /></tr></thead>
                   <tbody>
                     {rows.map((row, index) => (
                       <tr key={index}>
                         <td><input aria-label={`${task.main_sku} 第 ${index + 1} 条店铺`} className={errors[index]?.shop ? "listing-error-input" : ""} value={row.shop} onChange={(event) => props.onUpdate(task.task_key, index, "shop", event.target.value)} /><FieldError message={errors[index]?.shop} /></td>
                         <td><input aria-label={`${task.main_sku} 第 ${index + 1} 条 Item`} className={errors[index]?.item ? "listing-error-input" : ""} value={row.item} onChange={(event) => props.onUpdate(task.task_key, index, "item", event.target.value)} /><FieldError message={errors[index]?.item} /></td>
                         <td><textarea aria-label={`${task.main_sku} 第 ${index + 1} 条刊登策略`} className={errors[index]?.listing_strategy ? "listing-error-input" : ""} value={row.listing_strategy} onChange={(event) => props.onUpdate(task.task_key, index, "listing_strategy", event.target.value)} placeholder="自由填写刊登策略" /><FieldError message={errors[index]?.listing_strategy} /></td>
-                        <td><input aria-label={`${task.main_sku} 第 ${index + 1} 条第一周起始周期`} className={errors[index]?.first_period_start ? "listing-error-input" : ""} type="date" value={row.first_period_start} onChange={(event) => props.onUpdate(task.task_key, index, "first_period_start", event.target.value)} /><FieldError message={errors[index]?.first_period_start} /></td>
+                        <td><span className="listing-auto-period">{periodRangeText(row.first_period_start)}</span><FieldError message={errors[index]?.first_period_start} /></td>
                         <td><button className="icon-btn" type="button" aria-label={`删除 ${task.main_sku} 第 ${index + 1} 条`} title="删除本行" onClick={() => props.onRemove(task.task_key, index)}><Trash2 size={15} /></button></td>
                       </tr>
                     ))}
@@ -1168,6 +1346,13 @@ function PendingListingTasks(props: {
   );
 }
 
+function periodRangeText(start: string) {
+  if (!start) return "系统自动";
+  const [year, month, day] = start.split("-").map(Number);
+  const end = new Date(Date.UTC(year, month - 1, day + 6));
+  return `系统自动 ${start} 至 ${end.toISOString().slice(0, 10)}`;
+}
+
 function periodStatusLabel(row: ObservationPeriodRow, listing?: ListingRecord) {
   if (listing?.status === "voided") return "已作废";
   const stopped = listing?.tracking_status === "stopped" || row.tracking_status === "stopped";
@@ -1183,13 +1368,6 @@ function periodStatusClass(row: ObservationPeriodRow, listing?: ListingRecord) {
   if (row.status === "pending_review") return "amber";
   if (listing?.tracking_status === "stopped" || row.tracking_status === "stopped") return "gray";
   return "green";
-}
-
-function listingStatusLabel(record: ListingRecord, visibleFirstRoundCompleted: boolean) {
-  if (record.status === "voided") return "已作废";
-  if (record.tracking_status === "stopped") return "停止跟踪";
-  if (record.first_round_completed_at && visibleFirstRoundCompleted) return "首轮观察完成";
-  return "观察中";
 }
 
 function FieldError({ message }: { message?: string }) {

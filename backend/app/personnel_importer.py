@@ -72,6 +72,7 @@ def import_personnel_config(db: Session, source_file: str | Path, source_sheet: 
             for field in HEADER_FIELDS:
                 if field != "operator_name":
                     setattr(profile, field, values.get(field))
+            profile.key_categories = _legacy_categories(values.get("key_category1"), values.get("key_category2"))
             profile.enabled = True
             upsert_operator_role_mapping(db, operator_name)
 
@@ -99,3 +100,15 @@ def _text(value: Any) -> str | None:
         return None
     text = str(value).strip()
     return text or None
+
+
+def _legacy_categories(*values: str | None) -> list[dict[str, str]]:
+    output: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for value in values:
+        text = _text(value)
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        output.append({"level1": text})
+    return output

@@ -499,6 +499,8 @@ class SecondaryResearchPeerRead(BaseModel):
     secondary_competitor_url: str | None = None
     secondary_conclusion: str | None = None
     product_positioning: str | None = None
+    secondary_target_daily_sales: float | None = None
+    secondary_selling_points: str | None = None
     secondary_research_submitted_at: datetime | None = None
 
 
@@ -512,6 +514,8 @@ class SecondaryResearchItemRead(BaseModel):
     secondary_competitor_url: str | None = None
     secondary_conclusion: str | None = None
     product_positioning: str | None = None
+    secondary_target_daily_sales: float | None = None
+    secondary_selling_points: str | None = None
     secondary_evidence_images: list[dict[str, Any]] = Field(default_factory=list)
     secondary_research_submitted_at: datetime | None = None
     sub_sku: str
@@ -570,15 +574,24 @@ class SecondaryResearchDraftUpdate(BaseModel):
     secondary_competitor_url: str | None = None
     secondary_conclusion: str | None = None
     product_positioning: str | None = None
+    secondary_target_daily_sales: float | None = None
+    secondary_selling_points: str | None = None
     secondary_evidence_images: list[dict[str, Any]] | None = None
 
-    model_config = {"extra": "forbid"}
+    model_config = {"extra": "forbid", "allow_inf_nan": False}
 
     @field_validator("product_positioning")
     @classmethod
     def valid_product_positioning(cls, value: str | None) -> str | None:
         if value is not None and value not in {"引流款", "利润款", "淘汰款", "稳定款", "清仓款"}:
             raise ValueError("product_positioning must be 引流款, 利润款, 淘汰款, 稳定款, or 清仓款")
+        return value
+
+    @field_validator("secondary_target_daily_sales")
+    @classmethod
+    def valid_target_daily_sales(cls, value: float | None) -> float | None:
+        if value is not None and value <= 0:
+            raise ValueError("secondary_target_daily_sales must be greater than 0")
         return value
 
 
@@ -659,10 +672,20 @@ class ListingBatchRow(BaseModel):
     first_period_start: str
 
 
+class ManualListingContext(BaseModel):
+    main_sku: str
+    main_sku_name: str | None = None
+    country: str | None = None
+    site: str | None = None
+    salesperson_name: str
+    business_period: str | None = None
+
+
 class ListingBatchRequest(BaseModel):
     task_key: str
     rows: list[ListingBatchRow] = Field(default_factory=list)
     reuse_listing_ids: list[str] = Field(default_factory=list)
+    manual_context: ManualListingContext | None = None
 
 
 class ListingRecordUpdate(BaseModel):
@@ -832,11 +855,66 @@ class RoleMappingRead(RoleMappingCreate):
     model_config = {"from_attributes": True}
 
 
+class OperatorCategorySelection(BaseModel):
+    level1: str
+    level2: str | None = None
+
+    @field_validator("level1")
+    @classmethod
+    def level1_required(cls, value: str) -> str:
+        text = str(value).strip()
+        if not text:
+            raise ValueError("level1 is required")
+        return text
+
+    @field_validator("level2", mode="before")
+    @classmethod
+    def empty_level2_to_none(cls, value: object) -> str | None:
+        if value is None:
+            return None
+        text = str(value).strip()
+        return text or None
+
+
+class CompanyCategoryImportRequest(BaseModel):
+    source_file: str
+    source_sheet: str = "公司类目"
+
+
+class CompanyCategoryImportResponse(BaseModel):
+    created_count: int
+    updated_count: int
+    skipped_count: int
+
+
+class CompanyCategoryRead(BaseModel):
+    id: str
+    level1: str
+    level2: str | None = None
+    enabled: bool
+
+    @field_validator("level2", mode="before")
+    @classmethod
+    def empty_level2_to_none(cls, value: object) -> str | None:
+        if value is None:
+            return None
+        text = str(value).strip()
+        return text or None
+
+    model_config = {"from_attributes": True}
+
+
 class OperatorAssignmentProfileCreate(BaseModel):
     operator_name: str
     key_site: str | None = None
     key_category1: str | None = None
     key_category2: str | None = None
+    key_categories: list[OperatorCategorySelection] = Field(default_factory=list)
+
+    @field_validator("key_categories", mode="before")
+    @classmethod
+    def empty_key_categories(cls, value: object) -> list[object]:
+        return list(value or [])
     assignment_priority: int = 0
     display_order: int | None = None
     enabled: bool = True
@@ -847,6 +925,7 @@ class OperatorAssignmentProfileUpdate(BaseModel):
     key_site: str | None = None
     key_category1: str | None = None
     key_category2: str | None = None
+    key_categories: list[OperatorCategorySelection] | None = None
     assignment_priority: int | None = None
     display_order: int | None = None
     enabled: bool | None = None

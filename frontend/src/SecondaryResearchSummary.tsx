@@ -71,10 +71,12 @@ export function SecondaryResearchSummary(props: {
                 <dl>
                   <div><dt>调研时间</dt><dd>{dateTimeText(item.secondary_research_at)}</dd></div>
                   <div><dt>提交时间</dt><dd>{dateTimeText(item.secondary_research_submitted_at)}</dd></div>
-                  <div><dt>竞品链接</dt><dd>{item.secondary_competitor_url
-                    ? <a href={item.secondary_competitor_url} target="_blank" rel="noreferrer">打开竞品链接</a>
+                  <div><dt>锚定链接</dt><dd>{item.secondary_competitor_url
+                    ? <a href={item.secondary_competitor_url} target="_blank" rel="noreferrer">打开锚定链接</a>
                     : "-"}</dd></div>
+                  <div><dt>目标单销</dt><dd>{item.secondary_target_daily_sales ?? "-"}</dd></div>
                   <div className="secondary-summary-conclusion"><dt>调研结论</dt><dd>{item.secondary_conclusion || "-"}</dd></div>
+                  <div className="secondary-summary-conclusion"><dt>卖点总结</dt><dd>{item.secondary_selling_points || "-"}</dd></div>
                 </dl>
                 {item.secondary_evidence_images.length > 0 && (
                   <div className="secondary-summary-images">

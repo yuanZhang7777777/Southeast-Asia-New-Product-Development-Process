@@ -37,11 +37,13 @@ import {
   AssignmentPreviewItem,
   AuthSession,
   AvailableStockingItem,
+  CompanyCategory,
   ExportPeriodSummary,
   getAuthToken,
   ImportBatchSummary,
   Opportunity,
   OperatorAssignmentProfile,
+  OperatorCategorySelection,
   OperatorStockingItem,
   PlmArrivalPreview,
   Selection1ImportResponse,
@@ -64,6 +66,8 @@ import { compactUrlLabel } from "./urlDisplay";
 import { imageFiles } from "./imageUploads";
 import { StockingRequestView } from "./StockingRequestView";
 import { roleStockingLabel } from "./stockingRequests";
+
+type OperatorProfileDraft = Pick<OperatorAssignmentProfile, "operator_name" | "key_site" | "key_category1" | "key_category2" | "key_categories" | "assignment_priority" | "enabled">;
 
 type DingTalkAuthCodeResult = {
   authCode?: string;
@@ -183,6 +187,7 @@ const statusMeta: Record<string, { label: string; klass: string }> = {
   waiting_arrival: { label: "待到货", klass: "blue" },
   waiting_secondary_research: { label: "待二次调研", klass: "amber" },
   waiting_listing: { label: "待刊登", klass: "blue" },
+  listing_observation: { label: "刊登观察中", klass: "blue" },
   confirmed_not_claim: { label: "已确认不认领", klass: "gray" },
   已确认不认领: { label: "已确认不认领", klass: "gray" },
   disabled: { label: "已停用", klass: "gray" },
@@ -284,6 +289,7 @@ function App() {
   const [opportunities, setOpportunities] = useState<Opportunity[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [operatorProfiles, setOperatorProfiles] = useState<OperatorAssignmentProfile[]>([]);
+  const [companyCategories, setCompanyCategories] = useState<CompanyCategory[]>([]);
   const [importBatches, setImportBatches] = useState<ImportBatchSummary[]>([]);
   const [activeOperator, setActiveOperator] = useState("");
   const [availableStocking, setAvailableStocking] = useState<AvailableStockingItem[]>([]);
@@ -318,11 +324,12 @@ function App() {
   const [arrivalPreview, setArrivalPreview] = useState<PlmArrivalPreview | null>(null);
   const [arrivalList, setArrivalList] = useState<ListState>(defaultListState);
   const [selectedSelfClaimIds, setSelectedSelfClaimIds] = useState<string[]>([]);
-  const [newProfile, setNewProfile] = useState<Pick<OperatorAssignmentProfile, "operator_name" | "key_site" | "key_category1" | "key_category2" | "assignment_priority" | "enabled">>({
+  const [newProfile, setNewProfile] = useState<OperatorProfileDraft>({
     operator_name: "",
     key_site: "",
     key_category1: "",
     key_category2: "",
+    key_categories: [],
     assignment_priority: 0,
     enabled: true
   });
@@ -334,6 +341,7 @@ function App() {
       for (const item of authSession.roles) {
         if (item.role === "super_admin") {
           roles.add("manager");
+          roles.add("operator");
         } else {
           roles.add(item.role);
         }
@@ -609,6 +617,7 @@ function App() {
     setExportPeriods([]);
     setOperatorStocking([]);
     setOperatorProfiles([]);
+    setCompanyCategories([]);
     setImportBatches([]);
   }
 
@@ -646,7 +655,7 @@ function App() {
     const managerStocking = activeRole === "manager" ? loadPart("导出中心", api.availableStocking, availableStocking) : Promise.resolve([] as AvailableStockingItem[]);
     const managerPeriods = activeRole === "manager" ? loadPart("导出期数", api.exportPeriods, exportPeriods) : Promise.resolve([] as ExportPeriodSummary[]);
     const ownStocking = activeRole === "operator" ? loadPart("备货申请", api.myStockingRequests, operatorStocking) : Promise.resolve([] as OperatorStockingItem[]);
-    const [health, opportunityList, taskList, stockingList, exportPeriodList, operatorStockingList, profileList, batchList] = await Promise.all([
+    const [health, opportunityList, taskList, stockingList, exportPeriodList, operatorStockingList, profileList, companyCategoryList, batchList] = await Promise.all([
       loadPart("健康检查", api.health, { status: "error", environment: "unknown" }),
       loadPart("机会池", () => api.opportunities(5000, undefined, isSuperAdmin), []),
       loadPart("待办", api.tasks, []),
@@ -654,6 +663,7 @@ function App() {
       managerPeriods,
       ownStocking,
       loadPart("人员配置", api.operatorProfiles, []),
+      canManage ? loadPart("公司类目", api.companyCategories, companyCategories) : Promise.resolve([] as CompanyCategory[]),
       canManage ? loadPart("导入批次", api.importBatches, []) : Promise.resolve([])
     ]);
     if (generation !== refreshGeneration.current) {
@@ -670,6 +680,7 @@ function App() {
     setExportPeriods(exportPeriodList);
     setOperatorStocking(operatorStockingList);
     setOperatorProfiles(profileList);
+    setCompanyCategories(companyCategoryList);
     setImportBatches(batchList);
     if (!options.silent || failures.length) {
       setStatusMessage(failures.length ? `部分数据未加载：${failures.join("、")}` : "已刷新");
@@ -804,6 +815,7 @@ function App() {
           key_site: profile.key_site || "",
           key_category1: profile.key_category1 || "",
           key_category2: profile.key_category2 || "",
+          key_categories: profileCategorySelections(profile),
           assignment_priority: Number(profile.assignment_priority || 0),
           display_order: profile.display_order || 0,
           enabled: profile.enabled
@@ -816,7 +828,7 @@ function App() {
     await runAction("新增人员配置", async () => {
       if (!newProfile.operator_name.trim()) throw new Error("运营不能为空");
       await api.createOperatorProfile(newProfile);
-      setNewProfile({ operator_name: "", key_site: "", key_category1: "", key_category2: "", assignment_priority: 0, enabled: true });
+      setNewProfile({ operator_name: "", key_site: "", key_category1: "", key_category2: "", key_categories: [], assignment_priority: 0, enabled: true });
     });
   }
 
@@ -1088,7 +1100,7 @@ function App() {
             </div>
             {statusMessage && <div className={statusMessage.includes("失败") || statusMessage.includes("Error") ? "notice toast red" : "notice toast"}>{statusMessage}</div>}
             <div className="screen-body">
-            {detailGroup ? (
+            {detailGroup && (
               <ProductDetailView
                 group={detailGroup}
                 activeRole={activeRole}
@@ -1110,7 +1122,8 @@ function App() {
                 onNavigate={navigateProductDetail}
                 onUpdate={updateOpportunityDetails}
               />
-            ) : (
+            )}
+            <div style={{ display: detailGroup ? "none" : undefined }}>
             <>
             {activeView === "source" && (
               <SourceView
@@ -1180,6 +1193,7 @@ function App() {
                 setProfilePanelOpen={setProfilePanelOpen}
                 operatorProfiles={operatorProfiles}
                 setOperatorProfiles={setOperatorProfiles}
+                companyCategories={companyCategories}
                 list={assignList}
                 setList={setAssignList}
                 newProfile={newProfile}
@@ -1255,7 +1269,7 @@ function App() {
               />
             )}
             </>
-            )}
+            </div>
             </div>
           </div>
 
@@ -1741,17 +1755,17 @@ const competitorSpecs = [
     price: "AA",
     sales: "AB",
     linkAliases: ["最低价链接", "平台综合推荐(前三页）最低价竞品链接1"],
-    priceAliases: ["售价1", "售价1(PHP）", "竞品单价 / （链接1） / (比索）"],
-    salesAliases: ["月销1", "竞品子sku月销 / （链接1）"]
+    priceAliases: ["售价1", "售价1(PHP）", "竞品单价 / （链接1） / (比索）", "竞品单价（链接1）(比索）"],
+    salesAliases: ["月销1", "竞品子sku月销 / （链接1）", "竞品子sku月销（链接1）"]
   },
   {
     label: "月销最高",
     link: "AC",
     price: "AD",
     sales: "AE",
-    linkAliases: ["月销最高链接链接1", "月销最高链接", "most / orders链接", "most orders链接", "平台综合推荐（前三页）销量最多竞品链接2"],
-    priceAliases: ["售价2", "售价2(PHP）", "竞品单价 / （链接2） / (比索）"],
-    salesAliases: ["月销2", "竞品子sku月销 / （链接2）"]
+    linkAliases: ["月销最高链接链接1", "月销最高链接", "most / orders链接", "most orders链接", "平台综合推荐（前三页）销量最多竞品链接2", "平台综合推荐（前三页）月销量最多竞品链接2"],
+    priceAliases: ["售价2", "售价2(PHP）", "竞品单价 / （链接2） / (比索）", "竞品单价（链接2）(比索）"],
+    salesAliases: ["月销2", "竞品子sku月销 / （链接2）", "竞品子sku月销（链接2）"]
   },
   {
     label: "月销次高",
@@ -1783,17 +1797,43 @@ const competitorSpecs = [
 ];
 
 const pricingSpecs = [
-  { column: "AO", label: "参考单销", aliases: ["参考单销"] },
+  { column: "AO", label: "参考单销", aliases: ["参考单销", "竟对参考单销(=子sku月销/30)", "竞对参考单销(=子sku月销/30)"] },
   { column: "AP", label: "稳定期定价", aliases: ["稳定期定价", "稳定期定价 （PHP）", "稳定期定价 / （PHP）", "参考定价", "稳定期参考定价 / （VND）"] },
   { column: "AQ", label: "一次毛利额", aliases: ["一次毛利额 / （THB）", "一次毛利额 / （PHP）", "一次毛利额 / （VND）"] },
-  { column: "AR", label: "一次毛利额(RMB)", aliases: ["一次毛利额 / （人民币）"] },
-  { column: "AS", label: "稳定期利润率", aliases: ["稳定期利润率", "一次毛利率"] },
+  { column: "AR", label: "一次毛利额(RMB)", aliases: ["一次毛利额 / （人民币）", "一次毛利额（人民币）"] },
+  { column: "AS", label: "稳定期利润率", aliases: ["稳定期利润率", "一次毛利率", "海外仓一次毛利率（主要看稳定期的是否有优势）"] },
   { column: "AT", label: "预估单销", aliases: ["预估单销"] },
   { column: "AU", label: "推广期定价", aliases: ["推广期定价"] },
   { column: "AV", label: "推广期利润率", aliases: ["推广期利润率"] },
   { column: "AW", label: "稳定期总成本", aliases: ["稳定期总成本（PHP）（含头程+平台费+基础设施）", "稳定期总成本（THB）（含头程+平台费+基础设施）", "稳定期总成本（VND）（含头程+平台费+基础设施）"] },
   { column: "AX", label: "推广期总成本", aliases: ["推广期总成本（PHP）（含头程+平台费+基础设施）", "推广期总成本（THB）（含头程+平台费+基础设施）", "推广期总成本（VND）（含头程+平台费+基础设施）"] }
 ] as const;
+
+const historicalDevelopmentColumns: Record<string, { section: "development_inquiry" | "pricing_snapshot"; key: string }> = {
+  M: { section: "development_inquiry", key: "product_spec" },
+  N: { section: "development_inquiry", key: "outer_package" },
+  O: { section: "development_inquiry", key: "final_package" },
+  P: { section: "development_inquiry", key: "supplier_url" },
+  Q: { section: "development_inquiry", key: "supplier_name" },
+  R: { section: "development_inquiry", key: "tax_included_cost_rmb" },
+  S: { section: "development_inquiry", key: "add_on_shipping_total" },
+  T: { section: "development_inquiry", key: "add_on_shipping_unit" },
+  U: { section: "development_inquiry", key: "package_weight_kg" },
+  V: { section: "development_inquiry", key: "package_length_cm" },
+  W: { section: "development_inquiry", key: "package_width_cm" },
+  X: { section: "development_inquiry", key: "package_height_cm" },
+  Y: { section: "development_inquiry", key: "package_volume" },
+  AO: { section: "pricing_snapshot", key: "reference_daily_sales" },
+  AP: { section: "pricing_snapshot", key: "stable_price" },
+  AQ: { section: "pricing_snapshot", key: "gross_profit_local" },
+  AR: { section: "pricing_snapshot", key: "gross_profit_rmb" },
+  AS: { section: "pricing_snapshot", key: "stable_margin" },
+  AT: { section: "pricing_snapshot", key: "estimated_daily_sales" },
+  AU: { section: "pricing_snapshot", key: "promo_price" },
+  AV: { section: "pricing_snapshot", key: "promo_margin" },
+  AW: { section: "pricing_snapshot", key: "stable_total_cost" },
+  AX: { section: "pricing_snapshot", key: "promo_total_cost" }
+};
 
 const detailSections: { key: DetailSectionKey; label: string }[] = [
   { key: "core", label: "基础信息" },
@@ -2437,8 +2477,8 @@ function pricingRows(item: Opportunity) {
 
 function detailFieldColumn(item: Opportunity, aliases: readonly string[], fallbackColumn: string) {
   const aliasKeys = new Set(aliases.map(normalizeFieldKey));
-  for (const [column, headers] of Object.entries(headersByColumn(item))) {
-    if (Array.isArray(headers) && headers.some((header) => typeof header === "string" && aliasKeys.has(normalizeFieldKey(header)))) return column;
+  for (const column of Object.keys(headersByColumn(item))) {
+    if (sourceHeaderValues(item, column).some((header) => aliasKeys.has(normalizeFieldKey(header)))) return column;
   }
   return fallbackColumn;
 }
@@ -2464,8 +2504,14 @@ function detailFieldValue(item: Opportunity, aliases: readonly string[], fallbac
 }
 
 function headerLabel(item: Opportunity, column: string) {
+  return sourceHeaderValues(item, column).filter(Boolean).join(" / ");
+}
+
+function sourceHeaderValues(item: Opportunity, column: string) {
   const headers = headersByColumn(item)[column];
-  return Array.isArray(headers) ? headers.filter(Boolean).join(" / ") : "";
+  if (Array.isArray(headers)) return headers.filter((header): header is string => typeof header === "string");
+  if (typeof headers === "string") return [headers];
+  return [];
 }
 
 function headersByColumn(item?: Opportunity | null): Record<string, unknown> {
@@ -2513,7 +2559,16 @@ function editableSourceCellRows(item: Opportunity) {
 }
 
 function snapshotColumnText(item: Opportunity, column: string) {
-  return valueText(snapshotFieldsByColumn(item)[column]) || valueText(snapshotCells(item)[column]);
+  return valueText(snapshotFieldsByColumn(item)[column]) || valueText(snapshotCells(item)[column]) || historicalDevelopmentColumnText(item, column);
+}
+
+function historicalDevelopmentColumnText(item: Opportunity, column: string) {
+  const mapped = historicalDevelopmentColumns[column];
+  if (!mapped) return "";
+  const source = snapshotOf(item).development_source;
+  if (!isRecord(source)) return "";
+  const section = source[mapped.section];
+  return isRecord(section) ? valueText(section[mapped.key]) : "";
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -2625,10 +2680,11 @@ function AssignView(props: {
   setProfilePanelOpen: Dispatch<SetStateAction<boolean>>;
   operatorProfiles: OperatorAssignmentProfile[];
   setOperatorProfiles: (value: OperatorAssignmentProfile[]) => void;
+  companyCategories: CompanyCategory[];
   list: ListState;
   setList: Dispatch<SetStateAction<ListState>>;
-  newProfile: Pick<OperatorAssignmentProfile, "operator_name" | "key_site" | "key_category1" | "key_category2" | "assignment_priority" | "enabled">;
-  setNewProfile: (value: Pick<OperatorAssignmentProfile, "operator_name" | "key_site" | "key_category1" | "key_category2" | "assignment_priority" | "enabled">) => void;
+  newProfile: OperatorProfileDraft;
+  setNewProfile: (value: OperatorProfileDraft) => void;
   onSaveProfiles: () => void;
   onAddProfile: () => void;
   onDeleteProfile: (profileId: string) => void;
@@ -2747,9 +2803,14 @@ function AssignView(props: {
                   <span className="tag">{profile.key_site || "-"}</span>
                 </div>
                 <div className="operator-category-tags">
-                  {profile.key_category1 && <span title={`重点品类1：${profile.key_category1}`}>品类1 · {profile.key_category1}</span>}
-                  {profile.key_category2 && <span title={`重点品类2：${profile.key_category2}`}>品类2 · {profile.key_category2}</span>}
-                  {!profile.key_category1 && !profile.key_category2 && <span className="muted">未配置重点品类</span>}
+                  {profileCategorySelections(profile).length ? (
+                    profileCategorySelections(profile).slice(0, 3).map((selection) => (
+                      <span key={categorySelectionKey(selection)} title={`重点类目：${categorySelectionLabel(selection)}`}>类目 · {categorySelectionLabel(selection)}</span>
+                    ))
+                  ) : (
+                    <span className="muted">未配置重点类目</span>
+                  )}
+                  {profileCategorySelections(profile).length > 3 && <span>+{profileCategorySelections(profile).length - 3}</span>}
                 </div>
                 <div className="assignment-load-bar">
                   <span style={{ width: `${Math.max(8, (load.groups / maxGroups) * 100)}%` }} />
@@ -2823,8 +2884,7 @@ function AssignView(props: {
                   <span>启用</span>
                   <span>运营</span>
                   <span>负责站点</span>
-                  <span>重点品类1</span>
-                  <span>重点品类2</span>
+                  <span>重点类目</span>
                   <span>优先级</span>
                   <span>排序</span>
                   <span>删除</span>
@@ -2857,8 +2917,14 @@ function AssignView(props: {
                       <option value="">请选择</option>
                       {siteOptions.map((site) => <option key={site} value={site}>{siteOptionLabel(site)}</option>)}
                     </select>
-                    <input value={profile.key_category1 || ""} onChange={(event) => patchProfile(profile.id, { key_category1: event.target.value })} />
-                    <input value={profile.key_category2 || ""} onChange={(event) => patchProfile(profile.id, { key_category2: event.target.value })} />
+                    <CategoryMultiSelect
+                      categoryOptions={categoryOptions}
+                      companyCategories={props.companyCategories}
+                      legacy1={profile.key_category1}
+                      legacy2={profile.key_category2}
+                      onChange={(key_categories) => patchProfile(profile.id, { key_categories, ...legacyCategoryFields(key_categories) })}
+                      value={profile.key_categories}
+                    />
                     <input
                       type="number"
                       value={profile.assignment_priority || 0}
@@ -2917,15 +2983,13 @@ function AssignView(props: {
                     <option value="">选择负责站点</option>
                     {siteOptions.map((site) => <option key={site} value={site}>{siteOptionLabel(site)}</option>)}
                   </select>
-                  <input
-                    value={props.newProfile.key_category1 || ""}
-                    onChange={(event) => props.setNewProfile({ ...props.newProfile, key_category1: event.target.value })}
-                    placeholder="重点品类1"
-                  />
-                  <input
-                    value={props.newProfile.key_category2 || ""}
-                    onChange={(event) => props.setNewProfile({ ...props.newProfile, key_category2: event.target.value })}
-                    placeholder="重点品类2"
+                  <CategoryMultiSelect
+                    categoryOptions={categoryOptions}
+                    companyCategories={props.companyCategories}
+                    legacy1={props.newProfile.key_category1}
+                    legacy2={props.newProfile.key_category2}
+                    onChange={(key_categories) => props.setNewProfile({ ...props.newProfile, key_categories, ...legacyCategoryFields(key_categories) })}
+                    value={props.newProfile.key_categories}
                   />
                   <input
                     type="number"
@@ -2994,12 +3058,123 @@ function assignmentWorkload(
   return byName;
 }
 
+function profileCategorySelections(profile?: Pick<OperatorAssignmentProfile, "key_categories" | "key_category1" | "key_category2"> | OperatorProfileDraft | null) {
+  const configured = profile?.key_categories && profile.key_categories.length ? profile.key_categories : legacyCategorySelections(profile?.key_category1, profile?.key_category2);
+  return normalizeCategorySelections(configured);
+}
+
+function legacyCategorySelections(...values: Array<string | null | undefined>): OperatorCategorySelection[] {
+  return values.filter((value): value is string => Boolean(value?.trim())).map((level1) => ({ level1 }));
+}
+
+function normalizeCategorySelections(values: Array<OperatorCategorySelection | null | undefined>): OperatorCategorySelection[] {
+  const wholeLevel1 = new Set(values.map((item) => item?.level2 ? "" : item?.level1?.trim()).filter(Boolean));
+  const seen = new Set<string>();
+  const output: OperatorCategorySelection[] = [];
+  for (const item of values) {
+    const level1 = item?.level1?.trim();
+    const level2 = item?.level2?.trim() || null;
+    if (!level1 || (level2 && wholeLevel1.has(level1))) continue;
+    const key = categorySelectionKey({ level1, level2 });
+    if (seen.has(key)) continue;
+    seen.add(key);
+    output.push({ level1, level2 });
+  }
+  return output;
+}
+
+function legacyCategoryFields(selections: OperatorCategorySelection[]) {
+  const levels = Array.from(new Set(selections.map((item) => item.level1).filter(Boolean)));
+  return { key_category1: levels[0] || "", key_category2: levels[1] || "" };
+}
+
+function categorySelectionKey(selection: Pick<OperatorCategorySelection, "level1" | "level2">) {
+  return selection.level1 + "|||" + (selection.level2 || "");
+}
+
+function categorySelectionLabel(selection: Pick<OperatorCategorySelection, "level1" | "level2">) {
+  return selection.level2 ? selection.level1 + " / " + selection.level2 : selection.level1;
+}
+
+function parseCategorySelectionKey(value: string): OperatorCategorySelection {
+  const [level1, level2 = ""] = value.split("|||");
+  return { level1, level2: level2 || null };
+}
+
+function CategoryMultiSelect(props: {
+  categoryOptions: string[];
+  companyCategories: CompanyCategory[];
+  legacy1?: string | null;
+  legacy2?: string | null;
+  value?: OperatorCategorySelection[] | null;
+  onChange: (value: OperatorCategorySelection[]) => void;
+}) {
+  const selected = profileCategorySelections({ key_categories: props.value || [], key_category1: props.legacy1, key_category2: props.legacy2 });
+  const selectedKeys = new Set(selected.map(categorySelectionKey));
+  const selectedLevel1 = new Set(selected.filter((item) => !item.level2).map((item) => item.level1));
+  const level1Options = Array.from(new Set([
+    ...props.categoryOptions,
+    ...props.companyCategories.map((item) => item.level1),
+    ...selected.map((item) => item.level1)
+  ].filter(Boolean))).sort((left, right) => left.localeCompare(right, "zh-CN"));
+  const pairOptions = props.companyCategories
+    .filter((item) => item.level1 && item.level2)
+    .sort((left, right) => categorySelectionLabel(left).localeCompare(categorySelectionLabel(right), "zh-CN"));
+  const setLevel1 = (level1: string, checked: boolean) => {
+    const next = selected.filter((item) => item.level1 !== level1);
+    if (checked) next.push({ level1, level2: null });
+    props.onChange(normalizeCategorySelections(next));
+  };
+  const setPair = (selection: OperatorCategorySelection, checked: boolean) => {
+    const key = categorySelectionKey(selection);
+    const next = selected.filter((item) => categorySelectionKey(item) !== key && !(checked && item.level1 === selection.level1 && !item.level2));
+    if (checked) next.push(selection);
+    props.onChange(normalizeCategorySelections(next));
+  };
+  const secondLevelCount = selected.filter((item) => item.level2).length;
+  const summary = selected.length ? selected.map(categorySelectionLabel).join("、") : "选择重点类目";
+  return (
+    <div className="category-multi-select">
+      <details>
+        <summary title={summary}>{selectedLevel1.size ? "一级 " + selectedLevel1.size : "一级类目"}</summary>
+        <div className="category-menu">
+          {level1Options.map((level1) => (
+            <label key={level1}>
+              <input type="checkbox" checked={selectedLevel1.has(level1)} onChange={(event) => setLevel1(level1, event.target.checked)} />
+              <span>{level1}</span>
+            </label>
+          ))}
+          {!level1Options.length && <span className="muted">暂无类目字典</span>}
+        </div>
+      </details>
+      <details>
+        <summary title={summary}>{secondLevelCount ? "二级 " + secondLevelCount : "二级类目"}</summary>
+        <div className="category-menu wide">
+          {pairOptions.map((item) => {
+            const selection = parseCategorySelectionKey(categorySelectionKey(item));
+            return (
+              <label key={categorySelectionKey(item)}>
+                <input type="checkbox" checked={selectedKeys.has(categorySelectionKey(item))} onChange={(event) => setPair(selection, event.target.checked)} />
+                <span>{categorySelectionLabel(item)}</span>
+              </label>
+            );
+          })}
+          {!pairOptions.length && <span className="muted">暂无二级类目</span>}
+        </div>
+      </details>
+      <span className="category-summary" title={summary}>{summary}</span>
+    </div>
+  );
+}
+
 function operatorProfileBrief(profile: OperatorAssignmentProfile) {
-  return `${profile.key_site || "-"} · 品类1 ${profile.key_category1 || "-"} · 品类2 ${profile.key_category2 || "-"} · 优先级 ${profile.assignment_priority || 0}`;
+  const categories = profileCategorySelections(profile).map(categorySelectionLabel).join(" / ") || "-";
+  return (profile.key_site || "-") + " · 类目 " + categories + " · 优先级 " + (profile.assignment_priority || 0);
 }
 
 function operatorOptionLabel(profile: OperatorAssignmentProfile, load: AssignmentLoad) {
-  return `${profile.operator_name}｜${profile.key_site || "-"}｜${profile.key_category1 || "-"} / ${profile.key_category2 || "-"}｜优先级${profile.assignment_priority || 0}｜${load.groups}组/${load.subSkus}子SKU`;
+  const categories = profileCategorySelections(profile).map(categorySelectionLabel).slice(0, 2).join(" / ") || "-";
+  return profile.operator_name + "｜" + (profile.key_site || "-") + "｜" + categories + "｜优先级" + (profile.assignment_priority || 0) + "｜" + load.groups + "组/" + load.subSkus + "子SKU";
 }
 
 function AssignmentTableRow(props: {
@@ -3119,14 +3294,13 @@ function assignmentMatchLines(item: AssignmentPreviewItem, opportunity?: Opportu
   const category = opportunity?.category_level1 || "-";
   const skuSite = siteDisplay(site);
   const profileSite = siteDisplay(profile?.key_site || "-");
-  if (!profile) return [`无站点匹配：没有启用运营的重点站点等于 SKU 站点 ${skuSite}`, `SKU品类：${category}`];
-  const lines = [`站点匹配：SKU站点 ${skuSite} = ${profile.operator_name}重点站点 ${profileSite}`];
-  if (sameCategoryText(category, profile.key_category1)) {
-    lines.push(`品类1匹配：SKU品类 ${category} = ${profile.operator_name}品类1 ${profile.key_category1}`);
-  } else if (sameCategoryText(category, profile.key_category2)) {
-    lines.push(`品类2匹配：SKU品类 ${category} = ${profile.operator_name}品类2 ${profile.key_category2}`);
+  if (!profile) return ["无站点匹配：没有启用运营的重点站点等于 SKU 站点 " + skuSite, "SKU品类：" + category];
+  const lines = ["站点匹配：SKU站点 " + skuSite + " = " + profile.operator_name + "重点站点 " + profileSite];
+  const matchedCategory = profileCategorySelections(profile).find((selection) => sameCategoryText(category, selection.level1));
+  if (matchedCategory) {
+    lines.push("重点类目匹配：SKU品类 " + category + " = " + profile.operator_name + "重点类目 " + categorySelectionLabel(matchedCategory));
   } else {
-    lines.push(`品类未匹配：SKU品类 ${category} 不在 ${profile.operator_name}品类1/品类2`);
+    lines.push("品类未匹配：SKU品类 " + category + " 不在 " + profile.operator_name + "重点类目");
   }
   if (item.match_reason?.includes("负载均衡")) {
     lines.push("负载均衡：先选择当前主 SKU 组数更少的运营，负载相同时再看品类");
@@ -3134,14 +3308,14 @@ function assignmentMatchLines(item: AssignmentPreviewItem, opportunity?: Opportu
     lines.push("负载更低：同站点候选中优先选择当前主 SKU 组数更少的运营");
   }
   if ((profile.assignment_priority || 0) > 0) {
-    lines.push(`优先级：同负载时优先级 ${profile.assignment_priority}`);
+    lines.push("优先级：同负载时优先级 " + profile.assignment_priority);
   }
   return lines;
 }
 
 function assignmentReasonClass(line: string) {
   if (line.startsWith("站点匹配")) return "assignment-reason-line site";
-  if (line.startsWith("品类1匹配") || line.startsWith("品类2匹配")) return "assignment-reason-line category";
+  if (line.startsWith("重点类目匹配") || line.startsWith("品类1匹配") || line.startsWith("品类2匹配")) return "assignment-reason-line category";
   if (line.startsWith("无站点匹配") || line.startsWith("品类未匹配")) return "assignment-reason-line miss";
   if (line.startsWith("负载")) return "assignment-reason-line balance";
   return "assignment-reason-line";
@@ -3347,23 +3521,25 @@ function ClaimView(props: {
   return (
     <div className="claim-workspace">
       <section className="claim-list-pane">
-        <div className="claim-workflow-filters">
-          <select aria-label="业务期数" value={businessPeriod} onChange={(event) => {
-            setBusinessPeriod(event.target.value);
-            props.setList((current) => ({ ...current, page: 1 }));
-          }}>
-            <option value="">全部期数</option>
-            {periods.map((period) => <option key={period} value={period}>{period}</option>)}
-          </select>
-          <select aria-label="操作状态" value={claimStatus} onChange={(event) => {
-            setClaimStatus(event.target.value);
-            props.setList((current) => ({ ...current, page: 1 }));
-          }}>
-            <option value="">全部操作状态</option>
-            {operatorClaimStatusOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-          </select>
+        <div className="claim-toolbar-row">
+          <div className="claim-workflow-filters">
+            <select aria-label="业务期数" value={businessPeriod} onChange={(event) => {
+              setBusinessPeriod(event.target.value);
+              props.setList((current) => ({ ...current, page: 1 }));
+            }}>
+              <option value="">全部期数</option>
+              {periods.map((period) => <option key={period} value={period}>{period}</option>)}
+            </select>
+            <select aria-label="操作状态" value={claimStatus} onChange={(event) => {
+              setClaimStatus(event.target.value);
+              props.setList((current) => ({ ...current, page: 1 }));
+            }}>
+              <option value="">全部操作状态</option>
+              {operatorClaimStatusOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+            </select>
+          </div>
+          <ListControls label="运营认领" list={props.list} total={filteredRows.length} setList={(patch) => props.setList((current) => ({ ...current, ...patch }))} />
         </div>
-        <ListControls label="运营认领" list={props.list} total={filteredRows.length} setList={(patch) => props.setList((current) => ({ ...current, ...patch }))} />
         {!props.rows.length && <EmptySmall text="没有待认领任务或财根机会池记录。" />}
         {!!props.rows.length && !filteredRows.length && <EmptySmall text="当前搜索条件下没有待认领任务。" />}
         {!!filteredRows.length && (

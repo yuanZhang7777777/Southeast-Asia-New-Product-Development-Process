@@ -22,6 +22,27 @@ def test_resets_malformed_sheet_dimension_before_reading_rows(tmp_path: Path) ->
     assert [(record["item_id"], record["country"]) for record in records] == [("123", "TH")]
 
 
+def test_reads_display_values_from_merged_cells(tmp_path: Path) -> None:
+    source = tmp_path / "merged.xlsx"
+    workbook = Workbook()
+    worksheet = workbook.active
+    worksheet.title = "finance"
+    worksheet.append(["ITEMID", "主SKU", "店铺", "审核时间"])
+    worksheet.append(["I-1", "MAIN-A", "Shopee-1TH", "2026-04-16"])
+    worksheet.append([None, "MAIN-B", "Shopee-2TH", "2026-04-17"])
+    worksheet.append([None, "MAIN-C", "Shopee-3TH", "2026-04-18"])
+    worksheet.merge_cells("A2:A4")
+    workbook.save(source)
+
+    records = read_item_finance_period("2026-04-16", source)
+
+    assert [(record["source_reference"]["source_row"], record["item_id"], record["main_sku"]) for record in records] == [
+        (2, "I-1", "MAIN-A"),
+        (3, "I-1", "MAIN-B"),
+        (4, "I-1", "MAIN-C"),
+    ]
+
+
 def test_rejects_source_without_all_required_columns(tmp_path: Path) -> None:
     source = tmp_path / "missing.xlsx"
     workbook = Workbook()

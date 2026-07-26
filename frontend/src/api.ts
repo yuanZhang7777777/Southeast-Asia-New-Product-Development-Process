@@ -256,12 +256,25 @@ export type RoleMapping = {
   enabled: boolean;
 };
 
+export type OperatorCategorySelection = {
+  level1: string;
+  level2?: string | null;
+};
+
+export type CompanyCategory = {
+  id: string;
+  level1: string;
+  level2?: string | null;
+  enabled: boolean;
+};
+
 export type OperatorAssignmentProfile = {
   id: string;
   operator_name: string;
   key_site?: string | null;
   key_category1?: string | null;
   key_category2?: string | null;
+  key_categories?: OperatorCategorySelection[] | null;
   assignment_priority: number;
   display_order?: number | null;
   enabled: boolean;
@@ -300,6 +313,8 @@ export type SecondaryResearchPeer = {
   secondary_competitor_url?: string | null;
   secondary_conclusion?: string | null;
   product_positioning?: string | null;
+  secondary_target_daily_sales?: number | null;
+  secondary_selling_points?: string | null;
   secondary_research_submitted_at?: string | null;
 };
 
@@ -313,6 +328,8 @@ export type SecondaryResearchItem = {
   secondary_competitor_url?: string | null;
   secondary_conclusion?: string | null;
   product_positioning?: string | null;
+  secondary_target_daily_sales?: number | null;
+  secondary_selling_points?: string | null;
   secondary_evidence_images: UploadedEvidenceImage[];
   secondary_research_submitted_at?: string | null;
   sub_sku: string;
@@ -461,10 +478,20 @@ export type ListingWorkbenchFilter = {
   only_my_tasks?: boolean;
 };
 
+export type ManualListingContext = {
+  main_sku: string;
+  main_sku_name?: string | null;
+  country?: string | null;
+  site?: string | null;
+  salesperson_name: string;
+  business_period?: string | null;
+};
+
 export type ListingBatchPayload = {
   task_key: string;
   rows: Array<{ shop: string; item: string; listing_strategy: string; first_period_start: string }>;
   reuse_listing_ids?: string[];
+  manual_context?: ManualListingContext;
 };
 
 export type PeriodReviewBatchPayload = {
@@ -543,11 +570,11 @@ function filenameFromDisposition(disposition: string | null, fallbackName: strin
 
 type PeriodFilter = { business_period?: string; source_sheet?: string; import_batch_id?: string };
 
-function query(params: PeriodFilter = {}) {
+function query(params: Record<string, string | number | boolean | null | undefined> = {}) {
   const search = new URLSearchParams();
-  if (params.business_period) search.set("business_period", params.business_period);
-  if (params.source_sheet) search.set("source_sheet", params.source_sheet);
-  if (params.import_batch_id) search.set("import_batch_id", params.import_batch_id);
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== null && value !== "") search.set(key, String(value));
+  }
   const value = search.toString();
   return value ? `?${value}` : "";
 }
@@ -654,6 +681,8 @@ export const api = {
     request<SecondaryResearchGroup[]>(
       `/secondary-research${secondaryResearchQuery(salespersonName, businessPeriod, downstreamStatus)}`
     ),
+  secondaryResearchExport: (filter?: { scenario?: string; salesperson_name?: string; business_period?: string; country?: string; query?: string }) =>
+    download(`/secondary-research/export${query(filter)}`, "二次调研导出.xlsx"),
   productBoard: (filter?: ProductBoardFilter) => request<ProductBoardGroup[]>(`/product-board${productBoardQuery(filter)}`),
   updateSecondaryResearch: (claimRecordId: string, salespersonName: string, payload: unknown) =>
     request<SecondaryResearchItem>(
@@ -712,6 +741,7 @@ export const api = {
   roleMappings: () => request<RoleMapping[]>("/admin/role-mappings"),
   createRoleMapping: (payload: unknown) =>
     request<RoleMapping>("/admin/role-mappings", { method: "POST", body: JSON.stringify(payload) }),
+  companyCategories: () => request<CompanyCategory[]>("/admin/company-categories"),
   operatorProfiles: () => request<OperatorAssignmentProfile[]>("/admin/operator-profiles"),
   createOperatorProfile: (payload: unknown) =>
     request<OperatorAssignmentProfile>("/admin/operator-profiles", { method: "POST", body: JSON.stringify(payload) }),

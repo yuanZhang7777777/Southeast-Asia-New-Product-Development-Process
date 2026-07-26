@@ -27,7 +27,7 @@ test("secondary research conclusion and image control are row-scoped paste and d
   const conclusion = secondary.slice(conclusionStart, secondary.indexOf("<span>AO 商品定位</span>", conclusionStart));
   const uploadStart = secondary.indexOf('className="research-upload"');
   const upload = secondary.slice(uploadStart, secondary.indexOf("</label>", uploadStart));
-  assert.match(conclusion, /onPaste=\{\(event: ClipboardEvent<HTMLTextAreaElement>\) => void uploadImages\(item, event\.clipboardData\.files\)\}/);
+  assert.match(conclusion, /onPaste=\{\(event: ClipboardEvent<HTMLTextAreaElement>\) => void (?:uploadImages|props\.onUploadImages)\(item, event\.clipboardData\.files\)\}/);
   assert.match(upload, /onDrop=\{\(event\) => \{ event\.preventDefault\(\); void uploadImages\(item, event\.dataTransfer\.files\); \}\}/);
   assert.match(upload, /onPaste=\{\(event\) => void uploadImages\(item, event\.clipboardData\.files\)\}/);
   assert.doesNotMatch(secondary, /document\.addEventListener\(["']paste/);

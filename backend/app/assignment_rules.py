@@ -50,13 +50,14 @@ def preview_main_sku_assignment_groups(
 def _choose_profile(items: list[Any], profiles: list[Any], loads: dict[str, int]) -> tuple[Any | None, str]:
     site = _first_text(items, "site") or _first_text(items, "country")
     category = _first_text(items, "category_level1")
+    category_level2 = _first_text(items, "category_level2")
     site_profiles = [profile for profile in profiles if _same_site(getattr(profile, "key_site", None), site)]
     if not site_profiles:
         return None, "无站点匹配"
 
     scored = []
     for profile in site_profiles:
-        category_rank = _category_rank(profile, category)
+        category_rank = _category_rank(profile, category, category_level2)
         category_priority = 0 if category_rank < 2 else 2
         scored.append(
             (
@@ -78,20 +79,36 @@ def _choose_profile(items: list[Any], profiles: list[Any], loads: dict[str, int]
     return chosen, reason
 
 
-def _category_rank(profile: Any, category: str | None) -> int:
+def _category_rank(profile: Any, category: str | None, category_level2: str | None = None) -> int:
+    if _matches_key_categories(getattr(profile, "key_categories", None), category, category_level2):
+        return 0
     if _same_category(getattr(profile, "key_category1", None), category):
         return 0
     if _same_category(getattr(profile, "key_category2", None), category):
-        return 1
+        return 0
     return 2
+
+
+def _matches_key_categories(selections: Any, category: str | None, category_level2: str | None) -> bool:
+    if not selections:
+        return False
+    for selection in selections:
+        if not isinstance(selection, dict):
+            continue
+        level1 = selection.get("level1")
+        level2 = selection.get("level2")
+        if not _same_category(level1, category):
+            continue
+        if level2 and category_level2:
+            return _same_category(level2, category_level2)
+        return True
+    return False
 
 
 def _reason(category_rank: int) -> str:
     parts = ["重点站点匹配"]
     if category_rank == 0:
-        parts.append("重点品类1匹配")
-    elif category_rank == 1:
-        parts.append("重点品类2匹配")
+        parts.append("重点类目匹配")
     else:
         parts.append("品类未匹配")
         parts.append("负载均衡")

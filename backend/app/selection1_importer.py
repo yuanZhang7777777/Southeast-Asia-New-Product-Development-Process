@@ -34,6 +34,21 @@ MAIN_COLUMNS = {
     "L": "reason",
 }
 
+MAIN_FIELD_ALIASES = {
+    "site": ["站点", "国家"],
+    "developer_department": ["开发部门", "部门"],
+    "developer_name": ["开发员"],
+    "category_level1": ["一级类目"],
+    "keyword": ["关键词"],
+    "image_url": ["产品图片"],
+    "main_sku_name": ["主SKU名称"],
+    "main_sku": ["主SKU"],
+    "sub_sku_name": ["子SKU名称"],
+    "sub_sku": ["子SKU", "子sku"],
+    "product_type": ["产品类型", "引流or绑定or利润", "产品类型 / 引流or绑定or利润"],
+    "reason": ["开品理由"],
+}
+
 MARKET_GROUPS = [
     ("最低价", "Z", "AA", "AB"),
     ("most_orders", "AC", "AD", "AE"),
@@ -124,8 +139,8 @@ def import_selection1_workbook(db: Session, payload: schemas.Selection1ImportReq
     except AttributeError:
         pass
     source_max_column = max(worksheet.max_column or 0, MAX_SOURCE_COLUMN)
-    product_images = images_by_row(worksheet, "F")
     headers_by_column = source_headers_by_column(worksheet, source_max_column)
+    product_images = images_by_row(worksheet, source_column_for_alias(headers_by_column, ["产品图片"], "F"))
 
     created_count = 0
     updated_count = 0
@@ -217,25 +232,27 @@ def resolve_source_file(source_file: str | None) -> Path:
 def parse_selection1_row(row: tuple[Any, ...], headers_by_column: dict[str, list[str]] | None = None) -> dict[str, Any] | None:
     raw_values = {get_column_letter(index): clean_cell(value) for index, value in enumerate(row, start=1)}
     values = {column: clean_cell(cell_value(row, column)) for column in SNAPSHOT_COLUMNS}
-    main_sku = text_value(values["H"])
-    sub_sku = text_value(values["J"])
+    headers = headers_by_column or {}
+    main = parse_main_fields(raw_values, values, headers)
+    main_sku = text_value(main["main_sku"])
+    sub_sku = text_value(main["sub_sku"])
     if not main_sku or not sub_sku:
         return None
-    if is_summary_row(values) or is_repeated_header_row(values):
+    if is_summary_row(values, main) or is_repeated_header_row(values, main):
         return None
 
-    site = text_value(values["A"])
+    site = text_value(main["site"])
     pricing_snapshot = {
         label: source_value(raw_values, headers_by_column or {}, PRICING_ALIASES.get(column, [label]), column)
         for column, label in PRICING_SNAPSHOT_COLUMNS.items()
         if source_value(raw_values, headers_by_column or {}, PRICING_ALIASES.get(column, [label]), column) not in (None, "")
     }
     parsed = {
-        "main": {field: values[column] for column, field in MAIN_COLUMNS.items()},
+        "main": main,
         "country": derive_country(site),
-        "market_items": parse_market_items(values, raw_values, headers_by_column or {}),
-        "reference_daily_sales": number_value(source_value(raw_values, headers_by_column or {}, PRICING_ALIASES["AO"], "AO")),
-        "reference_price": number_value(source_value(raw_values, headers_by_column or {}, PRICING_ALIASES["AP"], "AP")),
+        "market_items": parse_market_items(values, raw_values, headers),
+        "reference_daily_sales": number_value(source_value(raw_values, headers, PRICING_ALIASES["AO"], "AO")),
+        "reference_price": number_value(source_value(raw_values, headers, PRICING_ALIASES["AP"], "AP")),
         "pricing_snapshot": pricing_snapshot,
         "snapshot": {
             "source_type": SOURCE_TYPE,
@@ -249,6 +266,13 @@ def parse_selection1_row(row: tuple[Any, ...], headers_by_column: dict[str, list
     }
     return parsed
 
+
+
+def parse_main_fields(raw_values: dict[str, Any], values: dict[str, Any], headers_by_column: dict[str, list[str]]) -> dict[str, Any]:
+    return {
+        field: source_value(raw_values, headers_by_column, MAIN_FIELD_ALIASES[field], column, values)
+        for column, field in MAIN_COLUMNS.items()
+    }
 
 def upsert_opportunity(
     db: Session,
@@ -387,6 +411,14 @@ def parse_market_items(values: dict[str, Any], raw_values: dict[str, Any], heade
     return items
 
 
+def source_column_for_alias(headers_by_column: dict[str, list[str]], aliases: list[str], fallback_column: str) -> str:
+    alias_keys = {normalize_header(alias) for alias in aliases}
+    for column, headers in headers_by_column.items():
+        if any(normalize_header(header) in alias_keys for header in headers):
+            return column
+    return fallback_column
+
+
 def source_value(
     raw_values: dict[str, Any],
     headers_by_column: dict[str, list[str]],
@@ -404,17 +436,19 @@ def source_value(
     return (fallback_values or raw_values).get(fallback_column)
 
 
-def is_summary_row(values: dict[str, Any]) -> bool:
+def is_summary_row(values: dict[str, Any], main: dict[str, Any] | None = None) -> bool:
     summary_labels = {"小计", "合计", "总计", "汇总"}
-    identity_columns = ("A", "G", "H", "I", "J")
-    return any((text_value(values.get(column)) or "").strip(" ：:") in summary_labels for column in identity_columns)
+    identity_values = [values.get(column) for column in ("A", "G", "H", "I", "J")]
+    if main:
+        identity_values += [main.get(field) for field in ("site", "main_sku_name", "main_sku", "sub_sku_name", "sub_sku")]
+    return any((text_value(value) or "").strip(" ：:") in summary_labels for value in identity_values)
 
 
-def is_repeated_header_row(values: dict[str, Any]) -> bool:
-    main_sku = "".join((text_value(values.get("H")) or "").split()).upper()
-    sub_sku = "".join((text_value(values.get("J")) or "").split()).upper()
-    site = text_value(values.get("A"))
-    category = text_value(values.get("D"))
+def is_repeated_header_row(values: dict[str, Any], main: dict[str, Any] | None = None) -> bool:
+    main_sku = "".join((text_value((main or {}).get("main_sku") or values.get("H")) or "").split()).upper()
+    sub_sku = "".join((text_value((main or {}).get("sub_sku") or values.get("J")) or "").split()).upper()
+    site = text_value((main or {}).get("site") or values.get("A"))
+    category = text_value((main or {}).get("category_level1") or values.get("D"))
     return main_sku in {"主SKU", "MAINSKU"} or sub_sku in {"子SKU", "SUBSKU"} or (
         site in {"站点", "国家"} and category == "一级类目"
     )
