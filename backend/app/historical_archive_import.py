@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
@@ -17,6 +18,12 @@ from app.config import get_settings
 HISTORICAL_ARCHIVE_SOURCE_TYPE = "historical_market_monitor_archive"
 HISTORICAL_ARCHIVE_STATUS = "historical_archive"
 HISTORICAL_ARCHIVE_BATCH = "历史归档"
+BUSINESS_PERIOD_PATTERN = re.compile(r"开发新品(\d{3,4})期")
+
+
+def business_period_from_bucket(bucket: object) -> str | None:
+    match = BUSINESS_PERIOD_PATTERN.search(str(bucket or ""))
+    return f"开发{match.group(1)}期" if match else None
 PENDING_SECONDARY_STATUSES = {"已到货待补二次调研", "已刊登但二次调研缺失"}
 APPLY_ALLOWED_ENVS = {"local", "test", "testing", "dev", "development", "uat"}
 REVIEW_HEADERS = [
@@ -240,7 +247,7 @@ def _archive_row(record: dict[str, Any]) -> dict[str, Any]:
         "source_file": source_reference.get("source_file"),
         "source_sheet": source_reference.get("source_sheet"),
         "source_row": source_reference.get("source_row"),
-        "batch": HISTORICAL_ARCHIVE_BATCH,
+        "batch": business_period_from_bucket(record.get("product_bucket")) or HISTORICAL_ARCHIVE_BATCH,
         "country": record.get("country"),
         "site": record.get("country"),
         "developer_department": None,
