@@ -44,7 +44,14 @@ def central_row(sub_sku: str, image_url: str | None = None) -> dict:
         "snapshot": {
             "archive_type": "historical_central",
             "business_period": "开发0630期",
-            "fields_by_cell": {"A": {"header": "站点", "value": "PH"}},
+            "fields_by_cell": {"A": {"header": "站点", "group": None, "value": "PH"}},
+            "development_source_v2": {
+                "business_period": "开发0630期",
+                "source_file": "x",
+                "source_sheet": "6.30",
+                "source_row": 3,
+                "segments": {"成本参数": [{"column": "AQ", "label": "总成本", "value": 12.5}]},
+            },
             "source_reference": {"source_file": "x", "source_sheet": "6.30", "source_row": 3},
         },
     }
@@ -67,7 +74,7 @@ def test_apply_creates_updates_and_backfills_images() -> None:
     with SessionLocal() as db:
         counts = apply_central_rows(db, rows, source_label="PH")
         db.commit()
-    assert counts == {"created": 1, "updated": 0, "image_backfilled": 1}
+    assert counts == {"created": 1, "updated": 0, "image_backfilled": 1, "dev_source_backfilled": 1}
 
     with SessionLocal() as db:
         central = db.query(models.NewProductOpportunity).filter_by(source_type="history_central_ph").one()
@@ -77,6 +84,7 @@ def test_apply_creates_updates_and_backfills_images() -> None:
         assert central.current_status == "historical_archive"
         assert central.image_url == "https://oss.example/img1.png"
         assert monitor.image_url == "https://oss.example/img1.png"
+        assert monitor.snapshot["development_source_v2"]["segments"]["成本参数"][0]["label"] == "总成本"
         assert snapshots == 1
         assert db.query(models.FlowTask).count() == 0
 

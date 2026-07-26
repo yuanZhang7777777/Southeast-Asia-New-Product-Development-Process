@@ -109,9 +109,15 @@ def parse_central_workbook(
             header_top = next(iterator, ()) or ()
             header_bottom = next(iterator, ()) or ()
             headers: dict[int, str] = {}
+            groups: dict[int, str] = {}
+            current_group: str | None = None
             for index in range(max(len(header_top), len(header_bottom))):
                 top = text_value(header_top[index]) if index < len(header_top) else None
                 bottom = text_value(header_bottom[index]) if index < len(header_bottom) else None
+                if top:
+                    current_group = top
+                if current_group:
+                    groups[index] = current_group
                 label = bottom or top
                 if label:
                     headers[index] = label
@@ -149,10 +155,26 @@ def parse_central_workbook(
                     continue
                 cell = lambda index: row[index] if index is not None and index < len(row) else None  # noqa: E731
                 fields_by_cell = {
-                    get_column_letter(index + 1): {"header": headers.get(index), "value": _json_safe(value)}
+                    get_column_letter(index + 1): {
+                        "header": headers.get(index),
+                        "group": groups.get(index),
+                        "value": _json_safe(value),
+                    }
                     for index, value in enumerate(row)
                     if value is not None and text_value(value)
                 }
+                segments: dict[str, list[dict[str, Any]]] = {}
+                for index, value in enumerate(row):
+                    group = groups.get(index)
+                    label = headers.get(index)
+                    if not group or not label or value is None:
+                        continue
+                    value_text = text_value(value)
+                    if not value_text or value_text in ERROR_VALUES:
+                        continue
+                    segments.setdefault(group, []).append(
+                        {"column": get_column_letter(index + 1), "label": label, "value": _json_safe(value)}
+                    )
                 main_sku = text_value(cell(main_col)) or sub_sku
                 site_raw = text_value(cell(site_col))
                 rows.append(
@@ -176,6 +198,13 @@ def parse_central_workbook(
                             "business_period": period,
                             "site_raw": site_raw,
                             "fields_by_cell": fields_by_cell,
+                            "development_source_v2": {
+                                "business_period": period,
+                                "source_file": path.name,
+                                "source_sheet": sheet_name,
+                                "source_row": source_row,
+                                "segments": segments,
+                            },
                             "source_reference": {
                                 "source_file": path.name,
                                 "source_sheet": sheet_name,
@@ -232,6 +261,11 @@ def _json_safe(value: Any) -> Any:
     return str(value)
 
 
+def _period_number(period: object) -> int:
+    match = re.search(r"(\d{3,4})", str(period or ""))
+    return int(match.group(1)) if match else -1
+
+
 def apply_central_rows(db: Session, rows: list[dict[str, Any]], source_label: str, imported_by: str | None = None) -> dict[str, int]:
     batch = models.ImportBatch(
         source_type=rows[0]["source_type"] if rows else "history_central",
@@ -243,7 +277,7 @@ def apply_central_rows(db: Session, rows: list[dict[str, Any]], source_label: st
     )
     db.add(batch)
     db.flush()
-    counts = {"created": 0, "updated": 0, "image_backfilled": 0}
+    counts = {"created": 0, "updated": 0, "image_backfilled": 0, "dev_source_backfilled": 0}
     for row in rows:
         existing = db.scalars(
             select(models.NewProductOpportunity).where(
@@ -298,16 +332,25 @@ def apply_central_rows(db: Session, rows: list[dict[str, Any]], source_label: st
                 payload=row["snapshot"],
             )
         )
-        if row.get("image_url"):
+        incoming_dev = row["snapshot"].get("development_source_v2")
+        if row.get("image_url") or incoming_dev:
             for other in db.scalars(
                 select(models.NewProductOpportunity).where(
                     models.NewProductOpportunity.sub_sku == row["sub_sku"],
                     models.NewProductOpportunity.source_type != row["source_type"],
-                    (models.NewProductOpportunity.image_url.is_(None)) | (models.NewProductOpportunity.image_url == ""),
                 )
             ):
-                other.image_url = row["image_url"]
-                counts["image_backfilled"] += 1
+                if row.get("image_url") and not other.image_url:
+                    other.image_url = row["image_url"]
+                    counts["image_backfilled"] += 1
+                if incoming_dev:
+                    existing_dev = (other.snapshot or {}).get("development_source_v2")
+                    if existing_dev is None or _period_number(incoming_dev.get("business_period")) >= _period_number(
+                        existing_dev.get("business_period")
+                    ):
+                        if existing_dev != incoming_dev:
+                            other.snapshot = {**(other.snapshot or {}), "development_source_v2": incoming_dev}
+                            counts["dev_source_backfilled"] += 1
     batch.created_count = counts["created"]
     batch.updated_count = counts["updated"]
     batch.status = "completed"
@@ -321,6 +364,7 @@ def main() -> None:
     parser.add_argument("--country", choices=["PH", "TH", "VN"], help="国家（parse 模式必填）")
     parser.add_argument("--upload-images", action="store_true", help="抽取内嵌图片并上传 OSS（需 OSS_UPLOAD_ENABLED=1）")
     parser.add_argument("--rows-out", help="解析结果 JSONL 输出路径")
+    parser.add_argument("--images-from", help="复用此前 rows 文件里已上传的图片 URL（按 sheet+行号合并，免重传）")
     parser.add_argument("--apply-rows", help="对 rows 文件执行入库（在目标环境跑）")
     parser.add_argument("--apply-dev", action="store_true", help="与 --apply-rows 连用，真正写库")
     parser.add_argument("--imported-by", default="history_central_import")
@@ -350,6 +394,21 @@ def main() -> None:
     report = parse_central_workbook(
         Path(args.workbook), args.country, upload_images=args.upload_images, max_rows_per_sheet=args.max_rows_per_sheet
     )
+    if args.images_from:
+        prior = json.loads(Path(args.images_from).read_text(encoding="utf-8"))
+        prior_urls = {
+            (row["source_sheet"], row["source_row"]): row["image_url"]
+            for row in prior.get("rows", [])
+            if row.get("image_url")
+        }
+        merged = 0
+        for row in report["rows"]:
+            url = prior_urls.get((row["source_sheet"], row["source_row"]))
+            if url and not row.get("image_url"):
+                row["image_url"] = url
+                row["snapshot"]["image_origin"] = "central_embedded"
+                merged += 1
+        report["image_stats"] = {**report.get("image_stats", {}), "merged_from_prior": merged}
     summary = {key: value for key, value in report.items() if key != "rows"}
     print(json.dumps(summary, ensure_ascii=False, indent=2, default=str))
     if args.rows_out:
