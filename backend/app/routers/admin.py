@@ -1,9 +1,9 @@
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app import models, schemas
-from app.auth import require_roles
+from app import admin_console, models, schemas, services
+from app.auth import AuthContext, require_roles
 from app.company_category_importer import import_company_categories as import_company_category_workbook
 from app.config import Settings, get_settings
 from app.db import get_db
@@ -28,6 +28,130 @@ def create_role_mapping(
     db.commit()
     db.refresh(item)
     return item
+
+
+@router.patch("/role-mappings/{mapping_id}", response_model=schemas.RoleMappingRead)
+def update_role_mapping(
+    mapping_id: str,
+    payload: schemas.RoleMappingUpdate,
+    db: Session = Depends(get_db),
+    auth: AuthContext | None = Depends(require_roles("super_admin")),
+) -> models.RoleMapping:
+    mapping = db.get(models.RoleMapping, mapping_id)
+    if mapping is None:
+        raise HTTPException(status_code=404, detail="role mapping not found")
+    admin_console.update_role_mapping(
+        db,
+        mapping,
+        payload.model_dump(exclude_unset=True),
+        actor_name=auth.user.name if auth else None,
+        actor_user_id=auth.user.id if auth else None,
+    )
+    db.commit()
+    db.refresh(mapping)
+    return mapping
+
+
+@router.get("/users", response_model=list[schemas.AdminUserRead])
+def list_users(
+    db: Session = Depends(get_db),
+    _auth: object = Depends(require_roles("super_admin")),
+) -> list[schemas.AdminUserRead]:
+    return admin_console.list_users(db)
+
+
+@router.post("/users/{user_id}/reset-password", response_model=schemas.AdminPasswordResetResponse)
+def reset_user_password(
+    user_id: str,
+    payload: schemas.AdminPasswordResetRequest,
+    db: Session = Depends(get_db),
+    auth: AuthContext | None = Depends(require_roles("super_admin")),
+) -> schemas.AdminPasswordResetResponse:
+    user = db.get(models.User, user_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail="user not found")
+    result = admin_console.reset_user_password(
+        db,
+        user,
+        payload.new_password,
+        actor_name=auth.user.name if auth else None,
+        actor_user_id=auth.user.id if auth else None,
+    )
+    db.commit()
+    return result
+
+
+@router.patch("/users/{user_id}", response_model=schemas.UserRead)
+def update_user(
+    user_id: str,
+    payload: schemas.AdminUserUpdateRequest,
+    db: Session = Depends(get_db),
+    auth: AuthContext | None = Depends(require_roles("super_admin")),
+) -> models.User:
+    user = db.get(models.User, user_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail="user not found")
+    if auth and auth.user.id == user.id and not payload.enabled:
+        raise HTTPException(status_code=400, detail="cannot disable your own account")
+    admin_console.set_user_enabled(
+        db,
+        user,
+        payload.enabled,
+        actor_name=auth.user.name if auth else None,
+        actor_user_id=auth.user.id if auth else None,
+    )
+    db.commit()
+    db.refresh(user)
+    return user
+
+
+@router.get("/import-batches", response_model=schemas.ImportBatchPage)
+def list_import_batches(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=200),
+    source_type: str | None = Query(None),
+    business_period: str | None = Query(None),
+    batch_status: str | None = Query(None, alias="status"),
+    db: Session = Depends(get_db),
+) -> schemas.ImportBatchPage:
+    return admin_console.list_import_batches_page(
+        db,
+        page,
+        page_size,
+        source_type=source_type,
+        business_period=business_period,
+        batch_status=batch_status,
+    )
+
+
+@router.post("/import-batches/{batch_id}/disable", response_model=schemas.MessageResponse)
+def disable_import_batch(
+    batch_id: str,
+    payload: schemas.DisableRequest,
+    db: Session = Depends(get_db),
+    auth: AuthContext | None = Depends(require_roles("super_admin")),
+) -> schemas.MessageResponse:
+    batch = db.get(models.ImportBatch, batch_id)
+    if batch is None:
+        raise HTTPException(status_code=404, detail="import batch not found")
+    count = services.set_import_batch_disabled(
+        db,
+        batch,
+        payload.disabled,
+        payload.reason,
+        actor_name=auth.user.name if auth else None,
+        actor_user_id=auth.user.id if auth else None,
+    )
+    db.commit()
+    return schemas.MessageResponse(message="disabled" if payload.disabled else "restored", id=str(count))
+
+
+@router.get("/feature-switches", response_model=list[schemas.FeatureSwitchRead])
+def feature_switches(
+    settings: Settings = Depends(get_settings),
+    _auth: object = Depends(require_roles("super_admin")),
+) -> list[schemas.FeatureSwitchRead]:
+    return admin_console.feature_switches(settings)
 
 
 @router.get("/company-categories", response_model=list[schemas.CompanyCategoryRead])

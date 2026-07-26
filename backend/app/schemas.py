@@ -950,3 +950,43 @@ class DisableRequest(BaseModel):
 class MessageResponse(BaseModel):
     message: str
     id: str | None = None
+
+
+class AdminUserRead(UserRead):
+    has_password: bool = False
+
+
+class AdminUserUpdateRequest(BaseModel):
+    enabled: bool
+
+
+class AdminPasswordResetRequest(BaseModel):
+    new_password: str | None = Field(default=None, min_length=6)
+
+
+class AdminPasswordResetResponse(BaseModel):
+    status: str = "ok"
+    password: str
+    generated: bool
+
+
+class RoleMappingUpdate(BaseModel):
+    name: str | None = None
+    role: str | None = None
+    dingtalk_user_id: str | None = None
+    group_name: str | None = None
+    site: str | None = None
+    manager_user_id: str | None = None
+    enabled: bool | None = None
+
+
+class ImportBatchPage(BaseModel):
+    total: int
+    page: int
+    page_size: int
+    items: list[ImportBatchSummary]
+
+
+class FeatureSwitchRead(BaseModel):
+    name: str
+    enabled: bool
