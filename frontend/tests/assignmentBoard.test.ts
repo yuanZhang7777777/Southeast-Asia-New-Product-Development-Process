@@ -17,9 +17,10 @@ const groups = [
   }
 ];
 
-test("只有待认领任务允许改派", () => {
-  assert.equal(canReassignBoardRow({ task_status: "pending" }), true);
-  assert.equal(canReassignBoardRow({ task_status: "completed" }), false);
+test("只有已有受派人的待认领任务允许改派", () => {
+  assert.equal(canReassignBoardRow({ task_status: "pending", assignee_name: "运营A" }), true);
+  assert.equal(canReassignBoardRow({ task_status: "completed", assignee_name: "运营A" }), false);
+  assert.equal(canReassignBoardRow({ task_status: "pending", assignee_name: null }), false);
 });
 
 test("改派成功后就地更新对应行的受派运营", () => {

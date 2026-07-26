@@ -72,8 +72,8 @@ def _choose_profile(items: list[Any], profiles: list[Any], loads: dict[str, int]
             (
                 loads[getattr(profile, "operator_name")],
                 category_priority,
-                recency[getattr(profile, "operator_name")],
                 -_int_attr(profile, "assignment_priority"),
+                recency[getattr(profile, "operator_name")],
                 _int_attr(profile, "display_order"),
                 getattr(profile, "operator_name"),
                 profile,
@@ -81,7 +81,7 @@ def _choose_profile(items: list[Any], profiles: list[Any], loads: dict[str, int]
             )
         )
 
-    best_load, best_category_priority, _recency, _priority, _order, _name, chosen, best_category_rank = min(scored)
+    best_load, best_category_priority, _priority, _recency, _order, _name, chosen, best_category_rank = min(scored)
     site_loads = [load for load, *_rest in scored]
     reason = _reason(best_category_rank)
     if best_category_priority != 2 and len(set(site_loads)) > 1 and best_load == min(site_loads):

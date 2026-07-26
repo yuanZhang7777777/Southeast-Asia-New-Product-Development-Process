@@ -9,8 +9,8 @@ export type AssignmentBoardGroupLike<T extends AssignmentBoardRowLike> = {
   rows: T[];
 };
 
-export function canReassignBoardRow(row: Pick<AssignmentBoardRowLike, "task_status">) {
-  return row.task_status === "pending";
+export function canReassignBoardRow(row: Pick<AssignmentBoardRowLike, "task_status" | "assignee_name">) {
+  return row.task_status === "pending" && !!row.assignee_name;
 }
 
 export function applyBoardReassignment<T extends AssignmentBoardRowLike, G extends AssignmentBoardGroupLike<T>>(

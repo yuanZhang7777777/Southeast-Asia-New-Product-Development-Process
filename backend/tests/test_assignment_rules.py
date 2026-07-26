@@ -404,6 +404,24 @@ def test_assignment_rules_tie_break_by_earliest_last_assigned_then_name() -> Non
     assert suggestions[0].suggested_assignee == "A-最近才分过"
 
 
+def test_assignment_rules_priority_beats_recency_on_equal_load() -> None:
+    from app.assignment_rules import preview_main_sku_assignment_groups
+
+    profiles = [
+        SimpleNamespace(operator_name="A-高优先级最近分过", key_site="PH", key_category1="Home", key_category2="", enabled=True, assignment_priority=10),
+        SimpleNamespace(operator_name="B-零优先级很久没分", key_site="PH", key_category1="Home", key_category2="", enabled=True, assignment_priority=0),
+    ]
+
+    suggestions = preview_main_sku_assignment_groups(
+        [opportunity("MAIN-PRI", "SUB-1", "PH", "Home")],
+        profiles,
+        initial_loads={"A-高优先级最近分过": 2, "B-零优先级很久没分": 2},
+        initial_last_assigned={"A-高优先级最近分过": 200.0, "B-零优先级很久没分": 100.0},
+    )
+
+    assert suggestions[0].suggested_assignee == "A-高优先级最近分过"
+
+
 def opportunity(main_sku: str, sub_sku: str, site: str, category: str) -> SimpleNamespace:
     return SimpleNamespace(
         id=sub_sku,

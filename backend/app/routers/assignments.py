@@ -1,3 +1,5 @@
+import hashlib
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -81,7 +83,7 @@ def reassign(
     services.notify_operator_new_product_todo_card(
         db,
         payload.assignee_name,
-        f"reassign-{task.id}",
+        f"reassign-{task.id}-{hashlib.sha1(payload.assignee_name.encode('utf-8')).hexdigest()[:8]}",
         get_settings(),
         DingTalkCardSender(DingTalkCardConfig.from_settings(get_settings())),
     )

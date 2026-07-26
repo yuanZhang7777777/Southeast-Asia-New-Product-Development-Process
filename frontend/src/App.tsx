@@ -3205,6 +3205,7 @@ function AssignmentBoardPanel(props: { operatorProfiles: OperatorAssignmentProfi
     try {
       await api.assignmentReassign({ task_id: row.task_id, assignee_name: assignee, reason: "主管分配台改派" });
       setBoard((current) => (current ? { ...current, groups: applyBoardReassignment(current.groups, row.task_id, assignee) } : current));
+      setReloadNonce((nonce) => nonce + 1);
       setReassignDrafts((current) => {
         const next = { ...current };
         delete next[row.task_id];

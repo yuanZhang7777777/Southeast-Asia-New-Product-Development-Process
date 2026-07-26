@@ -657,6 +657,8 @@ def list_assignment_board(
         .join(models.NewProductOpportunity, models.FlowInstance.opportunity_id == models.NewProductOpportunity.id)
         .where(
             models.FlowTask.task_type == "sales_claim",
+            # 开放池任务（无受派人）不是"分配结果"，且不能被改派绕过认领状态机。
+            models.FlowTask.assignee_name.is_not(None),
             models.NewProductOpportunity.current_status != OPPORTUNITY_DISABLED,
         )
         .order_by(models.FlowTask.created_at.desc())
