@@ -1363,6 +1363,23 @@ textarea {
   max-width: 100%;
 }
 
+.assignment-workload-toggle {
+  align-self: flex-start;
+  margin: 4px 0;
+  padding: 4px 12px;
+  border: 1px solid var(--border, #d9dce3);
+  border-radius: 6px;
+  background: var(--panel, #fff);
+  color: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.assignment-workload-toggle:hover {
+  border-color: var(--primary, #2563eb);
+  color: var(--primary, #2563eb);
+}
+
 .assignment-workload-grid {
   position: sticky;
   top: 0;

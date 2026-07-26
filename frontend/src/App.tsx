@@ -2825,6 +2825,7 @@ function AssignView(props: {
   const [siteFilter, setSiteFilter] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("");
   const [operatorFilter, setOperatorFilter] = useState("");
+  const [workloadOpen, setWorkloadOpen] = useState(false);
   const [assignTab, setAssignTab] = useState<"pending" | "board">("pending");
   const [draggedProfileId, setDraggedProfileId] = useState<string | null>(null);
   const [dragOverProfileId, setDragOverProfileId] = useState<string | null>(null);
@@ -2928,6 +2929,10 @@ function AssignView(props: {
             setList={(patch) => props.setList((current) => ({ ...current, ...patch }))}
           />
         </div>
+        <button className="assignment-workload-toggle" type="button" onClick={() => setWorkloadOpen((open) => !open)}>
+          {workloadOpen ? "收起运营负载" : `展开运营负载（${enabledProfiles.length} 人）`}
+        </button>
+        {workloadOpen && (
         <div className="assignment-workload-grid">
           {enabledProfiles.map((profile) => {
             const load = workload[profile.operator_name] || emptyAssignmentLoad();
@@ -2966,6 +2971,7 @@ function AssignView(props: {
             );
           })}
         </div>
+        )}
         {!props.previewItems.length ? (
           <p className="muted">没有待分配的主 SKU 组。</p>
         ) : !filteredItems.length ? (

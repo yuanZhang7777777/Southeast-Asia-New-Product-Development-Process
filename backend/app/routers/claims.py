@@ -21,14 +21,15 @@ def submit_claim(
     db: Session = Depends(get_db),
     auth: AuthContext | None = Depends(require_roles("operator")),
 ) -> schemas.MessageResponse:
-    if auth and auth.operator_name and payload.salesperson_name != auth.operator_name:
+    acting_as_admin = bool(auth and "super_admin" in auth.role_keys)
+    if auth and not acting_as_admin and auth.operator_name and payload.salesperson_name != auth.operator_name:
         raise HTTPException(status_code=403, detail="salesperson_name does not match current operator")
     try:
         claim = services.submit_claim(
             db,
             payload,
-            assignee_name=auth.operator_name if auth else None,
-            assignee_user_id=auth.user.id if auth else None,
+            assignee_name=payload.salesperson_name if acting_as_admin else (auth.operator_name if auth else None),
+            assignee_user_id=None if acting_as_admin else (auth.user.id if auth else None),
         )
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
