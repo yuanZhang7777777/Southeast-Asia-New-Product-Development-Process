@@ -41,6 +41,7 @@ def upload_claim_evidence_image(data: bytes, ext: str, opportunity_id: str, dige
 def read_oss_object_by_public_url(
     url: str,
     allowed_prefixes: tuple[str, ...] = ("product-images/", "claim-evidence/"),
+    process: str | None = None,
 ) -> tuple[bytes, str]:
     config = _config()
     if config is None:
@@ -52,7 +53,7 @@ def read_oss_object_by_public_url(
     object_key = unquote(parsed.path.lstrip("/"))
     if not object_key or not any(object_key.startswith(prefix) for prefix in allowed_prefixes):
         raise ValueError("unsupported OSS object")
-    result = _bucket(config).get_object(object_key)
+    result = _bucket(config).get_object(object_key, process=process)
     content_type = result.headers.get("Content-Type") or _content_type(Path(object_key).suffix)
     return result.read(), content_type
 

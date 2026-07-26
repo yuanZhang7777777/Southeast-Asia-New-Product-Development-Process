@@ -70,7 +70,7 @@ import {
   structuredCompetitorRows,
   StructuredCompetitorRow
 } from "./historicalSnapshot";
-import { productImageSrc } from "./imageSource";
+import { productImageSrc, productThumbSrc } from "./imageSource";
 import {
   EMPTY_DASHBOARD_COUNTS,
   HomeMetricItem,
@@ -400,7 +400,7 @@ function App() {
       main_sku: group.main_sku,
       country: normalizeSiteText(group.first.site || group.first.country),
       business_period: group.first.batch,
-      image_url: productImageSrc(imageItem.image_url)
+      image_url: productThumbSrc(imageItem.image_url)
     };
   }), [groups]);
   const dashboardGroups = useMemo(() => filterDashboardGroups(groups, dashboardFilters), [groups, dashboardFilters]);
@@ -2885,7 +2885,7 @@ function reviewStatusLabel(value?: string | null) {
 }
 
 function ProductThumb(props: { item?: Opportunity | null; small?: boolean }) {
-  const src = productImageSrc(props.item?.image_url);
+  const src = productThumbSrc(props.item?.image_url);
   const className = props.small ? "thumb small" : "thumb";
   const [open, setOpen] = useState(false);
   const alt = props.item?.sub_sku_name || props.item?.main_sku_name || props.item?.sub_sku || "商品图片";

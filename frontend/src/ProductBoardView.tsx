@@ -3,7 +3,7 @@ import { Fragment, useEffect, useMemo, useState } from "react";
 
 import { api, ProductBoardGroup } from "./api";
 import { formatBusinessNumber } from "./businessFormat";
-import { productImageSrc } from "./imageSource";
+import { productImageSrc, productThumbSrc } from "./imageSource";
 import {
   buildProductBoardRows,
   filterProductBoardRows,
@@ -217,7 +217,8 @@ function ChildSkuTable({ row, onOpenDetail }: { row: ProductBoardRow; onOpenDeta
 }
 
 function ProductBoardThumb({ url, name }: { url?: string | null; name: string }) {
-  const src = productImageSrc(url);
+  const src = productThumbSrc(url);
+  const fullSrc = productImageSrc(url);
   const [open, setOpen] = useState(false);
   return (
     <>
@@ -232,7 +233,7 @@ function ProductBoardThumb({ url, name }: { url?: string | null; name: string })
           <button className="image-preview-close" type="button" onClick={() => setOpen(false)}>
             <X size={18} />
           </button>
-          <img src={src} alt={name} onClick={(event) => event.stopPropagation()} />
+          <img src={fullSrc} alt={name} onClick={(event) => event.stopPropagation()} />
         </div>
       )}
     </>

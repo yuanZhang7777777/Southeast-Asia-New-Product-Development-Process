@@ -21,7 +21,7 @@ import {
   syncSecondaryResearchDraftPatch,
   SecondaryResearchDraft
 } from "./secondaryResearchDrafts";
-import { productImageSrc } from "./imageSource";
+import { productImageSrc, productThumbSrc } from "./imageSource";
 import { isSourceClaimInputLabel, selection1ColumnLabel } from "./selection1Columns";
 import { formatBusinessNumber } from "./businessFormat";
 import { createKeyedSaveQueue, imageFiles } from "./imageUploads";
@@ -842,7 +842,7 @@ function ResearchImageList({
 function ResearchMainSkuThumb({ item }: { item?: SecondaryResearchItem }) {
   return (
     <div className="research-main-thumb research-thumb">
-      {item?.image_url ? <img src={productImageSrc(item.image_url)} alt={item.sub_sku_name || item.sub_sku} /> : "图"}
+      {item?.image_url ? <img src={productThumbSrc(item.image_url)} alt={item.sub_sku_name || item.sub_sku} /> : "图"}
     </div>
   );
 }
@@ -852,7 +852,7 @@ function ResearchSkuCell({ item, children, onOpenDetail, hideThumb }: { item: Se
     <div className={hideThumb ? "research-sku-cell research-sku-content no-thumb" : "research-sku-cell research-sku-content"}>
       {!hideThumb && (
         <div className="research-thumb">
-          {item.image_url ? <img src={productImageSrc(item.image_url)} alt={item.sub_sku_name || item.sub_sku} /> : "图"}
+          {item.image_url ? <img src={productThumbSrc(item.image_url)} alt={item.sub_sku_name || item.sub_sku} /> : "图"}
         </div>
       )}
       <div>

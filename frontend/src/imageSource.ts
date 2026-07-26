@@ -11,9 +11,17 @@ function apiBase(): string {
 
 const OSS_URL_PATTERN = /^https?:\/\/[^/]*\.aliyuncs\.com\//i;
 
-export function productImageSrc(url?: string | null): string {
+export function productImageSrc(url?: string | null, options?: { thumb?: boolean }): string {
   if (!url) return "";
   if (url.startsWith("/uploaded-sources/")) return `${apiBase()}${url}`;
-  if (OSS_URL_PATTERN.test(url)) return `${apiBase()}/media/oss-image?src=${encodeURIComponent(url)}`;
+  if (OSS_URL_PATTERN.test(url)) {
+    const thumb = options?.thumb ? "&thumb=true" : "";
+    return `${apiBase()}/media/oss-image?src=${encodeURIComponent(url)}${thumb}`;
+  }
   return url;
+}
+
+// 列表/缩略场景统一走 OSS 400px 缩略图，省 ~90% 传输量；详情大图仍用原图。
+export function productThumbSrc(url?: string | null): string {
+  return productImageSrc(url, { thumb: true });
 }
