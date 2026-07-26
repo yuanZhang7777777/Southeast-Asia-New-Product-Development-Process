@@ -104,7 +104,8 @@ export function ListingObservationView(props: {
 }) {
   const [data, setData] = useState<ListingWorkbenchResponse>(EMPTY_DATA);
   const [filters, setFilters] = useState<WorkbenchFilters>(DEFAULT_FILTERS);
-  const [includeHistory, setIncludeHistory] = useState(false);
+  // 默认展示历史档案：上线初期平台自产刊登少，历史 Item（含负责销售员/周指标）是工作台主体（2026-07-27 用户要求）。
+  const [includeHistory, setIncludeHistory] = useState(true);
   const [scenario, setScenario] = useState<"listing" | "observation">("observation");
   const [correctingPeriods, setCorrectingPeriods] = useState<string[]>([]);
   const [expandedGroups, setExpandedGroups] = useState<string[]>([]);
