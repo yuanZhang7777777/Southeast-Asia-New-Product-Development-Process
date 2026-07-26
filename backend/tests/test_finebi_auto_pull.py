@@ -100,8 +100,10 @@ class FakeFineBI:
         self.calls: list[tuple[str, str]] = []
         self.login_payload: dict | None = None
         self.login_headers: dict | None = None
+        self.warmup_url: str | None = None
         self.export_url: str | None = None
         self.export_body: bytes | None = None
+        self.export_headers: dict | None = None
         self.download_url: str | None = None
         self._cookies: set[str] = set()
 
@@ -116,6 +118,9 @@ class FakeFineBI:
                 self._cookies.add("fine_auth_token")
                 return fap.HttpResponse(200, {"content-type": "application/json"}, b'{"errorCode":""}')
             return fap.HttpResponse(200, {"content-type": "application/json"}, b'{"errorCode":"INVALID_USER","errorMsg":"denied"}')
+        if fap.VIEW_PATH in url and method == "GET":
+            self.warmup_url = url
+            return fap.HttpResponse(200, {"content-type": "text/html"}, b"<html>report</html>")
         if f"{fap.DOWNLOAD_PATH}/" in url and method == "GET":
             self.download_url = url
             return fap.HttpResponse(
@@ -124,6 +129,7 @@ class FakeFineBI:
         if fap.EXPORT_PATH in url and method == "POST":
             self.export_url = url
             self.export_body = data
+            self.export_headers = dict(headers or {})
             # 生产实测：创建导出可能返回 Content-Length: 0 的空 body
             return fap.HttpResponse(self.export_status, {"content-length": "0"}, b"")
         raise AssertionError(f"unexpected request {method} {url}")
@@ -132,7 +138,9 @@ class FakeFineBI:
         return set(self._cookies)
 
 
-def make_settings(tmp_path: Path, *, enabled: bool = True, payload: str = '{"demo": true}') -> Settings:
+def make_settings(
+    tmp_path: Path, *, enabled: bool = True, payload: str = '{"demo": true, "period": "0528-0603"}'
+) -> Settings:
     payload_file = tmp_path / "itemid_finance.json"
     payload_file.write_text(payload, encoding="utf-8")
     return Settings(
@@ -174,12 +182,22 @@ def test_pull_week_success_writes_file_and_backs_up_existing(tmp_path: Path) -> 
     assert fake.login_headers["Referer"] == "https://finebi.internal.test:8443/webroot/decision/login"
     assert fake.login_headers["transEncryptLevel"] == "1"
     assert "Chrome" in fake.login_headers["User-Agent"]
-    # 导出 URL 携带 reportId/entryType/operationId，body 是配置文件原文
+    # 导出前先预热报表页（entryType=5）
+    assert fake.warmup_url is not None
+    warmup_query = parse_qs(urlsplit(fake.warmup_url).query)
+    assert warmup_query["entryType"] == ["5"]
+    assert warmup_query["reportId"] == ["RPT-1"]
+    # 导出 URL 携带 reportId/entryType/operationId，body 是配置文件周期串替换为目标周后的内容
     query = parse_qs(urlsplit(fake.export_url).query)
     assert query["reportId"] == ["RPT-1"]
     assert query["entryType"] == ["6"]
     assert query["operationId"][0]
-    assert fake.export_body == b'{"demo": true}'
+    assert fake.export_body == b'{"demo": true, "period": "0723-0729"}'
+    # 导出 headers 与生产脚本一致（Referer 指向报表页）
+    assert fake.export_headers["X-Requested-With"] == "XMLHttpRequest"
+    assert fake.export_headers["Origin"] == "https://finebi.internal.test:8443"
+    assert "entryType=5" in fake.export_headers["Referer"]
+    assert "Chrome" in fake.export_headers["User-Agent"]
     # 下载 URL 用 operationId 路径 + 运行时 sessionID
     assert f"{fap.DOWNLOAD_PATH}/{query['operationId'][0]}?" in fake.download_url
 
@@ -256,6 +274,27 @@ def test_public_key_pem_wraps_base64_at_64_chars() -> None:
     assert "".join(body_lines) == TEST_PUBLIC_KEY_B64
     # 转出的 PEM 能被 cryptography 加载
     assert fap._load_public_key(TEST_PUBLIC_KEY_B64).key_size == 2048
+
+
+def test_payload_periods_all_replaced_including_mixed_old_values(tmp_path: Path) -> None:
+    # 真实 payload 里周期串出现在多个过滤组件（时间周期-SKU / 时间周期-Order），且可能残留不同旧周
+    settings = make_settings(
+        tmp_path,
+        payload='{"sku": "0528-0603", "order": "0528-0603", "stale": "0611-0617", "keep": "12345-1234"}',
+    )
+    fake = FakeFineBI(download_body=finebi_workbook_bytes([finebi_row("10000000001", "MAINA", "Shopee-101PH", 100.0, 3, 20.0)]))
+    fap.pull_week("0716-0722", settings=settings, target_dir=tmp_path / "live", session=fake)
+    assert fake.export_body == (
+        b'{"sku": "0716-0722", "order": "0716-0722", "stale": "0716-0722", "keep": "12345-1234"}'
+    )
+
+
+def test_payload_without_any_period_string_rejected_before_network(tmp_path: Path) -> None:
+    settings = make_settings(tmp_path, payload='{"demo": true}')
+    fake = FakeFineBI()
+    with pytest.raises(fap.FineBIPullError, match="MMDD-MMDD"):
+        fap.pull_week("0716-0722", settings=settings, target_dir=tmp_path / "live", session=fake)
+    assert fake.calls == []
 
 
 def test_export_created_with_empty_body_is_not_failure(tmp_path: Path) -> None:

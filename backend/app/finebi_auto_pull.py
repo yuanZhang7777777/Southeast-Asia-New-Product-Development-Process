@@ -8,9 +8,12 @@
    headers 必带 X-Requested-With / Origin / Referer / transEncryptLevel: "1" / Chrome 系 UA。
    成功判定 = HTTP 200 且会话出现 fine_auth_token Cookie（精确名）；
    失败时取响应 JSON 的 errorMsg/message/errorCode，并附登录页关键片段便于运维排查。
-2. POST /webroot/decision/v5/design/report/data/export?reportId=..&entryType=6&operationId=..，
-   body = 配置文件（FINEBI_PAYLOAD_FILE）里的 JSON。创建成功也可能 Content-Length: 0，
-   真正成败以下载结果为准。
+2. 先 GET /webroot/decision/view?entryType=5&reportId=..（报表预热，非 200 不视为失败），再
+   POST /webroot/decision/v5/design/report/data/export?reportId=..&entryType=6&operationId=..，
+   body = 配置文件（FINEBI_PAYLOAD_FILE）里的 JSON，其中所有 MMDD-MMDD 周期串（时间周期-SKU /
+   时间周期-Order 过滤条件，生产实测 95 处）必须整体替换为目标周，否则报表按过时周期出空表。
+   headers 必带 Chrome 系 UA / X-Requested-With / Origin / Referer(报表页)。
+   创建成功也可能 Content-Length: 0，真正成败以下载结果为准。
 3. GET /webroot/decision/v5/design/report/data/export/download/<operationId>?link=&sessionID=..&form=true，
    成功判定 = 返回 Excel/ZIP 文件头（PK..）而非 HTML，且 openpyxl 能打开、表头与既有 finebi_live 一致。
 operationId / sessionID 每次运行用 uuid 重新生成，绝不写死。
@@ -50,6 +53,7 @@ from app.historical_finebi_import import (
 from app.historical_monitoring_sources import text_value
 
 LOGIN_PATH = "/webroot/decision/login"
+VIEW_PATH = "/webroot/decision/view"
 EXPORT_PATH = "/webroot/decision/v5/design/report/data/export"
 DOWNLOAD_PATH = "/webroot/decision/v5/design/report/data/export/download"
 AUTH_COOKIE_NAME = "fine_auth_token"
@@ -147,13 +151,16 @@ def pull_week(
     label = validate_week_label(week_label, year or date.today().year)
     _require_configuration(settings)
     payload_bytes = _load_payload(settings.finebi_payload_file)
+    payload_bytes = _replace_payload_periods(payload_bytes, label)
     session = session or UrllibSession()
     base = settings.finebi_base_url.strip().rstrip("/")
+    report_id = settings.finebi_report_id.strip()
     operation_id = uuid.uuid4().hex
     session_id = uuid.uuid4().hex
     _login(session, base, settings)
-    _create_export(session, base, settings.finebi_report_id.strip(), operation_id, payload_bytes)
-    content = _download_export(session, base, operation_id, session_id)
+    _warmup_report(session, base, report_id)
+    _create_export(session, base, report_id, operation_id, payload_bytes)
+    content = _download_export(session, base, report_id, operation_id, session_id)
     _validate_headers(content, label)
 
     directory = Path(target_dir) if target_dir else DEFAULT_TARGET_DIR
@@ -211,6 +218,37 @@ def _load_payload(payload_file: str) -> bytes:
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise ValueError(f"FINEBI_PAYLOAD_FILE 不是合法 JSON：{path}") from exc
     return content
+
+
+def _replace_payload_periods(payload_bytes: bytes, target_label: str) -> bytes:
+    """把 payload 里所有 MMDD-MMDD 周期串替换为目标周（时间周期-SKU / 时间周期-Order 等过滤条件）。
+
+    不替换则 FineBI 按 payload 内过时周期出空表——2026-07 生产实测空导出的根因。
+    """
+    text = payload_bytes.decode("utf-8")
+    detected = sorted(set(re.findall(r"(?<!\d)\d{4}-\d{4}(?!\d)", text)))
+    for value in detected:
+        if value != target_label:
+            text = text.replace(value, target_label)
+    if target_label not in text:
+        raise FineBIPullError(
+            "FINEBI_PAYLOAD_FILE 中未发现任何 MMDD-MMDD 周期串，无法定位周期过滤条件；"
+            "请核对 payload 是否仍是浏览器抓取的导出请求原文"
+        )
+    return text.encode("utf-8")
+
+
+def _report_url(base: str, report_id: str) -> str:
+    return f"{base}{VIEW_PATH}?{urlencode({'entryType': 5, 'reportId': report_id})}"
+
+
+def _warmup_report(session: UrllibSession, base: str, report_id: str) -> None:
+    # 预热报表会话；生产自动化同款步骤，非 200 只影响后续下载（下载会自行报错），不在此失败。
+    session.request(
+        "GET",
+        _report_url(base, report_id),
+        headers={"User-Agent": CHROME_USER_AGENT, "Referer": f"{base}{LOGIN_PATH}"},
+    )
 
 
 def _login(session: UrllibSession, base: str, settings: Settings) -> None:
@@ -320,16 +358,28 @@ def _create_export(
         "POST",
         f"{base}{EXPORT_PATH}?{params}",
         data=payload_bytes,
-        headers={"Content-Type": "application/json"},
+        headers={
+            "Content-Type": "application/json;charset=UTF-8",
+            "User-Agent": CHROME_USER_AGENT,
+            "X-Requested-With": "XMLHttpRequest",
+            "Origin": base,
+            "Referer": _report_url(base, report_id),
+        },
     )
     if response.status != 200:
         raise FineBIPullError(f"FineBI 创建导出失败：HTTP {response.status}，响应片段：{response.snippet()}")
     # 生产实测：创建成功也可能返回 Content-Length: 0，因此空 body 不算失败，成败以下载结果为准。
 
 
-def _download_export(session: UrllibSession, base: str, operation_id: str, session_id: str) -> bytes:
+def _download_export(
+    session: UrllibSession, base: str, report_id: str, operation_id: str, session_id: str
+) -> bytes:
     params = urlencode({"link": "", "sessionID": session_id, "form": "true"})
-    response = session.request("GET", f"{base}{DOWNLOAD_PATH}/{operation_id}?{params}")
+    response = session.request(
+        "GET",
+        f"{base}{DOWNLOAD_PATH}/{operation_id}?{params}",
+        headers={"User-Agent": CHROME_USER_AGENT, "Referer": _report_url(base, report_id)},
+    )
     content_type = response.headers.get("content-type", "")
     if (
         response.status != 200
