@@ -1,0 +1,2565 @@
+{
+  "widget": {
+    "explainConf": {
+      "fieldCombinationList": [
+        []
+      ],
+      "useDefault": false
+    },
+    "type": 1,
+    "name": "ItemID财务数据八部",
+    "timeStamp": 1745231468823,
+    "tableName": [
+      "7d1c3c496b7249b586bdf17cfe00cf41"
+    ],
+    "fields": [],
+    "widgetMeasures": [
+      {
+        "id": "7d1c3c496b7249b586bdf17cfe00cf41_[53d1][8d27][65f6][95f4]",
+        "group": {}
+      },
+      {
+        "id": "edaa297033aa46ab",
+        "group": {
+          "summary_3": {
+            "cal": {
+              "cal_0": {
+                "sort": {
+                  "sortTarget": "29fb152f0a0a5361_3_0",
+                  "sortField": false,
+                  "type": 3
+                },
+                "repeatCal": true,
+                "settings": {
+                  "size": 0,
+                  "stack": false,
+                  "formatStyle": 3,
+                  "formatDecimal": 2,
+                  "numLevel": 1,
+                  "showType": 0,
+                  "numSeparators": true,
+                  "showHeaderPercent": false,
+                  "showSum": true,
+                  "unit": ""
+                },
+                "useDataBar": false,
+                "showMissingTime": false
+              }
+            },
+            "repeatCal": true,
+            "useDataBar": false,
+            "showMissingTime": false
+          }
+        }
+      },
+      {
+        "id": "7d1c3c496b7249b586bdf17cfe00cf41_[96c6][56e2]",
+        "group": {
+          "group_11": {
+            "filter": {
+              "targetId": "7d1c3c496b7249b586bdf17cfe00cf41_[96c6][56e2]_11",
+              "filterValue": {
+                "type": 1,
+                "assist": [
+                  "集团九部",
+                  "集团一部"
+                ],
+                "value": [
+                  "集团八部"
+                ]
+              },
+              "filterType": 1
+            },
+            "repeatCal": true,
+            "useDataBar": false,
+            "showMissingTime": false,
+            "displayName": "集团"
+          },
+          "group_22": {
+            "filter": {
+              "targetId": "7d1c3c496b7249b586bdf17cfe00cf41_[96c6][56e2]_22",
+              "filterValue": {
+                "type": 1,
+                "assist": [
+                  "集团九部",
+                  "集团一部"
+                ],
+                "value": [
+                  "集团八部"
+                ]
+              },
+              "filterType": 1
+            },
+            "repeatCal": true,
+            "useDataBar": false,
+            "showMissingTime": false,
+            "displayName": "集团"
+          },
+          "group_23": {
+            "filter": {
+              "targetId": "7d1c3c496b7249b586bdf17cfe00cf41_[96c6][56e2]_23",
+              "filterValue": {
+                "type": 1,
+                "assist": [
+                  "集团九部",
+                  "集团一部"
+                ],
+                "value": [
+                  "集团八部"
+                ]
+              },
+              "filterType": 1
+            },
+            "repeatCal": true,
+            "useDataBar": false,
+            "showMissingTime": false,
+            "displayName": "集团"
+          }
+        }
+      },
+      {
+        "id": "7d1c3c496b7249b586bdf17cfe00cf41_[603b][6536][5165]",
+        "group": {
+          "summary_3": {
+            "cal": {
+              "cal_0": {
+                "sort": {
+                  "sortTarget": "29fb152f0a0a5361_3_0",
+                  "sortField": false,
+                  "type": 3
+                },
+                "repeatCal": true,
+                "useDataBar": false,
+                "showMissingTime": false
+              }
+            },
+            "repeatCal": true,
+            "useDataBar": false,
+            "showMissingTime": false
+          }
+        }
+      },
+      {
+        "id": "7d1c3c496b7249b586bdf17cfe00cf41_[8ba2][5355][91cf]",
+        "group": {
+          "summary_3": {
+            "cal": {
+              "cal_0": {
+                "sort": {
+                  "sortTarget": "29fb152f0a0a5361_3_0",
+                  "sortField": false,
+                  "type": 3
+                },
+                "repeatCal": true,
+                "useDataBar": false,
+                "showMissingTime": false
+              }
+            },
+            "repeatCal": true,
+            "useDataBar": false,
+            "showMissingTime": false
+          }
+        }
+      },
+      {
+        "id": "7d1c3c496b7249b586bdf17cfe00cf41_[4e00][6b21][6bdb][5229]",
+        "group": {
+          "summary_3": {
+            "cal": {
+              "cal_0": {
+                "sort": {
+                  "sortTarget": "29fb152f0a0a5361_3_0",
+                  "sortField": false,
+                  "type": 3
+                },
+                "repeatCal": true,
+                "useDataBar": false,
+                "showMissingTime": false
+              }
+            },
+            "repeatCal": true,
+            "useDataBar": false,
+            "showMissingTime": false
+          }
+        }
+      },
+      {
+        "id": "7d1c3c496b7249b586bdf17cfe00cf41_[5546][54c1][6570][91cf]",
+        "group": {
+          "summary_3": {
+            "cal": {
+              "cal_0": {
+                "sort": {
+                  "sortTarget": "29fb152f0a0a5361_3_0",
+                  "sortField": false,
+                  "type": 3
+                },
+                "repeatCal": true,
+                "useDataBar": false,
+                "showMissingTime": false
+              }
+            },
+            "repeatCal": true,
+            "useDataBar": false,
+            "showMissingTime": false
+          }
+        }
+      },
+      {
+        "id": "29fb152f0a0a5361",
+        "group": {
+          "summary_3": {
+            "cal": {
+              "cal_0": {
+                "sort": {
+                  "sortTarget": "29fb152f0a0a5361_3_0",
+                  "sortField": false,
+                  "type": 1
+                },
+                "repeatCal": true,
+                "settings": {
+                  "size": 0,
+                  "stack": false,
+                  "formatStyle": 3,
+                  "formatDecimal": 2,
+                  "numLevel": 1,
+                  "showType": 0,
+                  "numSeparators": true,
+                  "showHeaderPercent": false,
+                  "showSum": true,
+                  "unit": ""
+                },
+                "useDataBar": false,
+                "showMissingTime": false
+              }
+            },
+            "repeatCal": true,
+            "useDataBar": false,
+            "showMissingTime": false
+          }
+        }
+      }
+    ],
+    "injection": null,
+    "widgetModel": {
+      "type": 0
+    },
+    "settings": {
+      "nameStyleType": 1,
+      "titleHeight": 25,
+      "titleBackground": {
+        "type": "color",
+        "color": "",
+        "imageId": ""
+      },
+      "widgetBackground": {
+        "type": "color",
+        "color": "",
+        "imageId": "",
+        "borderSize": -1,
+        "borderRadius": -1,
+        "borderColor": ""
+      },
+      "gisBackground": {
+        "show": true,
+        "normal": true,
+        "layer": null,
+        "zoomIn": "放大",
+        "zoomOut": "缩小",
+        "enableWheelTitle": "开启滚轮缩放",
+        "disableWheelTitle": "关闭滚轮缩放"
+      },
+      "chartAttr": {},
+      "chartStyle": {
+        "legend": {
+          "enabled": true,
+          "fontStyle": {
+            "auto": true,
+            "fontFamily": "Avenir, Segoe UI, PingFangSC-Regular, \"Microsoft YaHei\"",
+            "fontSize": 12,
+            "fontBold": false,
+            "italic": false,
+            "fontColor": "",
+            "type": 0,
+            "bold": false,
+            "fontAlign": 0
+          },
+          "borderColor": "transparent",
+          "position": "bottom-center",
+          "titleEnabled": true,
+          "validMapping": null
+        },
+        "axis": {
+          "enabled": true,
+          "type": "solid",
+          "color": "",
+          "width": 1
+        },
+        "hGrid": {
+          "enabled": true,
+          "type": "dashed",
+          "color": "",
+          "width": 1
+        },
+        "vGrid": {
+          "enabled": true,
+          "type": "dashed",
+          "color": "",
+          "width": 1
+        },
+        "section": {
+          "enabled": true,
+          "type": "solid",
+          "color": "",
+          "width": 1
+        },
+        "background": {
+          "enabled": true
+        },
+        "adaptive": {
+          "enabled": true,
+          "type": "standard"
+        }
+      },
+      "tableAttr": {
+        "color": {
+          "all": {
+            "color": "",
+            "backgroundColor": "",
+            "dims": [],
+            "conditions": []
+          },
+          "cffae21485996cbb": {
+            "dims": [],
+            "color": "",
+            "backgroundColor": "",
+            "conditions": []
+          },
+          "d85a0347a5dd1ab8": {
+            "dims": [],
+            "color": "",
+            "backgroundColor": "",
+            "conditions": []
+          },
+          "e4790dec3ad5a615": {
+            "dims": [],
+            "color": "",
+            "backgroundColor": "",
+            "conditions": []
+          },
+          "2872f48f1e6c7f05": {
+            "dims": [],
+            "color": "",
+            "backgroundColor": "",
+            "conditions": []
+          },
+          "6106abd9775703f0": {
+            "dims": [],
+            "color": "",
+            "backgroundColor": "",
+            "conditions": []
+          },
+          "b7e83d4cd9f4514e": {
+            "dims": [],
+            "color": "",
+            "backgroundColor": "",
+            "conditions": []
+          },
+          "2dd812f3377a1e8a": {
+            "dims": [],
+            "color": "",
+            "backgroundColor": "",
+            "conditions": []
+          },
+          "d0687d4abd9cad16": {
+            "dims": [],
+            "color": "",
+            "backgroundColor": "",
+            "conditions": []
+          }
+        },
+        "shape": {
+          "all": {
+            "shape": -1,
+            "dims": [],
+            "conditionsList": [],
+            "color": ""
+          },
+          "e4790dec3ad5a615": {
+            "shape": -1,
+            "color": "",
+            "dims": [],
+            "conditionsList": []
+          },
+          "d85a0347a5dd1ab8": {
+            "shape": -1,
+            "color": "",
+            "dims": [],
+            "conditionsList": []
+          },
+          "cffae21485996cbb": {
+            "shape": -1,
+            "color": "",
+            "dims": [],
+            "conditionsList": []
+          },
+          "2dd812f3377a1e8a": {
+            "shape": -1,
+            "color": "",
+            "dims": [],
+            "conditionsList": []
+          },
+          "b7e83d4cd9f4514e": {
+            "shape": -1,
+            "color": "",
+            "dims": [],
+            "conditionsList": []
+          },
+          "6106abd9775703f0": {
+            "shape": -1,
+            "color": "",
+            "dims": [],
+            "conditionsList": []
+          },
+          "d0687d4abd9cad16": {
+            "shape": -1,
+            "color": "",
+            "dims": [],
+            "conditionsList": []
+          },
+          "2872f48f1e6c7f05": {
+            "shape": -1,
+            "color": "",
+            "dims": [],
+            "conditionsList": []
+          }
+        },
+        "filterValue": {},
+        "equalDivideColumn": false
+      },
+      "tableStyle": {
+        "form": 1,
+        "style": 0,
+        "themeColor": null,
+        "metric": {
+          "show": true,
+          "position": 3,
+          "type": 2
+        },
+        "freezeDim": true,
+        "freezeNumbers": 1,
+        "showSequence": false,
+        "showRowInfo": true,
+        "headerTextWrapper": false,
+        "textWrapper": false,
+        "expandRowHeader": false,
+        "expandColHeader": false,
+        "showRowSum": true,
+        "showColSum": true,
+        "showChildRowSum": false,
+        "showChildColSum": false,
+        "rowPosition": "bottom",
+        "colPosition": "right",
+        "sumRowText": "",
+        "headerRowHeight": 32,
+        "rowHeight": 32,
+        "detailRowCounts": 100,
+        "rowCounts": 20,
+        "colCounts": 7,
+        "totalRows": 1000,
+        "font": {
+          "type": 1,
+          "header": {
+            "fontFamily": null,
+            "fontSize": null,
+            "bold": null,
+            "italic": null,
+            "underline": null,
+            "fontAlign": null,
+            "fontColor": null
+          },
+          "body": {
+            "fontFamily": null,
+            "fontSize": null,
+            "bold": null,
+            "italic": null,
+            "underline": null,
+            "dimFontAlign": null,
+            "tarFontAlign": null,
+            "fontColor": null
+          }
+        },
+        "sumRowInGroupText": "",
+        "sumColText": "",
+        "sumColInGroupText": "",
+        "rowSum": {
+          "font": {
+            "fontAlign": null,
+            "bold": true,
+            "italic": null,
+            "underline": null,
+            "fontColor": null,
+            "fontFamily": null,
+            "fontSize": null
+          },
+          "fontType": 1,
+          "background": ""
+        },
+        "colSum": {
+          "font": {
+            "fontAlign": null,
+            "bold": true,
+            "italic": null,
+            "underline": null,
+            "fontColor": null,
+            "fontFamily": null,
+            "fontSize": null
+          },
+          "fontType": 1,
+          "background": ""
+        },
+        "rowSumInGroup": {
+          "font": {
+            "fontAlign": null,
+            "bold": true,
+            "italic": null,
+            "underline": null,
+            "fontColor": null,
+            "fontFamily": null,
+            "fontSize": null
+          },
+          "fontType": 1,
+          "background": ""
+        },
+        "colSumInGroup": {
+          "font": {
+            "fontAlign": null,
+            "bold": true,
+            "italic": null,
+            "underline": null,
+            "fontColor": null,
+            "fontFamily": null,
+            "fontSize": null
+          },
+          "fontType": 1,
+          "background": ""
+        },
+        "showRowHeaderIcon": true,
+        "showColHeaderIcon": true,
+        "showTitle": false,
+        "transmitLinkages": false
+      },
+      "transmitLinkages": true,
+      "chartInitState": {
+        "mapZoomDisabled": false
+      },
+      "innerGap": {
+        "topGap": -1,
+        "bottomGap": -1,
+        "leftGap": -1,
+        "rightGap": -1
+      }
+    },
+    "view": {
+      "10000": [
+        "28e5f5c5912370cb",
+        "6cba00b1871a462e",
+        "c1a5aae9dacec1f3",
+        "03d426def39e39d9",
+        "33eb8190044e4dc3"
+      ],
+      "20000": [],
+      "30000": [
+        "cffae21485996cbb",
+        "d85a0347a5dd1ab8",
+        "e4790dec3ad5a615",
+        "2872f48f1e6c7f05",
+        "6106abd9775703f0",
+        "b7e83d4cd9f4514e",
+        "2dd812f3377a1e8a",
+        "d0687d4abd9cad16"
+      ]
+    },
+    "viewAttr": {
+      "10000": {
+        "type": 1,
+        "left": {
+          "reversed": false,
+          "log": false,
+          "sharedDomain": true
+        },
+        "right": {
+          "reversed": false,
+          "log": false,
+          "sharedDomain": true
+        },
+        "size": 0
+      },
+      "20000": {
+        "type": 1,
+        "size": 0
+      },
+      "30000": {
+        "type": 1,
+        "left": {
+          "reversed": false,
+          "log": false,
+          "sharedDomain": true
+        },
+        "right": {
+          "reversed": false,
+          "log": false,
+          "sharedDomain": true
+        },
+        "size": 0
+      }
+    },
+    "dimensions": {
+      "28e5f5c5912370cb": {
+        "name": "ITEMID",
+        "type": 1,
+        "notShowNull": false,
+        "id": "28e5f5c5912370cb",
+        "fieldId": "7d1c3c496b7249b586bdf17cfe00cf41_ITEMID",
+        "toCountType": 0,
+        "group": {
+          "type": 11
+        },
+        "calculation": {
+          "type": 0,
+          "value": 0
+        },
+        "settings": {
+          "trendLine": [],
+          "cordon": [],
+          "categoryAxis": {
+            "title": {
+              "displayed": false,
+              "modified": false
+            }
+          },
+          "valueAxis": {
+            "reversed": false,
+            "log": false,
+            "sharedDomain": true
+          },
+          "annotate": [],
+          "size": 0,
+          "stack": false,
+          "formatStyle": 1,
+          "formatDecimal": -1,
+          "numLevel": 1,
+          "showType": 0,
+          "numSeparators": true,
+          "showHeaderPercent": false,
+          "showSum": false,
+          "tableShape": {
+            "shape": -1,
+            "color": "",
+            "filters": []
+          },
+          "tableColor": {
+            "color": "",
+            "backgroundColor": "",
+            "filters": []
+          },
+          "unit": "",
+          "dateFormat": {},
+          "flash": [],
+          "imageData": []
+        },
+        "showMissingTime": false,
+        "metric": 0,
+        "counterDep": "TOTAL_ROWS",
+        "repeatCal": true,
+        "formatStyle": 0,
+        "formatDecimal": 0,
+        "numLevel": 0,
+        "numSeparators": false,
+        "used": true,
+        "drillDimensions": {}
+      },
+      "cffae21485996cbb": {
+        "name": "总收入",
+        "type": 2,
+        "notShowNull": false,
+        "id": "cffae21485996cbb",
+        "fieldId": "7d1c3c496b7249b586bdf17cfe00cf41_[603b][6536][5165]",
+        "toCountType": 0,
+        "group": {
+          "type": 3
+        },
+        "calculation": {
+          "type": 0,
+          "value": 0
+        },
+        "settings": {
+          "trendLine": [],
+          "cordon": [],
+          "categoryAxis": {
+            "title": {
+              "displayed": false,
+              "modified": false
+            }
+          },
+          "valueAxis": {
+            "reversed": false,
+            "log": false,
+            "sharedDomain": true
+          },
+          "annotate": [],
+          "size": 0,
+          "stack": false,
+          "formatStyle": 1,
+          "formatDecimal": -1,
+          "numLevel": 1,
+          "showType": 0,
+          "numSeparators": true,
+          "showHeaderPercent": false,
+          "showSum": true,
+          "tableShape": {
+            "shape": -1,
+            "color": "",
+            "filters": []
+          },
+          "tableColor": {
+            "color": "",
+            "backgroundColor": "",
+            "filters": []
+          },
+          "unit": "",
+          "dateFormat": {},
+          "flash": [],
+          "imageData": []
+        },
+        "showMissingTime": false,
+        "metric": 0,
+        "counterDep": "TOTAL_ROWS",
+        "repeatCal": true,
+        "formatStyle": 0,
+        "formatDecimal": 0,
+        "numLevel": 0,
+        "numSeparators": false,
+        "used": true,
+        "drillDimensions": {}
+      },
+      "d85a0347a5dd1ab8": {
+        "name": "商品数量",
+        "type": 2,
+        "notShowNull": false,
+        "id": "d85a0347a5dd1ab8",
+        "fieldId": "7d1c3c496b7249b586bdf17cfe00cf41_[5546][54c1][6570][91cf]",
+        "toCountType": 0,
+        "group": {
+          "type": 3
+        },
+        "calculation": {
+          "type": 0,
+          "value": 0
+        },
+        "settings": {
+          "trendLine": [],
+          "cordon": [],
+          "categoryAxis": {
+            "title": {
+              "displayed": false,
+              "modified": false
+            }
+          },
+          "valueAxis": {
+            "reversed": false,
+            "log": false,
+            "sharedDomain": true
+          },
+          "annotate": [],
+          "size": 0,
+          "stack": false,
+          "formatStyle": 1,
+          "formatDecimal": -1,
+          "numLevel": 1,
+          "showType": 0,
+          "numSeparators": true,
+          "showHeaderPercent": false,
+          "showSum": true,
+          "tableShape": {
+            "shape": -1,
+            "color": "",
+            "filters": []
+          },
+          "tableColor": {
+            "color": "",
+            "backgroundColor": "",
+            "filters": []
+          },
+          "unit": "",
+          "dateFormat": {},
+          "flash": [],
+          "imageData": []
+        },
+        "showMissingTime": false,
+        "metric": 0,
+        "counterDep": "TOTAL_ROWS",
+        "repeatCal": true,
+        "formatStyle": 0,
+        "formatDecimal": 0,
+        "numLevel": 0,
+        "numSeparators": false,
+        "used": true,
+        "drillDimensions": {}
+      },
+      "e4790dec3ad5a615": {
+        "name": "订单量",
+        "type": 2,
+        "notShowNull": false,
+        "id": "e4790dec3ad5a615",
+        "fieldId": "7d1c3c496b7249b586bdf17cfe00cf41_[8ba2][5355][91cf]",
+        "toCountType": 0,
+        "group": {
+          "type": 3
+        },
+        "calculation": {
+          "type": 0,
+          "value": 0
+        },
+        "settings": {
+          "trendLine": [],
+          "cordon": [],
+          "categoryAxis": {
+            "title": {
+              "displayed": false,
+              "modified": false
+            }
+          },
+          "valueAxis": {
+            "reversed": false,
+            "log": false,
+            "sharedDomain": true
+          },
+          "annotate": [],
+          "size": 0,
+          "stack": false,
+          "formatStyle": 1,
+          "formatDecimal": -1,
+          "numLevel": 1,
+          "showType": 0,
+          "numSeparators": true,
+          "showHeaderPercent": false,
+          "showSum": true,
+          "tableShape": {
+            "shape": -1,
+            "color": "",
+            "filters": []
+          },
+          "tableColor": {
+            "color": "",
+            "backgroundColor": "",
+            "filters": []
+          },
+          "unit": "",
+          "dateFormat": {},
+          "flash": [],
+          "imageData": []
+        },
+        "showMissingTime": false,
+        "metric": 0,
+        "counterDep": "TOTAL_ROWS",
+        "repeatCal": true,
+        "formatStyle": 0,
+        "formatDecimal": 0,
+        "numLevel": 0,
+        "numSeparators": false,
+        "used": true,
+        "drillDimensions": {}
+      },
+      "2872f48f1e6c7f05": {
+        "name": "一次毛利",
+        "type": 2,
+        "notShowNull": false,
+        "id": "2872f48f1e6c7f05",
+        "fieldId": "7d1c3c496b7249b586bdf17cfe00cf41_[4e00][6b21][6bdb][5229]",
+        "toCountType": 0,
+        "group": {
+          "type": 3
+        },
+        "calculation": {
+          "type": 0,
+          "value": 0
+        },
+        "settings": {
+          "trendLine": [],
+          "cordon": [],
+          "categoryAxis": {
+            "title": {
+              "displayed": false,
+              "modified": false
+            }
+          },
+          "valueAxis": {
+            "reversed": false,
+            "log": false,
+            "sharedDomain": true
+          },
+          "annotate": [],
+          "size": 0,
+          "stack": false,
+          "formatStyle": 1,
+          "formatDecimal": -1,
+          "numLevel": 1,
+          "showType": 0,
+          "numSeparators": true,
+          "showHeaderPercent": false,
+          "showSum": true,
+          "tableShape": {
+            "shape": -1,
+            "color": "",
+            "filters": []
+          },
+          "tableColor": {
+            "color": "",
+            "backgroundColor": "",
+            "filters": []
+          },
+          "unit": "",
+          "dateFormat": {},
+          "flash": [],
+          "imageData": []
+        },
+        "showMissingTime": false,
+        "metric": 0,
+        "counterDep": "TOTAL_ROWS",
+        "repeatCal": true,
+        "formatStyle": 0,
+        "formatDecimal": 0,
+        "numLevel": 0,
+        "numSeparators": false,
+        "used": true,
+        "drillDimensions": {}
+      },
+      "6106abd9775703f0": {
+        "name": "SKU一次毛利率",
+        "type": 5,
+        "notShowNull": false,
+        "id": "6106abd9775703f0",
+        "fieldId": "edaa297033aa46ab",
+        "toCountType": 0,
+        "group": {
+          "type": 3
+        },
+        "calculation": {
+          "type": 0,
+          "value": 0
+        },
+        "settings": {
+          "trendLine": [],
+          "cordon": [],
+          "categoryAxis": {
+            "title": {
+              "displayed": false,
+              "modified": false
+            }
+          },
+          "valueAxis": {
+            "reversed": false,
+            "log": false,
+            "sharedDomain": true
+          },
+          "annotate": [],
+          "size": 0,
+          "stack": false,
+          "formatStyle": 1,
+          "formatDecimal": -1,
+          "numLevel": 1,
+          "showType": 0,
+          "numSeparators": true,
+          "showHeaderPercent": false,
+          "showSum": true,
+          "tableShape": {
+            "shape": -1,
+            "color": "",
+            "filters": []
+          },
+          "tableColor": {
+            "color": "",
+            "backgroundColor": "",
+            "filters": []
+          },
+          "unit": "",
+          "dateFormat": {},
+          "flash": [],
+          "imageData": []
+        },
+        "showMissingTime": false,
+        "metric": 0,
+        "counterDep": "TOTAL_ROWS",
+        "repeatCal": true,
+        "formatStyle": 0,
+        "formatDecimal": 0,
+        "numLevel": 0,
+        "numSeparators": false,
+        "used": true,
+        "drillDimensions": {}
+      },
+      "c1a5aae9dacec1f3": {
+        "name": "店铺",
+        "type": 1,
+        "notShowNull": false,
+        "id": "c1a5aae9dacec1f3",
+        "fieldId": "7d1c3c496b7249b586bdf17cfe00cf41_[5e97][94fa]",
+        "toCountType": 0,
+        "group": {
+          "type": 11
+        },
+        "calculation": {
+          "type": 0,
+          "value": 0
+        },
+        "settings": {
+          "trendLine": [],
+          "cordon": [],
+          "categoryAxis": {
+            "title": {
+              "displayed": false,
+              "modified": false
+            }
+          },
+          "valueAxis": {
+            "reversed": false,
+            "log": false,
+            "sharedDomain": true
+          },
+          "annotate": [],
+          "size": 0,
+          "stack": false,
+          "formatStyle": 1,
+          "formatDecimal": -1,
+          "numLevel": 1,
+          "showType": 0,
+          "numSeparators": true,
+          "showHeaderPercent": false,
+          "showSum": false,
+          "tableShape": {
+            "shape": -1,
+            "color": "",
+            "filters": []
+          },
+          "tableColor": {
+            "color": "",
+            "backgroundColor": "",
+            "filters": []
+          },
+          "unit": "",
+          "dateFormat": {},
+          "flash": [],
+          "imageData": []
+        },
+        "showMissingTime": false,
+        "metric": 0,
+        "counterDep": "TOTAL_ROWS",
+        "repeatCal": true,
+        "formatStyle": 0,
+        "formatDecimal": 0,
+        "numLevel": 0,
+        "numSeparators": false,
+        "used": true,
+        "drillDimensions": {}
+      },
+      "4a70099aed96f810": {
+        "name": "集团",
+        "type": 1,
+        "notShowNull": false,
+        "id": "4a70099aed96f810",
+        "fieldId": "7d1c3c496b7249b586bdf17cfe00cf41_[96c6][56e2]",
+        "toCountType": 0,
+        "group": {
+          "type": 11
+        },
+        "calculation": {
+          "type": 0,
+          "value": 0
+        },
+        "settings": {
+          "trendLine": [],
+          "cordon": [],
+          "categoryAxis": {
+            "title": {
+              "displayed": false,
+              "title": "集团",
+              "modified": false
+            }
+          },
+          "valueAxis": {
+            "reversed": false,
+            "log": false,
+            "sharedDomain": true
+          },
+          "annotate": [],
+          "size": 0,
+          "stack": false,
+          "formatStyle": 1,
+          "formatDecimal": -1,
+          "numLevel": 1,
+          "showType": 0,
+          "numSeparators": true,
+          "showHeaderPercent": false,
+          "showSum": false,
+          "tableShape": {
+            "shape": -1,
+            "color": "",
+            "filters": []
+          },
+          "tableColor": {
+            "color": "",
+            "backgroundColor": "",
+            "filters": []
+          },
+          "unit": "",
+          "dateFormat": {},
+          "flash": [],
+          "imageData": []
+        },
+        "showMissingTime": false,
+        "metric": 0,
+        "counterDep": "TOTAL_ROWS",
+        "repeatCal": true,
+        "formatStyle": 0,
+        "formatDecimal": 0,
+        "numLevel": 0,
+        "numSeparators": false,
+        "used": true,
+        "drillDimensions": {}
+      },
+      "6cba00b1871a462e": {
+        "name": "主SKU",
+        "type": 1,
+        "notShowNull": false,
+        "id": "6cba00b1871a462e",
+        "fieldId": "7d1c3c496b7249b586bdf17cfe00cf41_[4e3b]SKU",
+        "toCountType": 0,
+        "group": {
+          "type": 11
+        },
+        "calculation": {
+          "type": 0,
+          "value": 0
+        },
+        "settings": {
+          "trendLine": [],
+          "cordon": [],
+          "categoryAxis": {
+            "title": {
+              "displayed": false,
+              "modified": false
+            }
+          },
+          "valueAxis": {
+            "reversed": false,
+            "log": false,
+            "sharedDomain": true
+          },
+          "annotate": [],
+          "size": 0,
+          "stack": false,
+          "formatStyle": 1,
+          "formatDecimal": -1,
+          "numLevel": 1,
+          "showType": 0,
+          "numSeparators": true,
+          "showHeaderPercent": false,
+          "showSum": false,
+          "tableShape": {
+            "shape": -1,
+            "color": "",
+            "filters": []
+          },
+          "tableColor": {
+            "color": "",
+            "backgroundColor": "",
+            "filters": []
+          },
+          "unit": "",
+          "dateFormat": {},
+          "flash": [],
+          "imageData": []
+        },
+        "showMissingTime": false,
+        "metric": 0,
+        "counterDep": "TOTAL_ROWS",
+        "repeatCal": true,
+        "formatStyle": 0,
+        "formatDecimal": 0,
+        "numLevel": 0,
+        "numSeparators": false,
+        "used": true,
+        "drillDimensions": {}
+      },
+      "03d426def39e39d9": {
+        "name": "审核时间",
+        "type": 3,
+        "notShowNull": false,
+        "id": "03d426def39e39d9",
+        "fieldId": "7d1c3c496b7249b586bdf17cfe00cf41_[5ba1][6838][65f6][95f4]",
+        "toCountType": 0,
+        "group": {
+          "type": 5
+        },
+        "calculation": {
+          "type": 0,
+          "value": 0
+        },
+        "settings": {
+          "trendLine": [],
+          "cordon": [],
+          "categoryAxis": {
+            "title": {
+              "displayed": false,
+              "modified": false
+            }
+          },
+          "valueAxis": {
+            "reversed": false,
+            "log": false,
+            "sharedDomain": true
+          },
+          "annotate": [],
+          "size": 0,
+          "stack": false,
+          "formatStyle": 1,
+          "formatDecimal": -1,
+          "numLevel": 1,
+          "showType": 0,
+          "numSeparators": true,
+          "showHeaderPercent": false,
+          "showSum": false,
+          "tableShape": {
+            "shape": -1,
+            "color": "",
+            "filters": []
+          },
+          "tableColor": {
+            "color": "",
+            "backgroundColor": "",
+            "filters": []
+          },
+          "unit": "",
+          "dateFormat": {},
+          "flash": [],
+          "imageData": []
+        },
+        "showMissingTime": false,
+        "metric": 0,
+        "counterDep": "TOTAL_ROWS",
+        "repeatCal": true,
+        "formatStyle": 0,
+        "formatDecimal": 0,
+        "numLevel": 0,
+        "numSeparators": false,
+        "used": true,
+        "drillDimensions": {}
+      },
+      "b7e83d4cd9f4514e": {
+        "name": "合单率SKU",
+        "type": 5,
+        "notShowNull": false,
+        "id": "b7e83d4cd9f4514e",
+        "fieldId": "29fb152f0a0a5361",
+        "toCountType": 0,
+        "group": {
+          "type": 3
+        },
+        "calculation": {
+          "type": 0,
+          "value": 0
+        },
+        "settings": {
+          "trendLine": [],
+          "cordon": [],
+          "categoryAxis": {
+            "title": {
+              "displayed": false,
+              "modified": false
+            }
+          },
+          "valueAxis": {
+            "reversed": false,
+            "log": false,
+            "sharedDomain": true
+          },
+          "annotate": [],
+          "size": 0,
+          "stack": false,
+          "formatStyle": 1,
+          "formatDecimal": -1,
+          "numLevel": 1,
+          "showType": 0,
+          "numSeparators": true,
+          "showHeaderPercent": false,
+          "showSum": false,
+          "tableShape": {
+            "shape": -1,
+            "color": "",
+            "filters": []
+          },
+          "tableColor": {
+            "color": "",
+            "backgroundColor": "",
+            "filters": []
+          },
+          "unit": "",
+          "dateFormat": {},
+          "flash": [],
+          "imageData": []
+        },
+        "showMissingTime": false,
+        "metric": 0,
+        "counterDep": "TOTAL_ROWS",
+        "repeatCal": true,
+        "formatStyle": 0,
+        "formatDecimal": 0,
+        "numLevel": 0,
+        "numSeparators": false,
+        "used": true,
+        "drillDimensions": {}
+      },
+      "33eb8190044e4dc3": {
+        "name": "订单特性",
+        "type": 1,
+        "notShowNull": false,
+        "id": "33eb8190044e4dc3",
+        "fieldId": "7d1c3c496b7249b586bdf17cfe00cf41_[8ba2][5355][7279][6027]",
+        "toCountType": 0,
+        "group": {
+          "type": 11
+        },
+        "calculation": {
+          "type": 0,
+          "value": 0
+        },
+        "settings": {
+          "trendLine": [],
+          "cordon": [],
+          "categoryAxis": {
+            "title": {
+              "displayed": false,
+              "modified": false
+            }
+          },
+          "valueAxis": {
+            "reversed": false,
+            "log": false,
+            "sharedDomain": true
+          },
+          "annotate": [],
+          "size": 0,
+          "stack": false,
+          "formatStyle": 1,
+          "formatDecimal": -1,
+          "numLevel": 1,
+          "showType": 0,
+          "numSeparators": true,
+          "showHeaderPercent": false,
+          "showSum": false,
+          "tableShape": {
+            "shape": -1,
+            "color": "",
+            "filters": []
+          },
+          "tableColor": {
+            "color": "",
+            "backgroundColor": "",
+            "filters": []
+          },
+          "unit": "",
+          "dateFormat": {},
+          "flash": [],
+          "imageData": []
+        },
+        "showMissingTime": false,
+        "metric": 0,
+        "counterDep": "TOTAL_ROWS",
+        "repeatCal": true,
+        "formatStyle": 0,
+        "formatDecimal": 0,
+        "numLevel": 0,
+        "numSeparators": false,
+        "used": true,
+        "drillDimensions": {}
+      },
+      "2dd812f3377a1e8a": {
+        "name": "商品成本",
+        "type": 2,
+        "notShowNull": false,
+        "id": "2dd812f3377a1e8a",
+        "fieldId": "7d1c3c496b7249b586bdf17cfe00cf41_[5546][54c1][6210][672c]",
+        "toCountType": 0,
+        "group": {
+          "type": 3
+        },
+        "calculation": {
+          "type": 0,
+          "value": 0
+        },
+        "settings": {
+          "trendLine": [],
+          "cordon": [],
+          "categoryAxis": {
+            "title": {
+              "displayed": false,
+              "modified": false
+            }
+          },
+          "valueAxis": {
+            "reversed": false,
+            "log": false,
+            "sharedDomain": true
+          },
+          "annotate": [],
+          "size": 0,
+          "stack": false,
+          "formatStyle": 1,
+          "formatDecimal": -1,
+          "numLevel": 1,
+          "showType": 0,
+          "numSeparators": true,
+          "showHeaderPercent": false,
+          "showSum": true,
+          "tableShape": {
+            "shape": -1,
+            "color": "",
+            "filters": []
+          },
+          "tableColor": {
+            "color": "",
+            "backgroundColor": "",
+            "filters": []
+          },
+          "unit": "",
+          "dateFormat": {},
+          "flash": [],
+          "imageData": []
+        },
+        "showMissingTime": false,
+        "metric": 0,
+        "counterDep": "TOTAL_ROWS",
+        "repeatCal": true,
+        "formatStyle": 0,
+        "formatDecimal": 0,
+        "numLevel": 0,
+        "numSeparators": false,
+        "used": true,
+        "drillDimensions": {}
+      },
+      "d0687d4abd9cad16": {
+        "name": "预估重量",
+        "type": 2,
+        "notShowNull": false,
+        "id": "d0687d4abd9cad16",
+        "fieldId": "7d1c3c496b7249b586bdf17cfe00cf41_[9884][4f30][91cd][91cf]",
+        "toCountType": 0,
+        "group": {
+          "type": 3
+        },
+        "calculation": {
+          "type": 0,
+          "value": 0
+        },
+        "settings": {
+          "trendLine": [],
+          "cordon": [],
+          "categoryAxis": {
+            "title": {
+              "displayed": false,
+              "modified": false
+            }
+          },
+          "valueAxis": {
+            "reversed": false,
+            "log": false,
+            "sharedDomain": true
+          },
+          "annotate": [],
+          "size": 0,
+          "stack": false,
+          "formatStyle": 1,
+          "formatDecimal": -1,
+          "numLevel": 1,
+          "showType": 0,
+          "numSeparators": true,
+          "showHeaderPercent": false,
+          "showSum": true,
+          "tableShape": {
+            "shape": -1,
+            "color": "",
+            "filters": []
+          },
+          "tableColor": {
+            "color": "",
+            "backgroundColor": "",
+            "filters": []
+          },
+          "unit": "",
+          "dateFormat": {},
+          "flash": [],
+          "imageData": []
+        },
+        "showMissingTime": false,
+        "metric": 0,
+        "counterDep": "TOTAL_ROWS",
+        "repeatCal": true,
+        "formatStyle": 0,
+        "formatDecimal": 0,
+        "numLevel": 0,
+        "numSeparators": false,
+        "used": true,
+        "drillDimensions": {}
+      }
+    },
+    "allData": true,
+    "drillOrder": [],
+    "resultFilter": [
+      "4a70099aed96f810"
+    ],
+    "dimensionGroups": {
+      "7d1c3c496b7249b586bdf17cfe00cf41_ITEMID_11": {
+        "group": "7d1c3c496b7249b586bdf17cfe00cf41_ITEMID_11",
+        "dimensionIds": [
+          "28e5f5c5912370cb"
+        ]
+      },
+      "7d1c3c496b7249b586bdf17cfe00cf41_[603b][6536][5165]_3_0": {
+        "group": "7d1c3c496b7249b586bdf17cfe00cf41_[603b][6536][5165]_3_0",
+        "dimensionIds": [
+          "cffae21485996cbb"
+        ]
+      },
+      "7d1c3c496b7249b586bdf17cfe00cf41_[5546][54c1][6570][91cf]_3_0": {
+        "group": "7d1c3c496b7249b586bdf17cfe00cf41_[5546][54c1][6570][91cf]_3_0",
+        "dimensionIds": [
+          "d85a0347a5dd1ab8"
+        ]
+      },
+      "7d1c3c496b7249b586bdf17cfe00cf41_[8ba2][5355][91cf]_3_0": {
+        "group": "7d1c3c496b7249b586bdf17cfe00cf41_[8ba2][5355][91cf]_3_0",
+        "dimensionIds": [
+          "e4790dec3ad5a615"
+        ]
+      },
+      "7d1c3c496b7249b586bdf17cfe00cf41_[4e00][6b21][6bdb][5229]_3_0": {
+        "group": "7d1c3c496b7249b586bdf17cfe00cf41_[4e00][6b21][6bdb][5229]_3_0",
+        "dimensionIds": [
+          "2872f48f1e6c7f05"
+        ]
+      },
+      "edaa297033aa46ab_3_0": {
+        "group": "edaa297033aa46ab_3_0",
+        "dimensionIds": [
+          "6106abd9775703f0"
+        ]
+      },
+      "7d1c3c496b7249b586bdf17cfe00cf41_[5e97][94fa]_11": {
+        "group": "7d1c3c496b7249b586bdf17cfe00cf41_[5e97][94fa]_11",
+        "dimensionIds": [
+          "c1a5aae9dacec1f3"
+        ]
+      },
+      "7d1c3c496b7249b586bdf17cfe00cf41_[96c6][56e2]_11": {
+        "group": "7d1c3c496b7249b586bdf17cfe00cf41_[96c6][56e2]_11",
+        "dimensionIds": [
+          "4a70099aed96f810"
+        ]
+      },
+      "7d1c3c496b7249b586bdf17cfe00cf41_[4e3b]SKU_11": {
+        "group": "7d1c3c496b7249b586bdf17cfe00cf41_[4e3b]SKU_11",
+        "dimensionIds": [
+          "6cba00b1871a462e"
+        ]
+      },
+      "7d1c3c496b7249b586bdf17cfe00cf41_[5ba1][6838][65f6][95f4]_5": {
+        "group": "7d1c3c496b7249b586bdf17cfe00cf41_[5ba1][6838][65f6][95f4]_5",
+        "dimensionIds": [
+          "03d426def39e39d9"
+        ]
+      },
+      "29fb152f0a0a5361_3_0": {
+        "group": "29fb152f0a0a5361_3_0",
+        "dimensionIds": [
+          "b7e83d4cd9f4514e"
+        ]
+      },
+      "7d1c3c496b7249b586bdf17cfe00cf41_[8ba2][5355][7279][6027]_11": {
+        "group": "7d1c3c496b7249b586bdf17cfe00cf41_[8ba2][5355][7279][6027]_11",
+        "dimensionIds": [
+          "33eb8190044e4dc3"
+        ]
+      },
+      "7d1c3c496b7249b586bdf17cfe00cf41_[5546][54c1][6210][672c]_3_0": {
+        "group": "7d1c3c496b7249b586bdf17cfe00cf41_[5546][54c1][6210][672c]_3_0",
+        "dimensionIds": [
+          "2dd812f3377a1e8a"
+        ]
+      },
+      "7d1c3c496b7249b586bdf17cfe00cf41_[9884][4f30][91cd][91cf]_3_0": {
+        "group": "7d1c3c496b7249b586bdf17cfe00cf41_[9884][4f30][91cd][91cf]_3_0",
+        "dimensionIds": [
+          "d0687d4abd9cad16"
+        ]
+      }
+    },
+    "legendFilter": null,
+    "columnSize": [
+      137,
+      122,
+      151,
+      122,
+      0,
+      151,
+      121,
+      137,
+      137,
+      145,
+      120,
+      0,
+      0
+    ],
+    "regionColumnSize": [
+      532
+    ],
+    "equallyDivideColumn": false,
+    "uploadedImages": [],
+    "widgetParameters": [],
+    "manualPreview": false,
+    "queryInfo": {
+      "mobile": false,
+      "bounds": {
+        "left": 160.417,
+        "top": 88.333,
+        "width": 577.5,
+        "height": 684.583
+      },
+      "previewCalLimit": 1,
+      "userId": "68c916a2-3c97-4a1e-9c86-82314316ece5",
+      "userName": "徐仔云",
+      "sessionId": "e096c42b-1016-49c7-9ac4-becfe3a00dea",
+      "subjectId": "2c2a8763b06d43168c6f38b776936b26",
+      "globalFilter": null,
+      "reportName": "Shopee周数据明细下载-集团八部专用",
+      "reportId": "35d21769f7a14a6191cdc4f4a211a04a",
+      "title": "ItemID财务数据八部",
+      "widgetIdValueMap": {
+        "0febf1d1915d1b43": {
+          "settings": {
+            "transmitLinkages": false,
+            "titleHeight": 0,
+            "nameStyleType": 1,
+            "innerGap": {
+              "topGap": -1,
+              "bottomGap": -1,
+              "leftGap": -1,
+              "rightGap": -1
+            }
+          },
+          "timeStamp": 1745461044637,
+          "name": "<div style=\"background: \" class=\"fm-block-wrapper\"><div class=\"fm-block-container\"><p class=\"align-left\">时间周期-SKU</p></div></div>",
+          "queryInfo": {
+            "mobile": false,
+            "linkages": {},
+            "bounds": {
+              "left": 160.417,
+              "top": 0,
+              "width": 256.667,
+              "height": 88.333
+            },
+            "previewCalLimit": 1,
+            "userId": "68c916a2-3c97-4a1e-9c86-82314316ece5",
+            "userName": "徐仔云",
+            "sessionId": "e096c42b-1016-49c7-9ac4-becfe3a00dea",
+            "subjectId": "2c2a8763b06d43168c6f38b776936b26",
+            "reportName": "Shopee周数据明细下载-集团八部专用",
+            "reportId": "35d21769f7a14a6191cdc4f4a211a04a",
+            "title": "时间周期-SKU",
+            "reportWidgetId": "0febf1d1915d1b43"
+          },
+          "saveExtraInfo": {
+            "usedMeasures": [],
+            "usedOriginalFields": [
+              "7d1c3c496b7249b586bdf17cfe00cf41_[65f6][95f4][5468][671f]"
+            ]
+          },
+          "manualPreview": false,
+          "view": {
+            "10000": [
+              "c07ba122e40ed58d"
+            ],
+            "20000": [],
+            "30000": []
+          },
+          "dimensions": {
+            "c07ba122e40ed58d": {
+              "name": "时间周期",
+              "type": 1,
+              "notShowNull": false,
+              "id": "c07ba122e40ed58d",
+              "fieldId": "7d1c3c496b7249b586bdf17cfe00cf41_[65f6][95f4][5468][671f]",
+              "toCountType": 0,
+              "sort": {
+                "targetFieldId": "7d1c3c496b7249b586bdf17cfe00cf41_[65f6][95f4][5468][671f]",
+                "type": 6
+              },
+              "showMissingTime": false,
+              "metric": 0,
+              "repeatCal": true,
+              "formatStyle": 0,
+              "formatDecimal": 0,
+              "numLevel": 0,
+              "numSeparators": false,
+              "used": true
+            }
+          },
+          "page": 0,
+          "realData": false,
+          "allData": false,
+          "templateChartColorChange": false,
+          "detailSetting": false,
+          "tableWidth": 0,
+          "equallyDivideColumn": false,
+          "controlRange": {
+            "type": 1,
+            "value": []
+          },
+          "useCustom": false,
+          "useOptionRange": false,
+          "useWidgetParameter": false,
+          "singleSelect": 1,
+          "sort": "asc",
+          "allowPassDefault": false,
+          "value": {
+            "type": 1,
+            "value": [
+              "0528-0603"
+            ],
+            "assist": [
+              "0101-0107",
+              "0108-0114",
+              "0115-0121",
+              "0122-0128",
+              "0129-0204",
+              "0205-0211",
+              "0212-0218",
+              "0219-0225",
+              "0226-0304",
+              "0305-0311",
+              "0312-0318",
+              "0319-0325",
+              "0326-0401",
+              "0402-0408",
+              "0409-0415",
+              "0416-0422",
+              "0423-0429",
+              "0430-0506",
+              "0507-0513",
+              "0514-0520",
+              "0521-0527",
+              "0626-0702",
+              "0703-0709",
+              "0710-0716",
+              "0717-0723",
+              "0724-0730",
+              "0731-0806",
+              "0807-0813",
+              "0814-0820",
+              "0821-0827",
+              "0828-0903",
+              "0904-0910",
+              "0911-0917",
+              "0918-0924",
+              "0925-1001",
+              "1002-1008",
+              "1009-1015",
+              "1016-1022",
+              "1023-1029",
+              "1030-1105",
+              "1106-1112",
+              "1113-1119",
+              "1120-1126",
+              "1127-1203",
+              "1204-1210",
+              "1211-1217",
+              "1218-1224",
+              "1225-1231"
+            ]
+          },
+          "parameterFields": [],
+          "customValue": [],
+          "type": 32,
+          "mobile": false,
+          "showTitle": true,
+          "allowOverlap": false,
+          "openJump": true,
+          "wId": "0febf1d1915d1b43",
+          "tableName": [
+            "7d1c3c496b7249b586bdf17cfe00cf41"
+          ],
+          "measures": [],
+          "useParameter": false,
+          "parameterValue": [],
+          "bindParameters": [],
+          "addTime": 1745461240554
+        },
+        "89cdfe1ef15efff5": {
+          "settings": {
+            "transmitLinkages": false,
+            "titleHeight": 0,
+            "nameStyleType": 1,
+            "innerGap": {
+              "topGap": -1,
+              "bottomGap": -1,
+              "leftGap": -1,
+              "rightGap": -1
+            }
+          },
+          "timeStamp": 1751627553909,
+          "name": "<div style=\"background: \" class=\"fm-block-wrapper\"><div class=\"fm-block-container\"><p class=\"align-left\">时间周期-Order</p></div></div>",
+          "queryInfo": {
+            "mobile": false,
+            "linkages": {},
+            "bounds": {
+              "left": 160.417,
+              "top": 2274.583,
+              "width": 256.667,
+              "height": 88.333
+            },
+            "previewCalLimit": 1,
+            "userId": "68c916a2-3c97-4a1e-9c86-82314316ece5",
+            "userName": "徐仔云",
+            "sessionId": "e096c42b-1016-49c7-9ac4-becfe3a00dea",
+            "subjectId": "2c2a8763b06d43168c6f38b776936b26",
+            "reportName": "Shopee周数据明细下载-集团八部专用",
+            "reportId": "35d21769f7a14a6191cdc4f4a211a04a",
+            "reportWidgetId": "89cdfe1ef15efff5"
+          },
+          "saveExtraInfo": {
+            "usedMeasures": [],
+            "usedOriginalFields": [
+              "32b9291df7dc4ec98fbe714f3461f8e7_[65f6][95f4][5468][671f]"
+            ]
+          },
+          "manualPreview": false,
+          "view": {
+            "10000": [
+              "d5920e1b0043ebd0"
+            ],
+            "20000": [],
+            "30000": []
+          },
+          "dimensions": {
+            "d5920e1b0043ebd0": {
+              "name": "时间周期",
+              "type": 1,
+              "notShowNull": false,
+              "id": "d5920e1b0043ebd0",
+              "fieldId": "32b9291df7dc4ec98fbe714f3461f8e7_[65f6][95f4][5468][671f]",
+              "toCountType": 0,
+              "sort": {
+                "targetFieldId": "32b9291df7dc4ec98fbe714f3461f8e7_[65f6][95f4][5468][671f]",
+                "type": 6
+              },
+              "showMissingTime": false,
+              "metric": 0,
+              "repeatCal": true,
+              "formatStyle": 0,
+              "formatDecimal": 0,
+              "numLevel": 0,
+              "numSeparators": false,
+              "used": true
+            }
+          },
+          "page": 0,
+          "realData": false,
+          "allData": false,
+          "templateChartColorChange": false,
+          "detailSetting": false,
+          "tableWidth": 0,
+          "equallyDivideColumn": false,
+          "controlRange": {
+            "type": 1,
+            "value": []
+          },
+          "useCustom": false,
+          "useOptionRange": false,
+          "useWidgetParameter": false,
+          "singleSelect": 1,
+          "sort": "asc",
+          "allowPassDefault": false,
+          "value": {
+            "type": 1,
+            "value": [
+              "0423-0429"
+            ],
+            "chooseType": 0,
+            "assist": [
+              "0619-0625",
+              "0101-0107",
+              "0108-0114",
+              "0115-0121",
+              "0122-0128",
+              "0129-0204",
+              "0205-0211",
+              "0212-0218",
+              "0219-0225",
+              "0226-0304",
+              "0305-0311",
+              "0312-0318",
+              "0319-0325",
+              "0326-0401",
+              "0402-0408",
+              "0409-0415",
+              "0416-0422",
+              "0626-0702",
+              "0703-0709",
+              "0710-0716",
+              "0717-0723",
+              "0724-0730",
+              "0731-0806",
+              "0807-0813",
+              "0814-0820",
+              "0821-0827",
+              "0828-0903",
+              "0904-0910",
+              "0911-0917",
+              "0918-0924",
+              "0925-1001",
+              "1002-1008",
+              "1009-1015",
+              "1016-1022",
+              "1023-1029",
+              "1030-1105",
+              "1106-1112",
+              "1113-1119",
+              "1120-1126",
+              "1127-1203",
+              "1204-1210",
+              "1211-1217",
+              "1218-1224",
+              "1225-1231"
+            ]
+          },
+          "parameterFields": [],
+          "customValue": [],
+          "type": 32,
+          "mobile": false,
+          "showTitle": true,
+          "allowOverlap": false,
+          "openJump": true,
+          "wId": "89cdfe1ef15efff5",
+          "tableName": [
+            "32b9291df7dc4ec98fbe714f3461f8e7"
+          ],
+          "measures": [],
+          "useParameter": false,
+          "parameterValue": [],
+          "bindParameters": [],
+          "addTime": 1751627628666
+        }
+      },
+      "widgetId": "1aece3fa7ecd46caa4b18d617a5f62f3",
+      "reportWidgetId": "fb3d6f3468a10336",
+      "measureTables": {
+        "29fb152f0a0a5361": {
+          "id": "29fb152f0a0a5361",
+          "measureId": "afb79b24cdc06d31",
+          "tables": [
+            "7d1c3c496b7249b586bdf17cfe00cf41"
+          ],
+          "engineType": "spider"
+        },
+        "edaa297033aa46ab": {
+          "id": "edaa297033aa46ab",
+          "measureId": "58f13ad96df5450d",
+          "tables": [
+            "7d1c3c496b7249b586bdf17cfe00cf41"
+          ],
+          "engineType": "spider"
+        },
+        "7d1c3c496b7249b586bdf17cfe00cf41_[96c6][56e2]": {
+          "id": "7d1c3c496b7249b586bdf17cfe00cf41_[96c6][56e2]",
+          "measureId": "68f42cfa76801fb8",
+          "tables": [
+            "7d1c3c496b7249b586bdf17cfe00cf41"
+          ],
+          "engineType": "spider"
+        },
+        "7d1c3c496b7249b586bdf17cfe00cf41_[603b][6536][5165]": {
+          "id": "7d1c3c496b7249b586bdf17cfe00cf41_[603b][6536][5165]",
+          "tables": [
+            "7d1c3c496b7249b586bdf17cfe00cf41"
+          ],
+          "engineType": "spider"
+        },
+        "7d1c3c496b7249b586bdf17cfe00cf41_[8ba2][5355][91cf]": {
+          "id": "7d1c3c496b7249b586bdf17cfe00cf41_[8ba2][5355][91cf]",
+          "tables": [
+            "7d1c3c496b7249b586bdf17cfe00cf41"
+          ],
+          "engineType": "spider"
+        },
+        "7d1c3c496b7249b586bdf17cfe00cf41_[4e00][6b21][6bdb][5229]": {
+          "id": "7d1c3c496b7249b586bdf17cfe00cf41_[4e00][6b21][6bdb][5229]",
+          "tables": [
+            "7d1c3c496b7249b586bdf17cfe00cf41"
+          ],
+          "engineType": "spider"
+        },
+        "7d1c3c496b7249b586bdf17cfe00cf41_[5546][54c1][6570][91cf]": {
+          "id": "7d1c3c496b7249b586bdf17cfe00cf41_[5546][54c1][6570][91cf]",
+          "tables": [
+            "7d1c3c496b7249b586bdf17cfe00cf41"
+          ],
+          "engineType": "spider"
+        }
+      }
+    },
+    "page": 0,
+    "realData": true,
+    "templateChartColorChange": false,
+    "detailSetting": false,
+    "tableWidth": 0,
+    "selectTable": "",
+    "mobile": false,
+    "showTitle": true,
+    "allowOverlap": false,
+    "openJump": true,
+    "wId": "fb3d6f3468a10336",
+    "measures": [
+      {
+        "name": "合单率SKU",
+        "targetIds": [
+          "7d1c3c496b7249b586bdf17cfe00cf41_count-field-id",
+          "7d1c3c496b7249b586bdf17cfe00cf41_[8ba2][5355][7279][6027]"
+        ],
+        "id": "29fb152f0a0a5361",
+        "type": 97,
+        "geoType": 0,
+        "transferName": "SKU合单率",
+        "copied": false,
+        "drilled": false,
+        "drillDir": [],
+        "drillName": "",
+        "geo": {
+          "level": 0,
+          "data": null
+        },
+        "calculate": {
+          "value": "1-DEF_ADD(${7d1c3c496b7249b586bdf17cfe00cf41_count-field-id},[],[${7d1c3c496b7249b586bdf17cfe00cf41_[8ba2][5355][7279][6027]}=\"单单产品\"])/DEF_ADD(${7d1c3c496b7249b586bdf17cfe00cf41_count-field-id})",
+          "aggregate": false,
+          "type": 0
+        },
+        "measureModel": {
+          "type": 0
+        },
+        "remark": {
+          "value": ""
+        },
+        "measureType": 1,
+        "group": {
+          "summary_3": {
+            "cal": {
+              "cal_0": {
+                "sort": {
+                  "sortTarget": "29fb152f0a0a5361_3_0",
+                  "sortField": false,
+                  "type": 1
+                },
+                "repeatCal": true,
+                "settings": {
+                  "size": 0,
+                  "stack": false,
+                  "formatStyle": 3,
+                  "formatDecimal": 2,
+                  "numLevel": 1,
+                  "showType": 0,
+                  "numSeparators": true,
+                  "showHeaderPercent": false,
+                  "showSum": true,
+                  "unit": ""
+                },
+                "useDataBar": false,
+                "showMissingTime": false
+              }
+            },
+            "repeatCal": true,
+            "useDataBar": false,
+            "showMissingTime": false
+          }
+        }
+      },
+      {
+        "name": "SKU一次毛利率",
+        "targetIds": [
+          "7d1c3c496b7249b586bdf17cfe00cf41_[4e00][6b21][6bdb][5229]",
+          "7d1c3c496b7249b586bdf17cfe00cf41_[603b][6536][5165]"
+        ],
+        "id": "edaa297033aa46ab",
+        "type": 97,
+        "geoType": 0,
+        "transferName": "SKU一次毛利率",
+        "copied": false,
+        "drilled": false,
+        "drillDir": [],
+        "drillName": "",
+        "geo": {
+          "level": 0,
+          "data": null
+        },
+        "calculate": {
+          "value": "SUM_AGG(${7d1c3c496b7249b586bdf17cfe00cf41_[4e00][6b21][6bdb][5229]})/SUM_AGG(${7d1c3c496b7249b586bdf17cfe00cf41_[603b][6536][5165]})",
+          "aggregate": true,
+          "type": 0
+        },
+        "measureModel": {
+          "type": 0
+        },
+        "remark": {
+          "value": ""
+        },
+        "measureType": 1,
+        "group": {
+          "summary_3": {
+            "cal": {
+              "cal_0": {
+                "sort": {
+                  "sortTarget": "29fb152f0a0a5361_3_0",
+                  "sortField": false,
+                  "type": 3
+                },
+                "repeatCal": true,
+                "settings": {
+                  "size": 0,
+                  "stack": false,
+                  "formatStyle": 3,
+                  "formatDecimal": 2,
+                  "numLevel": 1,
+                  "showType": 0,
+                  "numSeparators": true,
+                  "showHeaderPercent": false,
+                  "showSum": true,
+                  "unit": ""
+                },
+                "useDataBar": false,
+                "showMissingTime": false
+              }
+            },
+            "repeatCal": true,
+            "useDataBar": false,
+            "showMissingTime": false
+          }
+        }
+      },
+      {
+        "name": "集团",
+        "id": "7d1c3c496b7249b586bdf17cfe00cf41_[96c6][56e2]",
+        "type": 16,
+        "geoType": 0,
+        "transferName": "集团",
+        "copied": false,
+        "drilled": false,
+        "drillDir": [
+          {
+            "id": "7d1c3c496b7249b586bdf17cfe00cf41_[96c6][56e2]",
+            "name": "集团",
+            "type": 16
+          },
+          {
+            "id": "7d1c3c496b7249b586bdf17cfe00cf41_[90e8][95e8]",
+            "name": "部门",
+            "type": 16
+          },
+          {
+            "id": "7d1c3c496b7249b586bdf17cfe00cf41_[7ec4][522b]",
+            "name": "组别",
+            "type": 16
+          },
+          {
+            "id": "7d1c3c496b7249b586bdf17cfe00cf41_[5e97][94fa]",
+            "name": "店铺",
+            "type": 16
+          }
+        ],
+        "drillName": "集团-SKU",
+        "geo": {
+          "level": 0,
+          "data": null
+        },
+        "measureModel": {
+          "type": 0
+        },
+        "remark": {
+          "value": ""
+        },
+        "measureType": 3,
+        "group": {
+          "group_11": {
+            "filter": {
+              "targetId": "7d1c3c496b7249b586bdf17cfe00cf41_[96c6][56e2]_11",
+              "filterValue": {
+                "type": 1,
+                "assist": [
+                  "集团九部",
+                  "集团一部"
+                ],
+                "value": [
+                  "集团八部"
+                ]
+              },
+              "filterType": 1
+            },
+            "repeatCal": true,
+            "useDataBar": false,
+            "showMissingTime": false,
+            "displayName": "集团",
+            "drillFields": {
+              "7d1c3c496b7249b586bdf17cfe00cf41_[90e8][95e8]": {
+                "group": {
+                  "type": 11
+                }
+              },
+              "7d1c3c496b7249b586bdf17cfe00cf41_[7ec4][522b]": {
+                "group": {
+                  "type": 11
+                }
+              },
+              "7d1c3c496b7249b586bdf17cfe00cf41_[5e97][94fa]": {
+                "group": {
+                  "type": 11
+                }
+              }
+            }
+          },
+          "group_22": {
+            "filter": {
+              "targetId": "7d1c3c496b7249b586bdf17cfe00cf41_[96c6][56e2]_22",
+              "filterValue": {
+                "type": 1,
+                "assist": [
+                  "集团九部",
+                  "集团一部"
+                ],
+                "value": [
+                  "集团八部"
+                ]
+              },
+              "filterType": 1
+            },
+            "repeatCal": true,
+            "useDataBar": false,
+            "showMissingTime": false,
+            "displayName": "集团",
+            "drillFields": {
+              "7d1c3c496b7249b586bdf17cfe00cf41_[90e8][95e8]": {
+                "group": {
+                  "type": 11
+                }
+              },
+              "7d1c3c496b7249b586bdf17cfe00cf41_[7ec4][522b]": {
+                "group": {
+                  "type": 11
+                }
+              },
+              "7d1c3c496b7249b586bdf17cfe00cf41_[5e97][94fa]": {
+                "group": {
+                  "type": 11
+                }
+              }
+            }
+          },
+          "group_23": {
+            "filter": {
+              "targetId": "7d1c3c496b7249b586bdf17cfe00cf41_[96c6][56e2]_23",
+              "filterValue": {
+                "type": 1,
+                "assist": [
+                  "集团九部",
+                  "集团一部"
+                ],
+                "value": [
+                  "集团八部"
+                ]
+              },
+              "filterType": 1
+            },
+            "repeatCal": true,
+            "useDataBar": false,
+            "showMissingTime": false,
+            "displayName": "集团",
+            "drillFields": {
+              "7d1c3c496b7249b586bdf17cfe00cf41_[90e8][95e8]": {
+                "group": {
+                  "type": 11
+                }
+              },
+              "7d1c3c496b7249b586bdf17cfe00cf41_[7ec4][522b]": {
+                "group": {
+                  "type": 11
+                }
+              },
+              "7d1c3c496b7249b586bdf17cfe00cf41_[5e97][94fa]": {
+                "group": {
+                  "type": 11
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        "id": "7d1c3c496b7249b586bdf17cfe00cf41_[603b][6536][5165]",
+        "group": {
+          "summary_3": {
+            "cal": {
+              "cal_0": {
+                "sort": {
+                  "sortTarget": "29fb152f0a0a5361_3_0",
+                  "sortField": false,
+                  "type": 3
+                },
+                "repeatCal": true,
+                "useDataBar": false,
+                "showMissingTime": false
+              }
+            },
+            "repeatCal": true,
+            "useDataBar": false,
+            "showMissingTime": false
+          }
+        },
+        "type": 32
+      },
+      {
+        "id": "7d1c3c496b7249b586bdf17cfe00cf41_[8ba2][5355][91cf]",
+        "group": {
+          "summary_3": {
+            "cal": {
+              "cal_0": {
+                "sort": {
+                  "sortTarget": "29fb152f0a0a5361_3_0",
+                  "sortField": false,
+                  "type": 3
+                },
+                "repeatCal": true,
+                "useDataBar": false,
+                "showMissingTime": false
+              }
+            },
+            "repeatCal": true,
+            "useDataBar": false,
+            "showMissingTime": false
+          }
+        },
+        "type": 32
+      },
+      {
+        "id": "7d1c3c496b7249b586bdf17cfe00cf41_[4e00][6b21][6bdb][5229]",
+        "group": {
+          "summary_3": {
+            "cal": {
+              "cal_0": {
+                "sort": {
+                  "sortTarget": "29fb152f0a0a5361_3_0",
+                  "sortField": false,
+                  "type": 3
+                },
+                "repeatCal": true,
+                "useDataBar": false,
+                "showMissingTime": false
+              }
+            },
+            "repeatCal": true,
+            "useDataBar": false,
+            "showMissingTime": false
+          }
+        },
+        "type": 32
+      },
+      {
+        "id": "7d1c3c496b7249b586bdf17cfe00cf41_[5546][54c1][6570][91cf]",
+        "group": {
+          "summary_3": {
+            "cal": {
+              "cal_0": {
+                "sort": {
+                  "sortTarget": "29fb152f0a0a5361_3_0",
+                  "sortField": false,
+                  "type": 3
+                },
+                "repeatCal": true,
+                "useDataBar": false,
+                "showMissingTime": false
+              }
+            },
+            "repeatCal": true,
+            "useDataBar": false,
+            "showMissingTime": false
+          }
+        },
+        "type": 32
+      }
+    ],
+    "addTime": 1745465520714,
+    "templateStyle": {
+      "id": "DEFAULT_LIGHT",
+      "theme": "bi-theme-default",
+      "widgetGap": 6,
+      "templateBackground": {
+        "type": "color",
+        "color": "#E8EAED",
+        "imageId": ""
+      },
+      "widgetBackground": {
+        "type": "color",
+        "color": "#FFFFFF",
+        "imageId": "",
+        "borderRadius": 0,
+        "borderSize": 0,
+        "borderColor": "#4B6082"
+      },
+      "titleBackground": {
+        "type": "color",
+        "color": "transparent",
+        "imageId": ""
+      },
+      "titleFont": {
+        "type": 2,
+        "fontFamily": "Avenir, Segoe UI, PingFangSC-Regular, \"Microsoft YaHei\"",
+        "fontSize": 14,
+        "bold": true,
+        "italic": false,
+        "underline": false,
+        "fontColor": "#091E40",
+        "fontAlign": 1
+      },
+      "chart": {
+        "chartColor": [
+          "#7093ee",
+          "#4b6082",
+          "#65bfb8",
+          "#2596a1",
+          "#f9b44f",
+          "#7a73c8",
+          "#e898a8",
+          "#e67e8d",
+          "#c7cc3c",
+          "#90ad71",
+          "#6e91b5",
+          "#72c9e5"
+        ],
+        "font": {
+          "type": 1,
+          "fontFamily": "Avenir, Segoe UI, PingFangSC-Regular, \"Microsoft YaHei\"",
+          "fontSize": 12,
+          "bold": false,
+          "italic": false,
+          "underline": false,
+          "fontColor": ""
+        },
+        "gradient": [
+          "#4FDEFF",
+          "#439DF7",
+          "#526EFA"
+        ]
+      },
+      "table": {
+        "tableStyle": 1,
+        "themeColor": "#6489D2",
+        "font": {
+          "type": 2,
+          "header": {
+            "fontFamily": "Avenir, Segoe UI, PingFangSC-Regular, \"Microsoft YaHei\"",
+            "fontSize": 12,
+            "bold": true,
+            "italic": false,
+            "underline": false,
+            "fontColor": "",
+            "fontAlign": 2
+          },
+          "body": {
+            "fontFamily": "Avenir, Segoe UI, PingFangSC-Regular, \"Microsoft YaHei\"",
+            "fontSize": 12,
+            "bold": false,
+            "italic": false,
+            "underline": false,
+            "fontColor": "",
+            "dimFontAlign": 1,
+            "tarFontAlign": 3
+          }
+        }
+      },
+      "controlTheme": "",
+      "controlWidget": {
+        "titleBackground": {
+          "type": "color",
+          "color": "transparent",
+          "imageId": ""
+        },
+        "titleFont": {
+          "type": 2,
+          "fontFamily": "Avenir, Segoe UI, PingFangSC-Regular, \"Microsoft YaHei\"",
+          "fontSize": 14,
+          "bold": true,
+          "italic": false,
+          "underline": false,
+          "fontColor": "#091E40",
+          "fontAlign": 1
+        },
+        "widgetBackground": {
+          "type": "color",
+          "color": "#FFFFFF",
+          "imageId": "",
+          "borderRadius": 0,
+          "borderSize": 0,
+          "borderColor": "#4B6082"
+        }
+      },
+      "tabWidget": {
+        "defaultState": {
+          "color": "",
+          "backgroundColor": ""
+        },
+        "selectedState": {
+          "color": "",
+          "backgroundColor": ""
+        }
+      }
+    },
+    "filter": {
+      "filterType": 34,
+      "filterValue": [
+        {
+          "filterType": 56,
+          "filterValue": {
+            "widgetId": "0febf1d1915d1b43"
+          }
+        },
+        {
+          "filterType": 56,
+          "filterValue": {
+            "widgetId": "89cdfe1ef15efff5"
+          }
+        }
+      ]
+    }
+  },
+  "reportId": "35d21769f7a14a6191cdc4f4a211a04a",
+  "reportName": "Shopee周数据明细下载-集团八部专用",
+  "filterValue": [
+    {
+      "type": 1,
+      "text": "过滤组件",
+      "children": [
+        {
+          "type": 2,
+          "text": "【时间周期-SKU·时间周期】属于\"0528-0603\""
+        }
+      ]
+    }
+  ],
+  "dimError": false,
+  "fileType": 1
+}
