@@ -59,6 +59,8 @@ def list_opportunities(
             or_(
                 models.NewProductOpportunity.id.in_(task_opportunity_ids),
                 models.NewProductOpportunity.id.in_(claim_opportunity_ids),
+                # 历史档案对运营开放只读可见（刊登工作台点击进详情需要；2026-07-27 用户要求）。
+                models.NewProductOpportunity.current_status == "historical_archive",
             )
         )
     opportunities = list(db.scalars(query.order_by(models.NewProductOpportunity.created_at.desc()).limit(limit)))
@@ -125,8 +127,13 @@ def update_opportunity(
     opportunity_id: str,
     payload: schemas.OpportunityUpdateRequest,
     db: Session = Depends(get_db),
-    auth: AuthContext | None = Depends(require_roles("manager")),
+    auth: AuthContext | None = Depends(require_roles("operator", "manager")),
 ) -> models.NewProductOpportunity:
+    # 运营仅可编辑历史档案商品（补全商品信息）；现行流程行仍限主管/超管。
+    if auth and auth.role_keys.isdisjoint({"manager", "super_admin"}):
+        target = db.get(models.NewProductOpportunity, opportunity_id)
+        if target is None or target.current_status != "historical_archive":
+            raise HTTPException(status_code=403, detail="operators may only edit historical archive products")
     try:
         item = services.update_opportunity(
             db,
