@@ -249,13 +249,23 @@ def test_rerun_is_idempotent(tmp_path: Path) -> None:
         )
         db.commit()
     with SessionLocal() as db:
+        same_tag = apply_selection1_rows(
+            db, report["rows"], source_label=report["source_file"], batch_tag="t1",
+            source_sha256=report["source_sha256"],
+        )
+        db.commit()
+    assert same_tag["batch_already_imported"] is True
+    assert same_tag["created"] == 0
+    with SessionLocal() as db:
         second = apply_selection1_rows(
             db, report["rows"], source_label=report["source_file"], batch_tag="t2",
             source_sha256=report["source_sha256"],
         )
         db.commit()
-    assert second["batch_already_imported"] is True
+    # 同文件换新批次标签允许通过批次闸（扩范围补导场景），行级判重兜底不重复建行。
+    assert second["batch_already_imported"] is False
     assert second["created"] == 0
+    assert second["skipped_existing_archive"] == 3
     with SessionLocal() as db:
         third = apply_selection1_rows(
             db, report["rows"], source_label=report["source_file"], batch_tag="t3",

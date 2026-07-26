@@ -374,11 +374,16 @@ def _reverted_batch_tags(db: Session) -> set[str]:
     }
 
 
-def batch_already_imported(db: Session, source_sha256: str) -> bool:
+def batch_already_imported(db: Session, source_sha256: str, batch_tag: str) -> bool:
+    # 键=文件指纹+批次标签：同文件换新标签允许扩范围补导（行级判重兜底防重复建行）。
     reverted = _reverted_batch_tags(db)
     for entry in db.scalars(select(models.AuditLog).where(models.AuditLog.action == AUDIT_ACTION)):
         detail = entry.detail or {}
-        if detail.get("source_sha256") == source_sha256 and detail.get("batch_tag") not in reverted:
+        if (
+            detail.get("source_sha256") == source_sha256
+            and detail.get("batch_tag") == batch_tag
+            and detail.get("batch_tag") not in reverted
+        ):
             return True
     return False
 
@@ -398,7 +403,7 @@ def apply_selection1_rows(
         "skipped_existing_current_flow": 0,
         "skipped_duplicate_in_file": 0,
     }
-    if source_sha256 and batch_already_imported(db, source_sha256):
+    if source_sha256 and batch_already_imported(db, source_sha256, batch_tag):
         return {"batch_already_imported": True, "import_batch_id": None, **counts}
 
     batch = models.ImportBatch(
