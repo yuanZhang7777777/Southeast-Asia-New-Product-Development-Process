@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     dingtalk_arrival_card_template_id: str = ""
     dingtalk_card_autosend_enabled: bool = False
     dingtalk_card_test_receiver_name: str = ""
+    dingtalk_test_recipient_user_id: str = ""
     dingtalk_user_sync_enabled: bool = False
     platform_base_url: str = "http://127.0.0.1:5173"
     auth_required: bool = False

@@ -219,6 +219,15 @@ def _send_arrival_card(
             )
         )
         item.send_status = "skipped" if result.get("skipped") else "sent"
+        if result.get("test_mode_redirect"):
+            services.audit(
+                db,
+                "notification.dingtalk_card_test_redirect",
+                "notification_log",
+                item.id,
+                dict(result["test_mode_redirect"]),
+                group.salesperson_name,
+            )
     except Exception:
         item.send_status = "failed"
     return item

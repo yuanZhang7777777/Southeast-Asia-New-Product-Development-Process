@@ -268,6 +268,7 @@ def pilot_sender(settings: Settings) -> DingTalkCardSender:
             client_secret=settings.dingtalk_client_secret,
             robot_code=settings.dingtalk_robot_code or settings.dingtalk_client_id,
             arrival_card_template_id=settings.dingtalk_arrival_card_template_id.strip(),
+            test_recipient_user_id=settings.dingtalk_test_recipient_user_id.strip(),
         )
     )
 

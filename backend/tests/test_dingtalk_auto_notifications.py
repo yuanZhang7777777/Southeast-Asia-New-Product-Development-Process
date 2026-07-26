@@ -8,9 +8,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
-from app import models, services  # noqa: E402
+from app import models, schemas, services  # noqa: E402
 from app.config import Settings  # noqa: E402
 from app.db import Base, SessionLocal, engine  # noqa: E402
+from app.dingtalk_card_sender import DingTalkCardConfig, DingTalkCardSender  # noqa: E402
 from app.main import app  # noqa: E402
 from app.workflow_status import (  # noqa: E402
     CLAIM_RESULT_REJECT,
@@ -171,6 +172,74 @@ def test_card_test_receiver_redirects_operator_card_to_named_user() -> None:
         assert sender.cards[0].receiver_dingtalk_user_id == "dt-liu"
         assert sender.cards[0].receiver_role == "operator"
         assert sender.cards[0].subject_name == "销售A"
+
+
+def test_test_recipient_mode_audit_records_original_and_actual_receiver() -> None:
+    calls: list[tuple[str, dict, dict]] = []
+
+    def fake_post(url: str, headers: dict, body: dict) -> dict:
+        calls.append((url, headers, body))
+        if url.endswith("/oauth2/accessToken"):
+            return {"accessToken": "token-value"}
+        return {"cardInstanceId": "card-test-mode"}
+
+    sender = DingTalkCardSender(
+        DingTalkCardConfig(client_id="cid", client_secret="secret", test_recipient_user_id="dt-test-owner"),
+        http_post=fake_post,
+    )
+    with SessionLocal() as db:
+        payload = schemas.DingTalkNewProductTodoCardRequest(
+            receiver_dingtalk_user_id="dt-user-a",
+            receiver_name="销售A",
+            receiver_role="operator",
+            subject_name="销售A",
+            left_count=1,
+            right_count=0,
+            action_url="https://np.example/?from=ding&role=operator",
+            out_track_id="test-mode-operator-1",
+        )
+
+        log = services.send_dingtalk_new_product_todo_card(db, payload, sender)
+
+        assert log.send_status == "sent"
+        assert log.receiver_name == "销售A"
+        deliver_call = calls[1]
+        assert deliver_call[2]["userId"] == "dt-test-owner"
+        db.flush()
+        sent_audit = db.query(models.AuditLog).filter_by(action="notification.dingtalk_card_sent").one()
+        redirect = sent_audit.detail["test_mode_redirect"]
+        assert redirect["original_receiver"] == "销售A"
+        assert redirect["original_receiver_dingtalk_user_id"] != redirect["actual_receiver_dingtalk_user_id"]
+
+
+def test_sent_audit_has_no_redirect_detail_without_test_recipient() -> None:
+    def fake_post(url: str, headers: dict, body: dict) -> dict:
+        if url.endswith("/oauth2/accessToken"):
+            return {"accessToken": "token-value"}
+        return {"cardInstanceId": "card-normal"}
+
+    sender = DingTalkCardSender(
+        DingTalkCardConfig(client_id="cid", client_secret="secret"),
+        http_post=fake_post,
+    )
+    with SessionLocal() as db:
+        payload = schemas.DingTalkNewProductTodoCardRequest(
+            receiver_dingtalk_user_id="dt-user-a",
+            receiver_name="销售A",
+            receiver_role="operator",
+            subject_name="销售A",
+            left_count=1,
+            right_count=0,
+            action_url="https://np.example/?from=ding&role=operator",
+            out_track_id="normal-operator-1",
+        )
+
+        log = services.send_dingtalk_new_product_todo_card(db, payload, sender)
+
+        assert log.send_status == "sent"
+        db.flush()
+        sent_audit = db.query(models.AuditLog).filter_by(action="notification.dingtalk_card_sent").one()
+        assert "test_mode_redirect" not in sent_audit.detail
 
 
 def test_claim_submission_does_not_trigger_supervisor_card_summary(monkeypatch: pytest.MonkeyPatch) -> None:

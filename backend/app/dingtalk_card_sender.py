@@ -26,6 +26,7 @@ class DingTalkCardConfig:
     arrival_card_template_id: str = DINGTALK_ARRIVAL_CARD_TEMPLATE_ID
     access_token_url: str = DINGTALK_ACCESS_TOKEN_URL
     create_and_deliver_url: str = DINGTALK_CREATE_AND_DELIVER_URL
+    test_recipient_user_id: str = ""
 
     @classmethod
     def from_settings(cls, settings: Settings) -> "DingTalkCardConfig":
@@ -36,6 +37,7 @@ class DingTalkCardConfig:
             arrival_card_template_id=(
                 settings.dingtalk_arrival_card_template_id.strip() or DINGTALK_ARRIVAL_CARD_TEMPLATE_ID
             ),
+            test_recipient_user_id=settings.dingtalk_test_recipient_user_id.strip(),
         )
 
 
@@ -170,7 +172,8 @@ class DingTalkCardSender:
             raise ValueError("DingTalk client credentials are not configured")
         access_token = self.fetch_access_token()
         payload = self.build_create_and_deliver_payload(card)
-        return self.deliver(access_token, payload)
+        result = self.deliver(access_token, payload)
+        return self._with_test_redirect(result, card.receiver_dingtalk_user_id, card.subject_name)
 
     def send_arrival_card(self, card: ArrivalCard) -> dict[str, Any]:
         if not card.new_items and not card.old_items and not card.sku_markdown:
@@ -179,7 +182,8 @@ class DingTalkCardSender:
             raise ValueError("DingTalk client credentials are not configured")
         access_token = self.fetch_access_token()
         payload = self.build_arrival_create_and_deliver_payload(card)
-        return self.deliver(access_token, payload)
+        result = self.deliver(access_token, payload)
+        return self._with_test_redirect(result, card.receiver_dingtalk_user_id, card.salesperson_name)
 
     def deliver(self, access_token: str, payload: dict[str, Any]) -> dict[str, Any]:
         return self.http_post(
@@ -221,6 +225,7 @@ class DingTalkCardSender:
             last_message=last_message,
             search_desc=search_desc,
             robot_code=robot_code,
+            original_receiver_label=card.subject_name,
         )
 
     def build_arrival_create_and_deliver_payload(self, card: ArrivalCard) -> dict[str, Any]:
@@ -246,7 +251,33 @@ class DingTalkCardSender:
             last_message=last_message,
             search_desc=f'{card_params["card_title"]} {last_message}'[:200],
             robot_code=self.config.robot_code or self.config.client_id,
+            original_receiver_label=card.salesperson_name,
         )
+
+    def _test_redirect_meta(
+        self,
+        receiver_dingtalk_user_id: str,
+        original_receiver_label: str = "",
+    ) -> dict[str, str] | None:
+        test_recipient = self.config.test_recipient_user_id.strip()
+        if not test_recipient or test_recipient == receiver_dingtalk_user_id:
+            return None
+        return {
+            "original_receiver": original_receiver_label or masked_dingtalk_user_id(receiver_dingtalk_user_id),
+            "original_receiver_dingtalk_user_id": masked_dingtalk_user_id(receiver_dingtalk_user_id),
+            "actual_receiver_dingtalk_user_id": masked_dingtalk_user_id(test_recipient),
+        }
+
+    def _with_test_redirect(
+        self,
+        result: dict[str, Any],
+        receiver_dingtalk_user_id: str,
+        original_receiver_label: str = "",
+    ) -> dict[str, Any]:
+        redirect = self._test_redirect_meta(receiver_dingtalk_user_id, original_receiver_label)
+        if redirect is None:
+            return result
+        return {**result, "test_mode_redirect": redirect}
 
     def _build_create_and_deliver_payload(
         self,
@@ -257,7 +288,15 @@ class DingTalkCardSender:
         last_message: str,
         search_desc: str,
         robot_code: str,
+        original_receiver_label: str = "",
     ) -> dict[str, Any]:
+        redirect = self._test_redirect_meta(receiver_dingtalk_user_id, original_receiver_label)
+        if redirect is not None:
+            marker = f"（测试模式｜原收件人：{redirect['original_receiver']}）"
+            card_params = {**card_params, "summary_text": f"{card_params.get('summary_text', '')}{marker}"}
+            last_message = f"{last_message}{marker}"
+            search_desc = f"{search_desc}{marker}"[:200]
+            receiver_dingtalk_user_id = self.config.test_recipient_user_id.strip()
         return {
             "userId": receiver_dingtalk_user_id,
             "cardTemplateId": card_template_id,

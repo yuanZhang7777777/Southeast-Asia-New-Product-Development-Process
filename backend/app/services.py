@@ -4207,18 +4207,21 @@ def send_dingtalk_new_product_todo_card(
         return item
 
     item.send_status = "skipped" if result.get("skipped") else "sent"
+    detail = {
+        "receiver_role": payload.receiver_role,
+        "receiver_dingtalk_user_id": masked_dingtalk_user_id(payload.receiver_dingtalk_user_id),
+        "left_count": payload.left_count,
+        "right_count": payload.right_count,
+        "send_status": item.send_status,
+    }
+    if result.get("test_mode_redirect"):
+        detail["test_mode_redirect"] = result["test_mode_redirect"]
     audit(
         db,
         "notification.dingtalk_card_sent",
         "notification_log",
         item.id,
-        {
-            "receiver_role": payload.receiver_role,
-            "receiver_dingtalk_user_id": masked_dingtalk_user_id(payload.receiver_dingtalk_user_id),
-            "left_count": payload.left_count,
-            "right_count": payload.right_count,
-            "send_status": item.send_status,
-        },
+        detail,
         payload.receiver_name,
     )
     return item

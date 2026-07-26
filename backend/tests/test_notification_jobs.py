@@ -13,7 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from app import models  # noqa: E402
 from app.config import Settings  # noqa: E402
 from app.db import Base, SessionLocal, engine  # noqa: E402
-from app.dingtalk_card_sender import DingTalkCardConfig, DingTalkCardSender  # noqa: E402
+from app.dingtalk_card_sender import DingTalkCardConfig, DingTalkCardSender, masked_dingtalk_user_id  # noqa: E402
 from app.notification_jobs import (  # noqa: E402
     send_arrival_daily_cards,
     send_daily_elimination_summary,
@@ -180,6 +180,90 @@ def test_arrival_daily_cards_send_every_salesperson_group_to_test_receiver() -> 
         assert len(logs) == 2
         assert {card.salesperson_name for card in sender.arrival_cards} == {"销售A", "销售B"}
         assert {card.receiver_dingtalk_user_id for card in sender.arrival_cards} == {"dt-liu"}
+
+
+def test_arrival_daily_cards_test_recipient_mode_redirects_and_keeps_original_in_logs() -> None:
+    settings = Settings(dingtalk_card_autosend_enabled=True, platform_base_url="https://np.example")
+    calls: list[tuple[str, dict, dict]] = []
+
+    def fake_post(url: str, headers: dict, body: dict) -> dict:
+        calls.append((url, headers, body))
+        if url.endswith("/oauth2/accessToken"):
+            return {"accessToken": "token-value"}
+        return {"cardInstanceId": "card-test-mode-1"}
+
+    sender = DingTalkCardSender(
+        DingTalkCardConfig(client_id="cid", client_secret="secret", test_recipient_user_id="dt-test-owner"),
+        http_post=fake_post,
+    )
+    with SessionLocal() as db:
+        db.add(models.RoleMapping(name="销售A", role="operator", dingtalk_user_id="dt-sales-a", enabled=True))
+        batch = models.PlmArrivalBatch(arrival_date="2026-07-12", source_hash="hash-test-mode", bloc_name="集团八部", row_count=1)
+        db.add(batch)
+        db.flush()
+        db.add(
+            models.PlmArrivalItem(
+                batch_id=batch.id,
+                arrival_type="new_arrival",
+                salesperson_name="销售A",
+                main_sku="MAIN-1",
+                sub_sku="S1",
+                product_name="新品一",
+            )
+        )
+        db.flush()
+
+        logs = send_arrival_daily_cards(db, settings, sender, "2026-07-12")
+
+        assert len(logs) == 1
+        assert logs[0].send_status == "sent"
+        assert logs[0].receiver_name == "销售A"
+        deliver_call = calls[1]
+        assert deliver_call[2]["userId"] == "dt-test-owner"
+        assert deliver_call[2]["openSpaceId"] == "dtv1.card//im_robot.dt-test-owner"
+        assert "（测试模式｜原收件人：销售A）" in deliver_call[2]["cardData"]["cardParamMap"]["summary_text"]
+        db.flush()
+        redirect_audit = db.query(models.AuditLog).filter_by(action="notification.dingtalk_card_test_redirect").one()
+        assert redirect_audit.entity_id == logs[0].id
+        assert redirect_audit.detail["original_receiver"] == "销售A"
+        assert redirect_audit.detail["original_receiver_dingtalk_user_id"] == masked_dingtalk_user_id("dt-sales-a")
+        assert redirect_audit.detail["actual_receiver_dingtalk_user_id"] == masked_dingtalk_user_id("dt-test-owner")
+
+
+def test_arrival_daily_cards_without_test_recipient_write_no_redirect_audit() -> None:
+    settings = Settings(dingtalk_card_autosend_enabled=True, platform_base_url="https://np.example")
+
+    def fake_post(url: str, headers: dict, body: dict) -> dict:
+        if url.endswith("/oauth2/accessToken"):
+            return {"accessToken": "token-value"}
+        return {"cardInstanceId": "card-no-test-mode"}
+
+    sender = DingTalkCardSender(
+        DingTalkCardConfig(client_id="cid", client_secret="secret"),
+        http_post=fake_post,
+    )
+    with SessionLocal() as db:
+        db.add(models.RoleMapping(name="销售A", role="operator", dingtalk_user_id="dt-sales-a", enabled=True))
+        batch = models.PlmArrivalBatch(arrival_date="2026-07-12", source_hash="hash-no-test-mode", bloc_name="集团八部", row_count=1)
+        db.add(batch)
+        db.flush()
+        db.add(
+            models.PlmArrivalItem(
+                batch_id=batch.id,
+                arrival_type="new_arrival",
+                salesperson_name="销售A",
+                main_sku="MAIN-1",
+                sub_sku="S1",
+                product_name="新品一",
+            )
+        )
+        db.flush()
+
+        logs = send_arrival_daily_cards(db, settings, sender, "2026-07-12")
+
+        assert len(logs) == 1
+        assert logs[0].send_status == "sent"
+        assert db.query(models.AuditLog).filter_by(action="notification.dingtalk_card_test_redirect").count() == 0
 
 
 def test_arrival_daily_cards_do_not_fall_back_when_test_receiver_is_missing() -> None:

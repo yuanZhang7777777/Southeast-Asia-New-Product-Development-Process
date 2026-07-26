@@ -220,6 +220,122 @@ def test_sender_builds_arrival_card_with_confirmed_template() -> None:
     assert "new_items" not in deliver_call[2]["cardData"]["cardParamMap"]
 
 
+def test_from_settings_reads_test_recipient_user_id() -> None:
+    config = DingTalkCardConfig.from_settings(Settings(dingtalk_test_recipient_user_id=" test-owner-user-id "))
+
+    assert config.test_recipient_user_id == "test-owner-user-id"
+
+
+def test_test_recipient_mode_redirects_todo_card_and_marks_summary() -> None:
+    calls: list[tuple[str, dict, dict]] = []
+
+    def fake_post(url: str, headers: dict, body: dict) -> dict:
+        calls.append((url, headers, body))
+        if url.endswith("/oauth2/accessToken"):
+            return {"accessToken": "token-value"}
+        return {"cardInstanceId": "card-1"}
+
+    sender = DingTalkCardSender(
+        DingTalkCardConfig(
+            client_id="cid",
+            client_secret="secret",
+            robot_code="robot-code",
+            test_recipient_user_id="test-owner-user-id",
+        ),
+        http_post=fake_post,
+    )
+
+    result = sender.send_new_product_todo(
+        NewProductTodoCard(
+            receiver_dingtalk_user_id="receiver-user-id",
+            receiver_role="operator",
+            left_count=1,
+            right_count=2,
+            action_url="https://example.com/mobile/tasks?from=ding&role=operator",
+            out_track_id="new-product-todo-operator-20260726",
+            subject_name="销售A",
+        )
+    )
+
+    deliver_call = calls[1]
+    assert deliver_call[2]["userId"] == "test-owner-user-id"
+    assert deliver_call[2]["openSpaceId"] == "dtv1.card//im_robot.test-owner-user-id"
+    marker = "（测试模式｜原收件人：销售A）"
+    assert deliver_call[2]["cardData"]["cardParamMap"]["summary_text"].endswith(marker)
+    assert deliver_call[2]["imRobotOpenSpaceModel"]["lastMessageI18n"]["ZH_CN"].endswith(marker)
+    assert result["test_mode_redirect"] == {
+        "original_receiver": "销售A",
+        "original_receiver_dingtalk_user_id": masked_dingtalk_user_id("receiver-user-id"),
+        "actual_receiver_dingtalk_user_id": masked_dingtalk_user_id("test-owner-user-id"),
+    }
+
+
+def test_test_recipient_mode_redirects_arrival_card() -> None:
+    calls: list[tuple[str, dict, dict]] = []
+
+    def fake_post(url: str, headers: dict, body: dict) -> dict:
+        calls.append((url, headers, body))
+        if url.endswith("/oauth2/accessToken"):
+            return {"accessToken": "token-value"}
+        return {"cardInstanceId": "arrival-card-1"}
+
+    sender = DingTalkCardSender(
+        DingTalkCardConfig(client_id="cid", client_secret="secret", test_recipient_user_id="test-owner-user-id"),
+        http_post=fake_post,
+    )
+
+    result = sender.send_arrival_card(
+        ArrivalCard(
+            receiver_dingtalk_user_id="receiver-user-id",
+            arrival_date="2026-07-25",
+            salesperson_name="销售A",
+            new_items=[ArrivalCardItem(main_sku="MAIN-1", child_sku_count=2, product_name="新品一")],
+            old_items=[],
+            action_url="https://example.com/?from=ding&role=operator",
+            out_track_id="arrival-2026-07-25-sales-a",
+        )
+    )
+
+    deliver_call = calls[1]
+    assert deliver_call[2]["userId"] == "test-owner-user-id"
+    assert deliver_call[2]["openSpaceId"] == "dtv1.card//im_robot.test-owner-user-id"
+    assert "（测试模式｜原收件人：销售A）" in deliver_call[2]["cardData"]["cardParamMap"]["summary_text"]
+    assert result["test_mode_redirect"]["original_receiver"] == "销售A"
+
+
+def test_empty_test_recipient_keeps_original_receiver_and_summary() -> None:
+    calls: list[tuple[str, dict, dict]] = []
+
+    def fake_post(url: str, headers: dict, body: dict) -> dict:
+        calls.append((url, headers, body))
+        if url.endswith("/oauth2/accessToken"):
+            return {"accessToken": "token-value"}
+        return {"cardInstanceId": "card-1"}
+
+    sender = DingTalkCardSender(
+        DingTalkCardConfig(client_id="cid", client_secret="secret", test_recipient_user_id="  "),
+        http_post=fake_post,
+    )
+
+    result = sender.send_new_product_todo(
+        NewProductTodoCard(
+            receiver_dingtalk_user_id="receiver-user-id",
+            receiver_role="operator",
+            left_count=1,
+            right_count=0,
+            action_url="https://example.com/mobile/tasks?from=ding&role=operator",
+            out_track_id="new-product-todo-operator-20260726",
+            subject_name="销售A",
+        )
+    )
+
+    deliver_call = calls[1]
+    assert deliver_call[2]["userId"] == "receiver-user-id"
+    assert deliver_call[2]["openSpaceId"] == "dtv1.card//im_robot.receiver-user-id"
+    assert "测试模式" not in deliver_call[2]["cardData"]["cardParamMap"]["summary_text"]
+    assert "test_mode_redirect" not in result
+
+
 def test_masked_dingtalk_user_id_never_returns_full_value() -> None:
     assert masked_dingtalk_user_id("abcdef123456") == "abc***456"
     assert masked_dingtalk_user_id("short") == "***"
