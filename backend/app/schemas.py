@@ -1004,12 +1004,27 @@ class MessageResponse(BaseModel):
     id: str | None = None
 
 
+class AssignableOperatorRead(BaseModel):
+    id: str
+    name: str
+
+
 class AdminUserRead(UserRead):
     has_password: bool = False
 
 
+class AdminUserCreateRequest(BaseModel):
+    name: str = Field(min_length=1)
+    dingtalk_user_id: str | None = None
+    password: str | None = Field(default=None, min_length=6)
+    role: str = "operator"
+
+
 class AdminUserUpdateRequest(BaseModel):
-    enabled: bool
+    name: str | None = Field(default=None, min_length=1)
+    dingtalk_user_id: str | None = None
+    role: str | None = None
+    enabled: bool | None = None
 
 
 class AdminPasswordResetRequest(BaseModel):

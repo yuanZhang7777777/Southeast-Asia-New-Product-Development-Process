@@ -341,6 +341,11 @@ export type CompanyCategory = {
   enabled: boolean;
 };
 
+export type AssignableOperator = {
+  id: string;
+  name: string;
+};
+
 export type OperatorAssignmentProfile = {
   id: string;
   operator_name: string;
@@ -835,14 +840,20 @@ export const api = {
     request<RoleMapping>("/admin/role-mappings", { method: "POST", body: JSON.stringify(payload) }),
   companyCategories: () => request<CompanyCategory[]>("/admin/company-categories"),
   operatorProfiles: () => request<OperatorAssignmentProfile[]>("/admin/operator-profiles"),
+  assignableOperators: () => request<AssignableOperator[]>("/admin/assignable-operators"),
   createOperatorProfile: (payload: unknown) =>
     request<OperatorAssignmentProfile>("/admin/operator-profiles", { method: "POST", body: JSON.stringify(payload) }),
   updateOperatorProfile: (id: string, payload: unknown) =>
     request<OperatorAssignmentProfile>(`/admin/operator-profiles/${id}`, { method: "PATCH", body: JSON.stringify(payload) }),
   deleteOperatorProfile: (id: string) => request<void>(`/admin/operator-profiles/${id}`, { method: "DELETE" }),
   adminUsers: () => request<AdminUser[]>("/admin/users"),
+  adminCreateUser: (payload: { name: string; dingtalk_user_id?: string; password?: string; role: string }) =>
+    request<AdminUser>("/admin/users", { method: "POST", body: JSON.stringify(payload) }),
+  adminUpdateUser: (id: string, payload: { name?: string; dingtalk_user_id?: string; role?: string; enabled?: boolean }) =>
+    request<AdminUser>(`/admin/users/${id}`, { method: "PATCH", body: JSON.stringify(payload) }),
+  adminDeleteUser: (id: string) => request<void>(`/admin/users/${id}`, { method: "DELETE" }),
   adminSetUserEnabled: (id: string, enabled: boolean) =>
-    request<{ id: string; name: string; enabled: boolean }>(`/admin/users/${id}`, { method: "PATCH", body: JSON.stringify({ enabled }) }),
+    request<AdminUser>(`/admin/users/${id}`, { method: "PATCH", body: JSON.stringify({ enabled }) }),
   adminResetUserPassword: (id: string, newPassword?: string) =>
     request<AdminPasswordReset>(`/admin/users/${id}/reset-password`, {
       method: "POST",

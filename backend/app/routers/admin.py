@@ -60,6 +60,26 @@ def list_users(
     return admin_console.list_users(db)
 
 
+@router.post("/users", response_model=schemas.AdminUserRead)
+def create_user(
+    payload: schemas.AdminUserCreateRequest,
+    db: Session = Depends(get_db),
+    auth: AuthContext | None = Depends(require_roles("super_admin")),
+) -> schemas.AdminUserRead:
+    try:
+        user = admin_console.create_user(
+            db,
+            payload,
+            actor_name=auth.user.name if auth else None,
+            actor_user_id=auth.user.id if auth else None,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    db.commit()
+    db.refresh(user)
+    return admin_console.user_read(db, user)
+
+
 @router.post("/users/{user_id}/reset-password", response_model=schemas.AdminPasswordResetResponse)
 def reset_user_password(
     user_id: str,
@@ -81,28 +101,52 @@ def reset_user_password(
     return result
 
 
-@router.patch("/users/{user_id}", response_model=schemas.UserRead)
+@router.patch("/users/{user_id}", response_model=schemas.AdminUserRead)
 def update_user(
     user_id: str,
     payload: schemas.AdminUserUpdateRequest,
     db: Session = Depends(get_db),
     auth: AuthContext | None = Depends(require_roles("super_admin")),
-) -> models.User:
+) -> schemas.AdminUserRead:
     user = db.get(models.User, user_id)
     if user is None:
         raise HTTPException(status_code=404, detail="user not found")
-    if auth and auth.user.id == user.id and not payload.enabled:
+    if auth and auth.user.id == user.id and payload.enabled is False:
         raise HTTPException(status_code=400, detail="cannot disable your own account")
-    admin_console.set_user_enabled(
+    try:
+        admin_console.update_user(
+            db,
+            user,
+            payload,
+            actor_name=auth.user.name if auth else None,
+            actor_user_id=auth.user.id if auth else None,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    db.commit()
+    db.refresh(user)
+    return admin_console.user_read(db, user)
+
+
+@router.delete("/users/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_user(
+    user_id: str,
+    db: Session = Depends(get_db),
+    auth: AuthContext | None = Depends(require_roles("super_admin")),
+) -> Response:
+    user = db.get(models.User, user_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail="user not found")
+    if auth and auth.user.id == user.id:
+        raise HTTPException(status_code=400, detail="cannot delete your own account")
+    admin_console.delete_user(
         db,
         user,
-        payload.enabled,
         actor_name=auth.user.name if auth else None,
         actor_user_id=auth.user.id if auth else None,
     )
     db.commit()
-    db.refresh(user)
-    return user
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get("/import-batches", response_model=schemas.ImportBatchPage)
@@ -176,6 +220,11 @@ def import_company_categories(
     return report
 
 
+@router.get("/assignable-operators", response_model=list[schemas.AssignableOperatorRead])
+def assignable_operators(db: Session = Depends(get_db)) -> list[schemas.AssignableOperatorRead]:
+    return _assignable_operators(db)
+
+
 @router.get("/operator-profiles", response_model=list[schemas.OperatorAssignmentProfileRead])
 def operator_profiles(db: Session = Depends(get_db)) -> list[models.OperatorAssignmentProfile]:
     return list(
@@ -200,6 +249,8 @@ def upsert_operator_profile(
         )
     )
     if item is None:
+        if payload.operator_name not in {item.name for item in _assignable_operators(db)}:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="只能将已启用的运营账号加入分配池")
         item = models.OperatorAssignmentProfile(
             operator_name=payload.operator_name,
             display_order=values.pop("display_order") or _next_profile_order(db),
@@ -208,7 +259,6 @@ def upsert_operator_profile(
     elif values.get("display_order") is None:
         values.pop("display_order")
     _apply_operator_profile(item, values)
-    _upsert_operator_role_mapping(db, item.operator_name)
     db.commit()
     db.refresh(item)
     return item
@@ -221,7 +271,9 @@ def update_operator_profile(
     item = db.get(models.OperatorAssignmentProfile, profile_id)
     if item is None:
         raise HTTPException(status_code=404, detail="operator profile not found")
-    _apply_operator_profile(item, payload.model_dump(exclude_unset=True))
+    values = payload.model_dump(exclude_unset=True)
+    values.pop("operator_name", None)
+    _apply_operator_profile(item, values)
     db.commit()
     db.refresh(item)
     return item
@@ -273,25 +325,26 @@ def sync_dingtalk_user_ids(
     return {key: len(value) if isinstance(value, list) else value for key, value in report.items()}
 
 
+def _assignable_operators(db: Session) -> list[schemas.AssignableOperatorRead]:
+    in_pool = set(db.scalars(select(models.OperatorAssignmentProfile.operator_name)))
+    rows = db.execute(
+        select(models.User.id, models.User.name)
+        .join(models.RoleMapping, models.RoleMapping.user_id == models.User.id)
+        .where(
+            models.User.enabled.is_(True),
+            models.RoleMapping.enabled.is_(True),
+            models.RoleMapping.role == "operator",
+        )
+        .order_by(models.User.name)
+    ).all()
+    return [schemas.AssignableOperatorRead(id=row.id, name=row.name) for row in rows if row.name not in in_pool]
+
+
 def _apply_operator_profile(item: models.OperatorAssignmentProfile, values: dict[str, object]) -> None:
-    for field in ("operator_name", "key_site", "key_category1", "key_category2", "key_categories", "assignment_priority", "display_order", "enabled"):
+    for field in ("key_site", "key_category1", "key_category2", "key_categories", "assignment_priority", "display_order", "enabled"):
         if field in values:
             setattr(item, field, values[field])
 
 
 def _next_profile_order(db: Session) -> int:
     return int(db.scalar(select(func.max(models.OperatorAssignmentProfile.display_order))) or 0) + 1
-
-
-def _upsert_operator_role_mapping(db: Session, operator_name: str) -> None:
-    mapping = db.scalar(
-        select(models.RoleMapping).where(
-            models.RoleMapping.name == operator_name,
-            models.RoleMapping.role.in_(("operator", "sales")),
-        )
-    )
-    if mapping is None:
-        db.add(models.RoleMapping(name=operator_name, role="operator", enabled=True))
-        return
-    mapping.role = "operator"
-    mapping.enabled = True

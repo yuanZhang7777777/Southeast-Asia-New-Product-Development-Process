@@ -1,4 +1,4 @@
-import { Download, RefreshCw, ShieldCheck, Users, X } from "lucide-react";
+import { Download, Pencil, Plus, RefreshCw, ShieldCheck, Trash2, Users, X } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
 import {
@@ -30,6 +30,9 @@ import {
 const EMPTY_BATCH_PAGE: ImportBatchPage = { total: 0, page: 1, page_size: 20, items: [] };
 
 type BatchQuery = { page: number; page_size: number; source_type: string; status: string };
+type AdminUserDraft = { name: string; dingtalk_user_id: string; password: string; role: string };
+
+const EMPTY_ADMIN_USER_DRAFT: AdminUserDraft = { name: "", dingtalk_user_id: "", password: "", role: "operator" };
 
 function readableError(error: unknown, fallback: string) {
   return error instanceof Error && error.message ? error.message : fallback;
@@ -58,6 +61,8 @@ export function AdminConsoleView(props: { onStatus: (message: string) => void })
   const [finebiRunning, setFinebiRunning] = useState(false);
   const [finebiResult, setFinebiResult] = useState<FineBIPullResult | null>(null);
   const [finebiError, setFinebiError] = useState("");
+  const [userEditor, setUserEditor] = useState<{ user: AdminUser | null; draft: AdminUserDraft } | null>(null);
+  const [userEditorError, setUserEditorError] = useState("");
 
   const loadBase = useCallback(async () => {
     setLoading(true);
@@ -108,13 +113,48 @@ export function AdminConsoleView(props: { onStatus: (message: string) => void })
     }
   }
 
-  async function changeMappingRole(mapping: RoleMapping, role: string) {
+
+  function openUserEditor(user?: AdminUser) {
+    const mapping = user ? mappingsForUser(user.name, roleMappings)[0] : null;
+    setUserEditor({
+      user: user || null,
+      draft: user
+        ? { name: user.name, dingtalk_user_id: user.dingtalk_user_id || "", password: "", role: mapping?.role || "operator" }
+        : { ...EMPTY_ADMIN_USER_DRAFT }
+    });
+    setUserEditorError("");
+  }
+
+  async function submitUserEditor() {
+    if (!userEditor) return;
+    const draft = { ...userEditor.draft, name: userEditor.draft.name.trim(), dingtalk_user_id: userEditor.draft.dingtalk_user_id.trim() };
+    if (!draft.name) {
+      setUserEditorError("姓名不能为空");
+      return;
+    }
     try {
-      const updated = await api.updateRoleMapping(mapping.id, { role });
-      setRoleMappings((current) => current.map((item) => (item.id === updated.id ? updated : item)));
-      onStatus(`已将 ${mapping.name} 的角色调整为${roleLabel(role)}`);
+      if (userEditor.user) {
+        await api.adminUpdateUser(userEditor.user.id, { name: draft.name, dingtalk_user_id: draft.dingtalk_user_id, role: draft.role });
+        onStatus(`已更新用户 ${draft.name}`);
+      } else {
+        await api.adminCreateUser({ ...draft, password: draft.password || undefined });
+        onStatus(`已创建用户 ${draft.name}`);
+      }
+      setUserEditor(null);
+      await loadBase();
     } catch (error) {
-      onStatus(readableError(error, "角色调整失败"));
+      setUserEditorError(readableError(error, "保存用户失败"));
+    }
+  }
+
+  async function deleteUser(user: AdminUser) {
+    if (!window.confirm(`确认删除用户「${user.name}」？账号、角色和分配配置将被删除，历史业务记录保留。`)) return;
+    try {
+      await api.adminDeleteUser(user.id);
+      await loadBase();
+      onStatus(`已删除用户 ${user.name}`);
+    } catch (error) {
+      onStatus(readableError(error, "删除用户失败"));
     }
   }
 
@@ -214,11 +254,17 @@ export function AdminConsoleView(props: { onStatus: (message: string) => void })
 
       {section === "users" && (
         <section className="info">
-          <h3>
-            <Users size={16} />
-            用户管理
-          </h3>
-          <p className="muted">不提供删除用户：请用停用代替，停用后账号立即无法登录，历史数据全部保留。</p>
+          <div className="action-row">
+            <h3>
+              <Users size={16} />
+              用户管理
+            </h3>
+            <button className="btn primary" type="button" onClick={() => openUserEditor()}>
+              <Plus size={15} />
+              新建用户
+            </button>
+          </div>
+          <p className="muted">账号、钉钉绑定和角色只在此处维护；停用会立即禁止登录，删除会保留历史业务记录。</p>
           {!users.length ? (
             <p className="muted">暂无用户。</p>
           ) : (
@@ -239,32 +285,23 @@ export function AdminConsoleView(props: { onStatus: (message: string) => void })
                     <span>{user.dingtalk_user_id ? "已绑定" : "未绑定"}</span>
                     <span>{user.has_password ? "已设置" : "未设置"}</span>
                     <span className="admin-role-cell">
-                      {mappings.length ? (
-                        mappings.map((mapping) => (
-                          <select
-                            aria-label={`${user.name} 的角色`}
-                            key={mapping.id}
-                            value={mapping.role}
-                            onChange={(event) => void changeMappingRole(mapping, event.target.value)}
-                          >
-                            {roleOptions(mapping.role).map((option) => (
-                              <option key={option.value} value={option.value}>
-                                {option.label}
-                              </option>
-                            ))}
-                          </select>
-                        ))
-                      ) : (
-                        <span className="muted">未配置角色</span>
-                      )}
+                      {mappings.length ? mappings.map((mapping) => roleLabel(mapping.role)).join("、") : <span className="muted">未配置角色</span>}
                     </span>
                     <span>{user.enabled ? <span className="pill green">启用中</span> : <span className="pill gray">已停用</span>}</span>
                     <span className="action-row compact-actions">
+                      <button className="btn" type="button" onClick={() => openUserEditor(user)}>
+                        <Pencil size={14} />
+                        编辑
+                      </button>
                       <button className="btn" type="button" onClick={() => void toggleUser(user)}>
                         {user.enabled ? "停用" : "启用"}
                       </button>
                       <button className="btn" type="button" onClick={() => openReset(user)}>
                         重置密码
+                      </button>
+                      <button className="btn" type="button" onClick={() => void deleteUser(user)}>
+                        <Trash2 size={14} />
+                        删除用户
                       </button>
                     </span>
                   </div>
@@ -444,6 +481,42 @@ export function AdminConsoleView(props: { onStatus: (message: string) => void })
             </div>
           )}
         </section>
+      )}
+
+      {userEditor && (
+        <div className="listing-overlay">
+          <div className="listing-dialog small-dialog" role="dialog" aria-modal="true" aria-labelledby="admin-user-editor-title">
+            <button aria-label="关闭用户编辑" className="listing-dialog-close" type="button" onClick={() => setUserEditor(null)}>
+              <X size={18} />
+            </button>
+            <h2 id="admin-user-editor-title">{userEditor.user ? "编辑用户" : "新建用户"}</h2>
+            <label>
+              姓名
+              <input autoFocus value={userEditor.draft.name} onChange={(event) => setUserEditor({ ...userEditor, draft: { ...userEditor.draft, name: event.target.value } })} />
+            </label>
+            <label>
+              钉钉 userId
+              <input value={userEditor.draft.dingtalk_user_id} onChange={(event) => setUserEditor({ ...userEditor, draft: { ...userEditor.draft, dingtalk_user_id: event.target.value } })} placeholder="选填" />
+            </label>
+            <label>
+              角色
+              <select value={userEditor.draft.role} onChange={(event) => setUserEditor({ ...userEditor, draft: { ...userEditor.draft, role: event.target.value } })}>
+                {roleOptions(userEditor.draft.role).map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+              </select>
+            </label>
+            {!userEditor.user && (
+              <label>
+                初始密码
+                <input value={userEditor.draft.password} onChange={(event) => setUserEditor({ ...userEditor, draft: { ...userEditor.draft, password: event.target.value } })} placeholder="留空按姓名规则生成" />
+              </label>
+            )}
+            {userEditorError && <span className="admin-dialog-error">{userEditorError}</span>}
+            <div className="listing-dialog-actions">
+              <button className="btn" type="button" onClick={() => setUserEditor(null)}>取消</button>
+              <button className="btn primary" type="button" onClick={() => void submitUserEditor()}>保存</button>
+            </div>
+          </div>
+        </div>
       )}
 
       {resetTarget && (

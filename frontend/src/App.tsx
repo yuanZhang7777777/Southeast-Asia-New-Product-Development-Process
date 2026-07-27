@@ -34,6 +34,7 @@ import { formatBusinessNumber, formatBusinessValue } from "./businessFormat";
 import {
   API_BASE,
   api,
+  AssignableOperator,
   AssignmentBoardResponse,
   AssignmentBoardRow,
   AssignmentPreviewItem,
@@ -102,7 +103,7 @@ import { imageFiles } from "./imageUploads";
 import { StockingRequestView } from "./StockingRequestView";
 import { roleStockingLabel } from "./stockingRequests";
 
-type OperatorProfileDraft = Pick<OperatorAssignmentProfile, "operator_name" | "key_site" | "key_categories" | "assignment_priority" | "enabled">;
+
 
 type DingTalkAuthCodeResult = {
   authCode?: string;
@@ -328,6 +329,7 @@ function App() {
   const [opportunities, setOpportunities] = useState<Opportunity[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [operatorProfiles, setOperatorProfiles] = useState<OperatorAssignmentProfile[]>([]);
+  const [assignableOperators, setAssignableOperators] = useState<AssignableOperator[]>([]);
   const [companyCategories, setCompanyCategories] = useState<CompanyCategory[]>([]);
   const [importBatches, setImportBatches] = useState<ImportBatchSummary[]>([]);
   const [activeOperator, setActiveOperator] = useState("");
@@ -363,13 +365,7 @@ function App() {
   const [arrivalPreview, setArrivalPreview] = useState<PlmArrivalPreview | null>(null);
   const [arrivalList, setArrivalList] = useState<ListState>(defaultListState);
   const [selectedSelfClaimIds, setSelectedSelfClaimIds] = useState<string[]>([]);
-  const [newProfile, setNewProfile] = useState<OperatorProfileDraft>({
-    operator_name: "",
-    key_site: "",
-    key_categories: [],
-    assignment_priority: 0,
-    enabled: true
-  });
+
   const [dashboardCounts, setDashboardCounts] = useState<DashboardCounts>(EMPTY_DASHBOARD_COUNTS);
   const presetNonce = useRef(0);
   const [researchPreset, setResearchPreset] = useState<(SecondaryResearchPreset & { nonce: number }) | null>(null);
@@ -768,7 +764,7 @@ function App() {
     const managerStocking = activeRole === "manager" ? loadPart("导出中心", api.availableStocking, availableStocking) : Promise.resolve([] as AvailableStockingItem[]);
     const managerPeriods = activeRole === "manager" ? loadPart("导出期数", api.exportPeriods, exportPeriods) : Promise.resolve([] as ExportPeriodSummary[]);
     const ownStocking = activeRole === "operator" ? loadPart("备货申请", api.myStockingRequests, operatorStocking) : Promise.resolve([] as OperatorStockingItem[]);
-    const [health, opportunityList, taskList, stockingList, exportPeriodList, operatorStockingList, profileList, companyCategoryList, batchList] = await Promise.all([
+    const [health, opportunityList, taskList, stockingList, exportPeriodList, operatorStockingList, profileList, assignableOperatorList, companyCategoryList, batchList] = await Promise.all([
       loadPart("健康检查", api.health, { status: "error", environment: "unknown" }),
       loadPart("机会池", () => api.opportunities(5000, undefined, isSuperAdmin), []),
       loadPart("待办", api.tasks, []),
@@ -776,6 +772,7 @@ function App() {
       managerPeriods,
       ownStocking,
       loadPart("人员配置", api.operatorProfiles, []),
+      canManage ? loadPart("可加入分配池运营", api.assignableOperators, []) : Promise.resolve([] as AssignableOperator[]),
       canManage ? loadPart("公司类目", api.companyCategories, companyCategories) : Promise.resolve([] as CompanyCategory[]),
       canManage ? loadPart("导入批次", api.importBatches, []) : Promise.resolve([])
     ]);
@@ -793,6 +790,7 @@ function App() {
     setExportPeriods(exportPeriodList);
     setOperatorStocking(operatorStockingList);
     setOperatorProfiles(profileList);
+    setAssignableOperators(assignableOperatorList);
     setCompanyCategories(companyCategoryList);
     setImportBatches(batchList);
     if (!options.silent || failures.length) {
@@ -925,7 +923,6 @@ function App() {
     await runAction("保存人员配置", async () => {
       for (const profile of operatorProfiles) {
         await api.updateOperatorProfile(profile.id, {
-          operator_name: profile.operator_name,
           key_site: profile.key_site || "",
           key_categories: profileCategorySelections(profile),
           assignment_priority: Number(profile.assignment_priority || 0),
@@ -936,19 +933,20 @@ function App() {
     });
   }
 
-  async function addProfile() {
-    await runAction("新增人员配置", async () => {
-      if (!newProfile.operator_name.trim()) throw new Error("运营不能为空");
-      await api.createOperatorProfile(newProfile);
-      setNewProfile({ operator_name: "", key_site: "", key_categories: [], assignment_priority: 0, enabled: true });
+  async function addOperatorToAssignmentPool(operatorName: string) {
+    if (!operatorName) return;
+    await runAction("加入分配池", async () => {
+      await api.createOperatorProfile({ operator_name: operatorName, enabled: true, assignment_priority: 0 });
     });
   }
 
-  async function removeProfile(profileId: string) {
-    await runAction("删除人员配置", async () => {
-      await api.deleteOperatorProfile(profileId);
+  async function removeOperatorFromAssignmentPool(profile: OperatorAssignmentProfile) {
+    if (!window.confirm(`确认将 ${profile.operator_name} 移出分配池？账号和历史认领记录会保留。`)) return;
+    await runAction("移出分配池", async () => {
+      await api.deleteOperatorProfile(profile.id);
     });
   }
+
 
   async function setOpportunityDisabled(item: Opportunity, disabled: boolean) {
     const reason = window.prompt(disabled ? "请输入停用原因" : "请输入恢复原因", "");
@@ -1324,15 +1322,14 @@ function App() {
                 profilePanelOpen={profilePanelOpen}
                 setProfilePanelOpen={setProfilePanelOpen}
                 operatorProfiles={operatorProfiles}
+                assignableOperators={assignableOperators}
                 setOperatorProfiles={setOperatorProfiles}
                 companyCategories={companyCategories}
                 list={assignList}
                 setList={setAssignList}
-                newProfile={newProfile}
-                setNewProfile={setNewProfile}
                 onSaveProfiles={saveProfiles}
-                onAddProfile={addProfile}
-                onDeleteProfile={removeProfile}
+                onAddProfile={addOperatorToAssignmentPool}
+                onRemoveProfile={removeOperatorFromAssignmentPool}
                 onPreview={previewAssignments}
                 onAssign={submitAssignments}
               />
@@ -2954,15 +2951,14 @@ function AssignView(props: {
   profilePanelOpen: boolean;
   setProfilePanelOpen: Dispatch<SetStateAction<boolean>>;
   operatorProfiles: OperatorAssignmentProfile[];
+  assignableOperators: AssignableOperator[];
   setOperatorProfiles: (value: OperatorAssignmentProfile[]) => void;
   companyCategories: CompanyCategory[];
   list: ListState;
   setList: Dispatch<SetStateAction<ListState>>;
-  newProfile: OperatorProfileDraft;
-  setNewProfile: (value: OperatorProfileDraft) => void;
   onSaveProfiles: () => void;
-  onAddProfile: () => void;
-  onDeleteProfile: (profileId: string) => void;
+  onAddProfile: (operatorName: string) => void;
+  onRemoveProfile: (profile: OperatorAssignmentProfile) => void;
   onPreview: () => void;
   onAssign: () => void;
 }) {
@@ -2973,6 +2969,7 @@ function AssignView(props: {
   const [assignTab, setAssignTab] = useState<"pending" | "board">("pending");
   const [draggedProfileId, setDraggedProfileId] = useState<string | null>(null);
   const [dragOverProfileId, setDragOverProfileId] = useState<string | null>(null);
+  const [pendingOperatorName, setPendingOperatorName] = useState("");
   useEffect(() => {
     if (!props.profilePanelOpen) return;
     const closeOnEscape = (event: KeyboardEvent) => {
@@ -3177,8 +3174,7 @@ function AssignView(props: {
                   <span>负责站点</span>
                   <span>重点类目</span>
                   <span>优先级</span>
-                  <span>排序</span>
-                  <span>删除</span>
+                  <span>操作</span>
                 </div>
                 {profileGroups.flatMap((profileGroup) => profileGroup.items.map((profile, profileIndex) => (
                   <div
@@ -3203,7 +3199,7 @@ function AssignView(props: {
                       onChange={(event) => patchProfile(profile.id, { enabled: event.target.checked })}
                       aria-label={`${profile.operator_name} 是否启用`}
                     />
-                    <input value={profile.operator_name} onChange={(event) => patchProfile(profile.id, { operator_name: event.target.value })} />
+                    <input value={profile.operator_name} readOnly aria-label={`${profile.operator_name} 运营账号`} />
                     <select value={normalizeSiteText(profile.key_site)} onChange={(event) => patchProfile(profile.id, { key_site: event.target.value })}>
                       <option value="">请选择</option>
                       {siteOptions.map((site) => <option key={site} value={site}>{siteOptionLabel(site)}</option>)}
@@ -3244,52 +3240,30 @@ function AssignView(props: {
                       <button className="btn" disabled={profileIndex === profileGroup.items.length - 1} onClick={() => moveProfile(profile.id, 1)} title="在同站点下移" type="button">
                         <ArrowDown size={14} />
                       </button>
-                    </div>
-                    <div className="action-row compact-actions">
-                      <button className="btn" onClick={() => props.onDeleteProfile(profile.id)} title="删除">
-                        <Trash2 size={15} />
+                      <button className="btn danger-text" onClick={() => props.onRemoveProfile(profile)} title={`将 ${profile.operator_name} 移出分配池`} type="button">
+                        <Trash2 size={14} /> 移出分配池
                       </button>
                     </div>
+
                   </div>
                 )))}
                 <div className="profile-row new">
-                  <input
-                    type="checkbox"
-                    checked={props.newProfile.enabled}
-                    onChange={(event) => props.setNewProfile({ ...props.newProfile, enabled: event.target.checked })}
-                    aria-label="新运营是否启用"
-                  />
-                  <input
-                    value={props.newProfile.operator_name}
-                    onChange={(event) => props.setNewProfile({ ...props.newProfile, operator_name: event.target.value })}
-                    placeholder="运营"
-                  />
-                  <select
-                    value={props.newProfile.key_site || ""}
-                    onChange={(event) => props.setNewProfile({ ...props.newProfile, key_site: event.target.value })}
-                    aria-label="新运营负责站点"
-                  >
-                    <option value="">选择负责站点</option>
-                    {siteOptions.map((site) => <option key={site} value={site}>{siteOptionLabel(site)}</option>)}
-                  </select>
-                  <KeyCategoryEditor
-                    ariaLabel="新运营重点类目"
-                    companyCategories={props.companyCategories}
-                    onChange={(key_categories) => props.setNewProfile({ ...props.newProfile, key_categories })}
-                    value={props.newProfile.key_categories}
-                  />
-                  <input
-                    type="number"
-                    value={props.newProfile.assignment_priority || 0}
-                    onChange={(event) => props.setNewProfile({ ...props.newProfile, assignment_priority: Number(event.target.value || 0) })}
-                    placeholder="优先级"
-                  />
                   <span />
-                  <button className="btn primary" onClick={props.onAddProfile}>
-                    <Plus size={15} />
-                    新增
+                  <select value={pendingOperatorName} onChange={(event) => setPendingOperatorName(event.target.value)}>
+                    <option value="">选择已启用运营</option>
+                    {props.assignableOperators.map((operator) => <option key={operator.id} value={operator.name}>{operator.name}</option>)}
+                  </select>
+                  <span className="muted">账号在超管后台创建</span>
+                  <span />
+                  <span />
+                  <button className="btn primary" disabled={!pendingOperatorName} onClick={() => {
+                    props.onAddProfile(pendingOperatorName);
+                    setPendingOperatorName("");
+                  }} type="button">
+                    <Plus size={14} /> 加入分配池
                   </button>
                 </div>
+
               </div>
             </div>
           </section>
@@ -3522,7 +3496,7 @@ function assignmentWorkload(
   return byName;
 }
 
-function profileCategorySelections(profile?: Pick<OperatorAssignmentProfile, "key_categories"> | OperatorProfileDraft | null) {
+function profileCategorySelections(profile?: Pick<OperatorAssignmentProfile, "key_categories"> | null) {
   return normalizeCategorySelections(profile?.key_categories || []);
 }
 

@@ -117,6 +117,65 @@ def test_super_admin_can_disable_and_enable_user_but_not_self() -> None:
     assert client.patch(f"/admin/users/{self_id}", headers=admin, json={"enabled": False}).status_code == 400
 
 
+def test_super_admin_can_create_edit_and_delete_user_with_role() -> None:
+    with SessionLocal() as db:
+        db.add(models.RoleMapping(name="Admin", role="super_admin", dingtalk_user_id="dt-admin", enabled=True))
+        db.commit()
+    admin = auth_headers("dt-admin")
+
+    created = client.post(
+        "/admin/users",
+        headers=admin,
+        json={"name": "新运营", "dingtalk_user_id": "dt-new", "password": "new-user-9", "role": "operator"},
+    )
+
+    assert created.status_code == 200
+    user_id = created.json()["id"]
+    assert created.json()["name"] == "新运营"
+    with SessionLocal() as db:
+        mapping = db.query(models.RoleMapping).filter_by(user_id=user_id).one_or_none()
+        assert mapping is not None
+        assert mapping.name == "新运营"
+        assert mapping.role == "operator"
+        assert db.query(models.OperatorAssignmentProfile).filter_by(operator_name="新运营").one_or_none() is None
+
+    candidates = client.get("/admin/assignable-operators", headers=admin)
+    assert candidates.status_code == 200
+    assert candidates.json() == [{"id": user_id, "name": "新运营"}]
+
+    added_to_pool = client.post(
+        "/admin/operator-profiles",
+        headers=admin,
+        json={"operator_name": "新运营", "enabled": True, "assignment_priority": 0},
+    )
+    assert added_to_pool.status_code == 200
+    assert client.get("/admin/assignable-operators", headers=admin).json() == []
+
+    updated = client.patch(
+        f"/admin/users/{user_id}",
+        headers=admin,
+        json={"name": "新运营A", "dingtalk_user_id": "dt-new-a", "role": "manager"},
+    )
+
+    assert updated.status_code == 200
+    assert updated.json()["name"] == "新运营A"
+    with SessionLocal() as db:
+        mapping = db.query(models.RoleMapping).filter_by(user_id=user_id).one_or_none()
+        assert mapping is not None
+        assert mapping.name == "新运营A"
+        assert mapping.dingtalk_user_id == "dt-new-a"
+        assert mapping.role == "manager"
+
+    deleted = client.delete(f"/admin/users/{user_id}", headers=admin)
+
+    assert deleted.status_code == 204
+    with SessionLocal() as db:
+        assert db.get(models.User, user_id) is None
+        assert db.query(models.RoleMapping).filter_by(user_id=user_id).one_or_none() is None
+        assert db.query(models.UserPassword).filter_by(user_id=user_id).one_or_none() is None
+        assert db.query(models.AuditLog).filter_by(action="user.deleted").one_or_none() is not None
+
+
 def test_super_admin_can_adjust_and_disable_role_mapping() -> None:
     with SessionLocal() as db:
         db.add(models.RoleMapping(name="Admin", role="super_admin", dingtalk_user_id="dt-admin", enabled=True))

@@ -125,11 +125,21 @@ test("重置密码结果弹窗回显新密码并提示不会再次显示", () =>
   assert.match(adminViewSource, /留空自动生成/);
 });
 
-test("用户管理无删除按钮，用停用替代", () => {
-  assert.doesNotMatch(adminViewSource, /<button[^>]*>[^<]*删除/);
-  assert.doesNotMatch(adminViewSource, /method: "DELETE"|adminDeleteUser/);
-  assert.match(adminViewSource, /不提供删除用户：请用停用代替/);
+test("用户管理支持新建、编辑、删除和停用", () => {
+  assert.match(adminViewSource, /新建用户/);
+  assert.match(adminViewSource, /编辑用户/);
+  assert.match(adminViewSource, /删除用户/);
+  assert.match(apiSource, /adminCreateUser/);
+  assert.match(apiSource, /adminDeleteUser/);
   assert.match(adminViewSource, /\{user\.enabled \? "停用" : "启用"\}/);
+});
+
+test("分配台只管理分配池，账号新增与删除仍在超管后台", () => {
+  assert.match(appSource, /加入分配池/);
+  assert.match(appSource, /移出分配池/);
+  assert.match(appSource, /assignableOperators/);
+  assert.doesNotMatch(appSource, /placeholder="运营"/);
+  assert.doesNotMatch(appSource, /新增人员配置/);
 });
 
 test("批次停用/恢复带原因输入与二次确认按钮", () => {

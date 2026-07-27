@@ -2164,7 +2164,7 @@ summary {
 
 .profile-row {
   display: grid;
-  grid-template-columns: 54px minmax(110px, 0.8fr) 90px minmax(320px, 1.8fr) 82px 118px 54px;
+  grid-template-columns: 54px minmax(110px, 0.8fr) 90px minmax(320px, 1.8fr) 82px minmax(180px, 1fr);
   gap: 8px;
   align-items: center;
 }
@@ -3500,7 +3500,7 @@ th {
   }
 
   .assignment-config-body .profile-row {
-    grid-template-columns: 54px minmax(110px, 0.8fr) 90px minmax(320px, 1.8fr) 82px 118px 54px;
+    grid-template-columns: 54px minmax(110px, 0.8fr) 90px minmax(320px, 1.8fr) 82px minmax(180px, 1fr);
   }
 
   .assignment-config-body .profile-row.head {
