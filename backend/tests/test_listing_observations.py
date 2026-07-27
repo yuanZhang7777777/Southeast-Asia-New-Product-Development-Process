@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import event
+from sqlalchemy import event, select
 from sqlalchemy.exc import IntegrityError
 
 os.environ["DATABASE_URL"] = f"sqlite:///{Path(__file__).with_name('test_listing_observations.db')}"
@@ -1452,6 +1452,46 @@ def test_workbench_hides_history_archive_unless_requested() -> None:
     assert history_records[0]["bound_main_skus"] == ["MAIN-HIST-A", "MAIN-HIST-B"]
     assert {row["record_source"] for row in with_history["period_rows"]} == {"platform", "history_finebi"}
 
+
+def test_history_listing_without_product_opens_one_editable_archive() -> None:
+    headers = login("销售A", "operator", "dt-a")
+    with SessionLocal() as db:
+        history = seeded_history_listing("销售A")
+        db.add(history)
+        db.commit()
+        listing_id = history.id
+
+    response = client.post(
+        f"/listing-workbench/listings/{listing_id}/product-detail",
+        headers=headers,
+        json={"main_sku": "MAIN-HIST-A"},
+    )
+
+    assert response.status_code == 200
+    first = response.json()
+    assert first["source_type"] == "history_listing_only"
+    assert first["current_status"] == "historical_archive"
+    assert first["snapshot"]["listing_only"]["listing_record_id"] == listing_id
+
+    repeated = client.post(
+        f"/listing-workbench/listings/{listing_id}/product-detail",
+        headers=headers,
+        json={"main_sku": "MAIN-HIST-A"},
+    )
+    assert repeated.status_code == 200
+    assert repeated.json()["id"] == first["id"]
+
+    with SessionLocal() as db:
+        binding = db.scalar(
+            select(models.ListingSkuBinding).where(
+                models.ListingSkuBinding.listing_record_id == listing_id,
+                models.ListingSkuBinding.main_sku == "MAIN-HIST-A",
+            )
+        )
+        assert binding is not None
+        assert binding.opportunity_id == first["id"]
+        assert db.query(models.SourceRecordSnapshot).filter_by(opportunity_id=first["id"]).count() == 1
+        assert db.query(models.FlowTask).count() == 0
 
 def test_workbench_business_period_dropdown_filters_listings_and_tasks() -> None:
     headers = login("销售A", "operator", "dt-a")

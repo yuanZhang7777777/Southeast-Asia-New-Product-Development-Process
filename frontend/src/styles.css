@@ -5643,7 +5643,7 @@ th {
 }
 
 .admin-user-row {
-  grid-template-columns: minmax(110px, 0.9fr) 82px 82px minmax(200px, 1.3fr) 92px 190px;
+  grid-template-columns: minmax(110px, 0.9fr) 82px 82px minmax(200px, 1.3fr) 92px 90px 190px;
   min-width: 860px;
 }
 

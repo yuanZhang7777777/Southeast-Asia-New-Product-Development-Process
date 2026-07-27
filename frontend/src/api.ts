@@ -284,6 +284,7 @@ export type RoleMapping = {
   site?: string | null;
   manager_user_id?: string | null;
   enabled: boolean;
+  notification_enabled: boolean;
 };
 
 export type AdminUser = {
@@ -825,6 +826,11 @@ export const api = {
     if (salespersonName) search.set("salesperson_name", salespersonName);
     return request<ListingWorkbenchResponse>(`/listing-workbench/summary?${search.toString()}`);
   },
+  listingProductDetail: (listingId: string, mainSku: string) =>
+    request<Opportunity>(`/listing-workbench/listings/${listingId}/product-detail`, {
+      method: "POST",
+      body: JSON.stringify({ main_sku: mainSku })
+    }),
   createListingsBatch: (payload: ListingBatchPayload) =>
     request<ListingRecord[]>("/listing-workbench/listings/batch", { method: "POST", body: JSON.stringify(payload) }),
   updateListing: (id: string, payload: unknown) =>
@@ -859,7 +865,7 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ new_password: newPassword || null })
     }),
-  updateRoleMapping: (id: string, payload: { role?: string; enabled?: boolean }) =>
+  updateRoleMapping: (id: string, payload: { role?: string; enabled?: boolean; notification_enabled?: boolean }) =>
     request<RoleMapping>(`/admin/role-mappings/${id}`, { method: "PATCH", body: JSON.stringify(payload) }),
   adminImportBatches: (filter: AdminImportBatchFilter = {}) =>
     request<ImportBatchPage>(`/admin/import-batches${query(filter)}`),

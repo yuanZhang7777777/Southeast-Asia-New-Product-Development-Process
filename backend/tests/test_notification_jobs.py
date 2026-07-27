@@ -129,14 +129,14 @@ def test_arrival_daily_cards_carry_handle_button_linking_to_platform() -> None:
     assert len(sender.arrival_cards) == 1
     card = sender.arrival_cards[0]
     assert card.action_text == "去处理"
-    assert card.action_url == "https://np.example/?from=ding&role=operator"
+    assert card.action_url == "https://np.example/?from=ding&role=operator&view=research"
 
     payload = DingTalkCardSender(
         DingTalkCardConfig(client_id="cid", client_secret="secret")
     ).build_arrival_create_and_deliver_payload(card)
     card_params = payload["cardData"]["cardParamMap"]
     assert card_params["action_text"] == "去处理"
-    assert card_params["action_url"] == "https://np.example/?from=ding&role=operator"
+    assert card_params["action_url"] == "https://np.example/?from=ding&role=operator&view=research"
 
 
 def test_arrival_daily_cards_send_every_salesperson_group_to_test_receiver() -> None:
@@ -382,10 +382,10 @@ def test_elimination_daily_summary_sends_unnotified_rows_to_managers_and_marks_d
         first = send_daily_elimination_summary(db, settings, sender, "2026-07-13")
         second = send_daily_elimination_summary(db, settings, sender, "2026-07-13")
 
-        assert len(first) == 2
+        assert len(first) == 1
         assert second == []
         assert sender.todo_cards == []
-        assert {card.receiver_dingtalk_user_id for card in sender.arrival_cards} == {"dt-manager-a", "dt-admin"}
+        assert {card.receiver_dingtalk_user_id for card in sender.arrival_cards} == {"dt-manager-a"}
         assert all(card.card_title == "淘汰款提醒" for card in sender.arrival_cards)
         assert all(card.left_label == "淘汰款" and card.left_count == 1 for card in sender.arrival_cards)
         assert all("2026-W29 | PH | MAIN-E | SUB-E | 销售A | 淘汰商品 | 销量趋势变差" in card.sku_markdown for card in sender.arrival_cards)

@@ -102,6 +102,33 @@ def create_listings_batch(
     return result
 
 
+@router.post("/listings/{listing_id}/product-detail", response_model=schemas.OpportunityRead)
+def open_listing_product_detail(
+    listing_id: str,
+    payload: schemas.ListingProductDetailRequest,
+    db: Session = Depends(get_db),
+    auth: AuthContext | None = Depends(require_roles("operator", "manager")),
+) -> object:
+    try:
+        opportunity = services.ensure_listing_product_detail(
+            db,
+            listing_id,
+            payload.main_sku,
+            manager_access(auth),
+            auth.operator_name if auth else None,
+            auth.user.name if auth else "local",
+            auth.user.id if auth else None,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    db.commit()
+    return opportunity
+
+
 @router.patch("/listings/{listing_id}", response_model=schemas.ListingRecordRead)
 def update_listing(
     listing_id: str,

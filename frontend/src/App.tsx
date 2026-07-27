@@ -486,6 +486,24 @@ function App() {
     if (group) openProductDetail(group, item.id);
   }
 
+  async function openListingProductDetail(listingId: string, mainSku: string, opportunityId?: string) {
+    try {
+      const current = opportunityId ? opportunities.find((item) => item.id === opportunityId) : undefined;
+      if (current) {
+        openOpportunityDetail(current);
+        return;
+      }
+      const item = await api.listingProductDetail(listingId, mainSku);
+      detailSnapshotCache.current.set(item.id, item.snapshot || {});
+      const next = [item, ...opportunities.filter((entry) => entry.id !== item.id)];
+      setOpportunities(next);
+      const group = groupOpportunities(next).find((entry) => entry.items.some((child) => child.id === item.id));
+      if (group) openProductDetail(group, item.id);
+    } catch (error) {
+      setStatusMessage(error instanceof Error && error.message ? error.message : "无法打开商品详情");
+    }
+  }
+
   function openClaimDetail(group: ProductGroup, childId?: string | null) {
     setClaimDetailChildId(childId || group.items[0]?.id || null);
   }
@@ -697,7 +715,13 @@ function App() {
   function applyAuthSession(session: AuthSession) {
     setAuthSession(session);
     setAuthToken(session.access_token);
-    setActiveRole(session.default_role);
+    const params = new URLSearchParams(window.location.search);
+    const requestedRole: RoleKey | null = params.get("role") === "operator" ? "operator" : params.get("role") === "supervisor" ? "manager" : null;
+    const roleAllowed = requestedRole === "operator"
+      ? session.roles.some((item) => item.role === "operator" || item.role === "super_admin")
+      : requestedRole === "manager" && session.roles.some((item) => item.role === "manager" || item.role === "super_admin");
+    const nextRole = requestedRole && roleAllowed ? requestedRole : session.default_role;
+    setActiveRole(nextRole);
     if (session.operator_name) setActiveOperator(session.operator_name);
     setLoginName(session.user.name);
   }
@@ -1392,10 +1416,8 @@ function App() {
                 canManage={canManage}
                 preset={listingPreset}
                 productLinks={listingProductLinks}
-                onOpenProduct={(opportunityId) => {
-                  const item = opportunities.find((entry) => entry.id === opportunityId);
-                  if (item) openOpportunityDetail(item);
-                  else setStatusMessage("未找到对应商品详情");
+                onOpenProduct={(listingId, mainSku, opportunityId) => {
+                  void openListingProductDetail(listingId, mainSku, opportunityId);
                 }}
                 onStatus={setStatusMessage}
               />

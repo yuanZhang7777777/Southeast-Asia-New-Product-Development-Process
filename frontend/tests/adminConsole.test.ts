@@ -155,5 +155,5 @@ test("api 追加超管端点且重置密码留空发送 null 自动生成", () =
   assert.match(apiSource, /`\/admin\/import-batches\$\{query\(filter\)\}`/);
   assert.match(apiSource, /`\/admin\/import-batches\/\$\{id\}\/disable`/);
   assert.match(apiSource, /adminFeatureSwitches: \(\) => request<FeatureSwitch\[\]>\("\/admin\/feature-switches"\)/);
-  assert.match(apiSource, /updateRoleMapping: \(id: string, payload: \{ role\?: string; enabled\?: boolean \}\)/);
+  assert.match(apiSource, /notification_enabled\?: boolean/);
 });

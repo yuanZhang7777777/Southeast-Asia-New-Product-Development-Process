@@ -733,6 +733,10 @@ class ManualListingContext(BaseModel):
     business_period: str | None = None
 
 
+class ListingProductDetailRequest(BaseModel):
+    main_sku: str = Field(min_length=1, max_length=128)
+
+
 class ListingBatchRequest(BaseModel):
     task_key: str
     rows: list[ListingBatchRow] = Field(default_factory=list)
@@ -903,6 +907,7 @@ class RoleMappingCreate(BaseModel):
     group_name: str | None = None
     site: str | None = None
     manager_user_id: str | None = None
+    notification_enabled: bool = True
 
 
 class RoleMappingRead(RoleMappingCreate):
@@ -1045,6 +1050,7 @@ class RoleMappingUpdate(BaseModel):
     site: str | None = None
     manager_user_id: str | None = None
     enabled: bool | None = None
+    notification_enabled: bool | None = None
 
 
 class ImportBatchPage(BaseModel):

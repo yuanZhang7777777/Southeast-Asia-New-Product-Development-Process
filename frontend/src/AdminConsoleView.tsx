@@ -113,6 +113,18 @@ export function AdminConsoleView(props: { onStatus: (message: string) => void })
     }
   }
 
+  async function toggleRoleMappingNotification(mapping: RoleMapping) {
+    try {
+      const notification_enabled = !mapping.notification_enabled;
+      await api.updateRoleMapping(mapping.id, { notification_enabled });
+      await loadBase();
+      onStatus(notification_enabled ? `已开启 ${mapping.name} 的卡片通知` : `已关闭 ${mapping.name} 的卡片通知`);
+    } catch (error) {
+      onStatus(readableError(error, "卡片通知状态更新失败"));
+    }
+  }
+
+
 
   function openUserEditor(user?: AdminUser) {
     const mapping = user ? mappingsForUser(user.name, roleMappings)[0] : null;
@@ -275,6 +287,7 @@ export function AdminConsoleView(props: { onStatus: (message: string) => void })
                 <span>登录密码</span>
                 <span>角色</span>
                 <span>状态</span>
+                <span>卡片通知</span>
                 <span>操作</span>
               </div>
               {users.map((user) => {
@@ -288,6 +301,13 @@ export function AdminConsoleView(props: { onStatus: (message: string) => void })
                       {mappings.length ? mappings.map((mapping) => roleLabel(mapping.role)).join("、") : <span className="muted">未配置角色</span>}
                     </span>
                     <span>{user.enabled ? <span className="pill green">启用中</span> : <span className="pill gray">已停用</span>}</span>
+                    <span className="action-row compact-actions">
+                      {mappings.length ? mappings.map((mapping) => (
+                        <button className="btn" key={mapping.id} type="button" onClick={() => void toggleRoleMappingNotification(mapping)}>
+                          {mapping.notification_enabled ? "接收" : "关闭"}
+                        </button>
+                      )) : <span className="muted">-</span>}
+                    </span>
                     <span className="action-row compact-actions">
                       <button className="btn" type="button" onClick={() => openUserEditor(user)}>
                         <Pencil size={14} />

@@ -47,6 +47,7 @@ SOURCE_TYPE = "history_selection1"
 AUDIT_ACTION = "history.selection1_imported"
 REVERT_AUDIT_ACTION = "history.selection1_import_reverted"
 SHEET_PERIOD_PATTERN = re.compile(r"开发(\d{4})期")
+SPECIAL_SHEET_PERIODS = {"开发-财根团队汇总": "开发0727期-财根"}
 NEW_GENERATION_MIN = 414  # 用户拍板（2026-07-26）：0414/0421 与新世代同表头结构，一并纳入
 OLD_GENERATION_MIN = 815  # 开发0815期~0924期为旧世代杂糅结构（2026-07-26 拍板：全部导入，标记 generation=old）
 HEADER_PROBE_ROWS = 3  # 表头行动态探测范围：前 3 行
@@ -72,6 +73,8 @@ def period_from_sheet(sheet_name: str) -> str | None:
 
 def sheet_skip_reason(sheet_name: str) -> str | None:
     period = period_from_sheet(sheet_name)
+    if sheet_name in SPECIAL_SHEET_PERIODS:
+        return None
     if period is None:
         return "非期数sheet"
     if int(period) < NEW_GENERATION_MIN:
@@ -80,6 +83,8 @@ def sheet_skip_reason(sheet_name: str) -> str | None:
 
 
 def sheet_generation(sheet_name: str) -> str | None:
+    if sheet_name in SPECIAL_SHEET_PERIODS:
+        return "new"
     period = period_from_sheet(sheet_name)
     if period is None:
         return None
@@ -123,7 +128,7 @@ def parse_selection1_workbook(
             if reason:
                 skipped_sheets.append({"sheet": sheet_name, "reason": reason})
                 continue
-            period = f"开发{period_from_sheet(sheet_name)}期"
+            period = SPECIAL_SHEET_PERIODS.get(sheet_name) or f"开发{period_from_sheet(sheet_name)}期"
             generation = sheet_generation(sheet_name)
             worksheet = workbook[sheet_name]
             try:

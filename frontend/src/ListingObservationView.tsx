@@ -102,7 +102,7 @@ export function ListingObservationView(props: {
     nonce: number;
   } | null;
   productLinks: ListingProductLink[];
-  onOpenProduct: (opportunityId: string) => void;
+  onOpenProduct: (listingId: string, mainSku: string, opportunityId?: string) => void;
   onStatus: (message: string) => void;
 }) {
   const [data, setData] = useState<ListingWorkbenchResponse>(EMPTY_DATA);
@@ -907,9 +907,12 @@ export function ListingObservationView(props: {
                   <button
                     type="button"
                     className="listing-product-link"
-                    disabled={!productLink}
-                    onClick={() => productLink && props.onOpenProduct(productLink.opportunity_id)}
-                    title={productLink ? "打开商品详情" : "暂无可关联的商品详情"}
+                    disabled={!group.listings.length}
+                    onClick={() => {
+                      const listing = group.listings[0];
+                      if (listing) props.onOpenProduct(listing.id, group.context.main_sku, productLink?.opportunity_id);
+                    }}
+                    title={productLink ? "打开商品详情" : "创建待补商品详情"}
                   >
                     <b>{group.context.main_sku}</b>
                     <span>{group.context.main_sku_name || "-"}</span>

@@ -206,7 +206,7 @@ def update_role_mapping(
     actor_user_id: str | None = None,
 ) -> models.RoleMapping:
     changed: dict[str, dict[str, object]] = {}
-    for field in ("name", "role", "dingtalk_user_id", "group_name", "site", "manager_user_id", "enabled"):
+    for field in ("name", "role", "dingtalk_user_id", "group_name", "site", "manager_user_id", "enabled", "notification_enabled"):
         if field in values and getattr(mapping, field) != values[field]:
             changed[field] = {"from": getattr(mapping, field), "to": values[field]}
             setattr(mapping, field, values[field])

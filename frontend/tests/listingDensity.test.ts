@@ -161,3 +161,10 @@ test("运营认领筛选和列表控制在桌面同一行", () => {
   assert.match(stylesSource, /\.claim-workflow-filters select\s*\{[\s\S]*?width:\s*180px;[\s\S]*?max-width:\s*180px;/);
   assert.match(stylesSource, /@media \(max-width: 900px\)\s*\{[\s\S]*?\.claim-toolbar-row\s*\{[\s\S]*?flex-wrap:\s*wrap;/);
 });
+
+
+test("listing-only SKU opens editable detail", () => {
+  assert.match(listingSource, /props\.onOpenProduct\(listing\.id, group\.context\.main_sku, productLink\?\.opportunity_id\)/);
+  assert.doesNotMatch(listingSource, /disabled=\{!productLink\}/);
+  assert.match(appSource, /openListingProductDetail/);
+});

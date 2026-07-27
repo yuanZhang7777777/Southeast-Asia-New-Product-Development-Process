@@ -19,7 +19,7 @@ from app.workflow_status import (
 )
 
 
-MANAGER_ROLES = ("manager", "super_admin")
+MANAGER_ROLES = ("manager",)
 TEST_RECEIVER_ROLES = ("operator", "sales", "supervisor", "manager", "super_admin")
 ELIMINATION_POSITIONING = "淘汰款"
 ELIMINATION_CARD_TITLE = "淘汰款提醒"
@@ -73,6 +73,9 @@ def send_arrival_daily_cards(
         if mapping is None or not mapping.dingtalk_user_id:
             logs.append(services.skipped_dingtalk_notification(db, dedupe_key, group.salesperson_name, "skipped_no_receiver"))
             continue
+        if test_mapping is None and not mapping.notification_enabled:
+            logs.append(services.skipped_dingtalk_notification(db, dedupe_key, group.salesperson_name, "skipped_notification_disabled"))
+            continue
         logs.append(
             _send_arrival_card(
                 db,
@@ -82,7 +85,7 @@ def send_arrival_daily_cards(
                 settings,
                 sender,
                 action_text="去处理",
-                action_url=services.dingtalk_action_url(settings, "operator"),
+                action_url=services.dingtalk_action_url(settings, "operator", view="research"),
             )
         )
     return logs
@@ -106,6 +109,9 @@ def send_operator_listing_reminder_cards(
         mapping = test_mapping or services.dingtalk_mapping_for_name(db, group.salesperson_name, ("operator", "sales"))
         if mapping is None or not mapping.dingtalk_user_id:
             logs.append(services.skipped_dingtalk_notification(db, dedupe_key, group.salesperson_name, "skipped_no_receiver"))
+            continue
+        if test_mapping is None and not mapping.notification_enabled:
+            logs.append(services.skipped_dingtalk_notification(db, dedupe_key, group.salesperson_name, "skipped_notification_disabled"))
             continue
         total = group.waiting_listing_count + group.waiting_secondary_count
         payload = schemas.DingTalkNewProductTodoCardRequest(
@@ -513,7 +519,11 @@ def _manager_mappings(db: Session, settings: Settings) -> list[models.RoleMappin
     return list(
         db.scalars(
             select(models.RoleMapping)
-            .where(models.RoleMapping.enabled.is_(True), models.RoleMapping.role.in_(MANAGER_ROLES))
+            .where(
+                models.RoleMapping.enabled.is_(True),
+                models.RoleMapping.notification_enabled.is_(True),
+                models.RoleMapping.role.in_(MANAGER_ROLES),
+            )
             .order_by(models.RoleMapping.role, models.RoleMapping.name)
         )
     )

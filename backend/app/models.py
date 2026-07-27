@@ -52,6 +52,7 @@ class RoleMapping(TimestampMixin, Base):
     manager_user_id: Mapped[str | None] = mapped_column(String(36))
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
 
+    notification_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
 
 class OperatorAssignmentProfile(TimestampMixin, Base):
     __tablename__ = "operator_assignment_profile"

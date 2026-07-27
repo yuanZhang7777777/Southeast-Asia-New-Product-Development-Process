@@ -53,7 +53,6 @@ from app.workflow_status import (
 
 EXCEL_TIMEZONE = timezone(timedelta(hours=8))
 SUPERVISOR_NAME = "练玉君"
-SUPERVISOR_CARD_RECEIVER_NAMES = ("刘学城", "徐成芬", "徐仔云", "罗艳娇", "闫歌")
 
 REVIEW_TO_OPPORTUNITY_STATUS = {
     REVIEW_APPROVED: OPPORTUNITY_READY_FOR_STOCKING,
@@ -1933,6 +1932,129 @@ def create_listing_batch(
             409,
         ) from exc
     return [*reused, *created]
+
+
+def ensure_listing_product_detail(
+    db: Session,
+    listing_id: str,
+    main_sku: str,
+    actor_is_manager: bool,
+    operator_name: str | None,
+    actor_name: str | None,
+    actor_user_id: str | None,
+) -> models.NewProductOpportunity:
+    listing = db.get(models.ListingRecord, listing_id)
+    if listing is None:
+        raise LookupError("listing record not found")
+    requested_main_sku = _clean_text(main_sku)
+    if not requested_main_sku:
+        raise ValueError("main_sku is required")
+    if not actor_is_manager and listing.salesperson_name != operator_name:
+        raise PermissionError("listing record does not belong to current operator")
+
+    binding = db.scalar(
+        select(models.ListingSkuBinding).where(
+            models.ListingSkuBinding.listing_record_id == listing.id,
+            models.ListingSkuBinding.main_sku == requested_main_sku,
+        )
+    )
+    if binding and binding.opportunity_id:
+        opportunity = db.get(models.NewProductOpportunity, binding.opportunity_id)
+        if opportunity is not None:
+            return opportunity
+
+    listing_site = normalize_site_code(listing.site or listing.country)
+    candidates = [
+        item for item in db.scalars(
+            select(models.NewProductOpportunity).where(
+                models.NewProductOpportunity.main_sku == requested_main_sku,
+                models.NewProductOpportunity.current_status != OPPORTUNITY_DISABLED,
+            )
+        )
+        if not listing_site or normalize_site_code(item.site or item.country) == listing_site
+    ]
+    period_candidates = [item for item in candidates if listing.business_period and item.batch == listing.business_period]
+    opportunity = period_candidates[0] if len(period_candidates) == 1 else (candidates[0] if len(candidates) == 1 else None)
+    if opportunity is not None:
+        if binding is None:
+            binding = models.ListingSkuBinding(
+                id=models.new_id(),
+                listing_record_id=listing.id,
+                main_sku=requested_main_sku,
+                salesperson_name=listing.salesperson_name,
+                binding_source="history_listing",
+            )
+            db.add(binding)
+        binding.opportunity_id = opportunity.id
+        audit(
+            db,
+            "listing.product_detail_linked",
+            "listing_record",
+            listing.id,
+            {"main_sku": requested_main_sku, "opportunity_id": opportunity.id},
+            actor_name,
+            actor_user_id,
+        )
+        return opportunity
+
+    known_sub_sku = _clean_text(binding.sub_sku if binding else None) or _clean_text(listing.representative_sub_sku)
+    placeholder_sub_sku = not known_sub_sku
+    sub_sku = known_sub_sku or requested_main_sku
+    listing_snapshot = {
+        "listing_record_id": listing.id,
+        "shop": listing.shop,
+        "item": listing.item,
+        "main_sku": requested_main_sku,
+        "source_type": listing.source_type,
+        "sub_sku_needs_confirmation": placeholder_sub_sku,
+    }
+    opportunity = models.NewProductOpportunity(
+        id=models.new_id(),
+        source_type="history_listing_only",
+        source_file="FineBI历史刊登",
+        source_sheet=listing.source_type,
+        batch=listing.business_period or "历史刊登",
+        country=listing.country,
+        site=listing.site,
+        developer_name=listing.salesperson_name,
+        main_sku_name=listing.main_sku_name,
+        main_sku=requested_main_sku,
+        sub_sku_name="待补子 SKU" if placeholder_sub_sku else None,
+        sub_sku=sub_sku,
+        current_status="historical_archive",
+        snapshot={"listing_only": listing_snapshot},
+    )
+    db.add(opportunity)
+    db.add(
+        models.SourceRecordSnapshot(
+            id=models.new_id(),
+            opportunity_id=opportunity.id,
+            source_file="FineBI历史刊登",
+            source_sheet=listing.source_type,
+            payload={"listing_only": listing_snapshot},
+        )
+    )
+    if binding is None:
+        binding = models.ListingSkuBinding(
+            id=models.new_id(),
+            listing_record_id=listing.id,
+            main_sku=requested_main_sku,
+            sub_sku=known_sub_sku or None,
+            salesperson_name=listing.salesperson_name,
+            binding_source="history_listing",
+        )
+        db.add(binding)
+    binding.opportunity_id = opportunity.id
+    audit(
+        db,
+        "listing.product_detail_created",
+        "new_product_opportunity",
+        opportunity.id,
+        {"listing_record_id": listing.id, "main_sku": requested_main_sku},
+        actor_name,
+        actor_user_id,
+    )
+    return opportunity
 
 
 def listing_source_context(
@@ -4377,21 +4499,18 @@ def notify_supervisor_new_product_todo_card(
         return None
     left_count = count_pending_claim_reviews(db)
     right_count = count_pending_not_claim_reviews(db)
-    logs = [
-        _send_or_skip_dingtalk_todo(
-            db,
-            receiver_name=receiver_name,
-            receiver_roles=("supervisor", "manager", "super_admin"),
-            card_role="supervisor",
-            left_count=left_count,
-            right_count=right_count,
-            action_url=dingtalk_action_url(settings, "supervisor"),
-            out_track_id=f"new-product-todo-supervisor-{business_key}-{index}",
-            sender=sender,
-        )
-        for index, receiver_name in enumerate(SUPERVISOR_CARD_RECEIVER_NAMES, start=1)
-    ]
-    return next((log for log in logs if log.send_status == "sent"), logs[0] if logs else None)
+    return _send_or_skip_dingtalk_todo(
+        db,
+        receiver_name=supervisor_name,
+        receiver_roles=("manager",),
+        card_role="supervisor",
+        left_count=left_count,
+        right_count=right_count,
+        action_url=dingtalk_action_url(settings, "supervisor"),
+        out_track_id=f"new-product-todo-supervisor-{business_key}",
+        sender=sender,
+        test_receiver_name=settings.dingtalk_card_test_receiver_name,
+    )
 
 
 def count_pending_claim_groups(db: Session, operator_name: str) -> int:
@@ -4475,9 +4594,10 @@ def count_pending_review_observation_periods(db: Session, owner: str | None = No
     return int(db.scalar(statement) or 0)
 
 
-def dingtalk_action_url(settings: Settings, role: str) -> str:
+def dingtalk_action_url(settings: Settings, role: str, view: str | None = None) -> str:
     role_param = "operator" if role == "operator" else "supervisor"
-    return f"{settings.platform_base_url.rstrip('/')}/?from=ding&role={role_param}"
+    url = f"{settings.platform_base_url.rstrip('/')}/?from=ding&role={role_param}"
+    return f"{url}&view={view}" if view else url
 
 
 def _send_or_skip_dingtalk_todo(
@@ -4496,6 +4616,8 @@ def _send_or_skip_dingtalk_todo(
     target_roles = ("operator", "sales", "supervisor", "manager", "super_admin") if test_receiver_name.strip() else receiver_roles
     mapping = dingtalk_mapping_for_name(db, target_name, target_roles)
     dedupe_key = f"dingtalk_card:{card_role}:{out_track_id}"
+    if mapping is not None and not test_receiver_name.strip() and not mapping.notification_enabled:
+        return skipped_dingtalk_notification(db, dedupe_key, receiver_name, "skipped_notification_disabled")
     if mapping is None or not mapping.dingtalk_user_id:
         return skipped_dingtalk_notification(db, dedupe_key, target_name, "skipped_no_receiver")
     payload = schemas.DingTalkNewProductTodoCardRequest(

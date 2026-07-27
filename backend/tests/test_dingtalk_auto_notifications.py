@@ -118,17 +118,14 @@ def test_operator_auto_card_counts_pending_claim_main_sku_groups() -> None:
         assert sender.cards[0].action_url == "https://np.example/?from=ding&role=operator"
 
 
-def test_supervisor_card_fans_out_to_real_supervisor_allowlist_even_with_test_receiver() -> None:
+def test_supervisor_card_uses_test_receiver_once_without_broadcasting() -> None:
     sender = FakeSender()
     settings = Settings(dingtalk_card_autosend_enabled=True, dingtalk_card_test_receiver_name="刘学城", platform_base_url="https://np.example")
     with SessionLocal() as db:
         db.add_all(
             [
                 models.RoleMapping(name="刘学城", role="super_admin", dingtalk_user_id="dt-liu", enabled=True),
-                models.RoleMapping(name="徐成芬", role="manager", dingtalk_user_id="dt-xcf", enabled=True),
-                models.RoleMapping(name="徐仔云", role="manager", dingtalk_user_id="dt-xzy", enabled=True),
-                models.RoleMapping(name="罗艳娇", role="manager", dingtalk_user_id="dt-lyj", enabled=True),
-                models.RoleMapping(name="闫歌", role="manager", dingtalk_user_id="dt-yg", enabled=True),
+                models.RoleMapping(name="练玉君", role="manager", dingtalk_user_id="dt-lian", enabled=True),
                 models.RoleMapping(name="其他主管", role="manager", dingtalk_user_id="dt-other", enabled=True),
             ]
         )
@@ -146,8 +143,8 @@ def test_supervisor_card_fans_out_to_real_supervisor_allowlist_even_with_test_re
         log = services.notify_supervisor_new_product_todo_card(db, "not-claim-test", settings, sender)
 
         assert log.send_status == "sent"
-        assert {card.receiver_dingtalk_user_id for card in sender.cards} == {"dt-liu", "dt-xcf", "dt-xzy", "dt-lyj", "dt-yg"}
-        assert len(sender.cards) == 5
+        assert {card.receiver_dingtalk_user_id for card in sender.cards} == {"dt-liu"}
+        assert len(sender.cards) == 1
         assert all(card.receiver_role == "supervisor" for card in sender.cards)
         assert all(card.left_count == 1 for card in sender.cards)
     assert all(card.right_count == 1 for card in sender.cards)
