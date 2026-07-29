@@ -5,13 +5,14 @@ from pathlib import Path
 os.environ["DATABASE_URL"] = f"sqlite:///{Path(__file__).with_name('test_historical_selection1.db')}"
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from openpyxl import Workbook  # noqa: E402
+from openpyxl import Workbook, load_workbook  # noqa: E402
 
 from app import models  # noqa: E402
 from app.db import Base, SessionLocal, engine  # noqa: E402
 from app.historical_selection1_import import (  # noqa: E402
     SOURCE_TYPE,
     apply_selection1_rows,
+    normalize_selection1_history_rows,
     parse_selection1_workbook,
     plan_selection1_rows,
     revert_selection1_import,
@@ -103,19 +104,18 @@ def parse_fixture(tmp_path: Path) -> dict:
     return parse_selection1_workbook(source)
 
 
-def test_parse_scopes_both_generations_and_keeps_full_snapshot(tmp_path: Path) -> None:
+def test_parse_scopes_current_periods_and_keeps_full_snapshot(tmp_path: Path) -> None:
     report = parse_fixture(tmp_path)
     assert report["sheets"] == [
         {"sheet": "开发0623期", "period": "开发0623期", "rows": 2, "skipped": 2},
-        {"sheet": "开发0820期--表格容易错行", "period": "开发0820期", "rows": 1, "skipped": 1,
-         "generation": "old"},
     ]
     skipped = {entry["sheet"]: entry["reason"] for entry in report["skipped_sheets"]}
     assert skipped == {
         "开发0407期": "早于0414期",
+        "开发0820期--表格容易错行": "排除旧期",
         "说明文档": "非期数sheet",
     }
-    assert report["row_count"] == 3
+    assert report["row_count"] == 2
     first = report["rows"][0]
     assert first["sub_sku"] == "HXG15GD"
     assert first["main_sku"] == "HXG15G"
@@ -125,92 +125,64 @@ def test_parse_scopes_both_generations_and_keeps_full_snapshot(tmp_path: Path) -
     assert first["developer_name"] == "开发员A"
     assert first["product_type"] == "引流"
     cells = first["snapshot"]["fields_by_cell"]
-    # 『月销次高/月销第三高』同名表头两列各自完整保留，不串值。
     assert cells["N"]["value"] == 11.5 and cells["N"]["group"] == "月销次高"
     assert cells["Q"]["value"] == 9.9 and cells["Q"]["group"] == "月销第三高"
     assert cells["O"]["value"] == 300
     assert cells["R"]["value"] == 120
-    # 核价列（BY）在快照内，无 BY:CB 缺口。
     assert cells["BY"] == {"header": "采购核价人", "group": "供应链核价", "value": "核价员A"}
-    # 新世代快照形状保持既有（不带世代标记，0414-0623 已入库）。
-    assert "generation" not in first["snapshot"]
 
 
-def test_parse_old_generation_two_layer_sheet(tmp_path: Path) -> None:
+def test_parse_can_limit_to_requested_sheets(tmp_path: Path) -> None:
+    source = tmp_path / "selection1.xlsx"
+    build_selection1_workbook(source)
+    report = parse_selection1_workbook(source, selected_sheets={"开发0623期"})
+    assert report["row_count"] == 2
+    assert [row["sub_sku"] for row in report["rows"]] == ["HXG15GD", "TAB10KB"]
+    assert {entry["sheet"] for entry in report["skipped_sheets"]} >= {"开发0820期--表格容易错行"}
+
+
+def test_long_positioning_note_stays_only_in_source_snapshot(tmp_path: Path) -> None:
+    source = tmp_path / "selection1.xlsx"
+    build_selection1_workbook(source)
+    workbook = load_workbook(source)
+    workbook["开发0623期"]["K3"] = "x" * 65
+    workbook.save(source)
+
+    row = parse_selection1_workbook(source)["rows"][0]
+    assert row["product_type"] is None
+    assert row["snapshot"]["fields_by_cell"]["K"]["value"] == "x" * 65
+
+def test_parse_excludes_old_generation_sheets(tmp_path: Path) -> None:
     report = parse_fixture(tmp_path)
-    old = [row for row in report["rows"] if row["batch"] == "开发0820期"]
-    assert len(old) == 1
-    row = old[0]
-    # 公式行（无子SKU）跳过后，数据从第 4 行起。
-    assert row["source_row"] == 4
-    assert row["main_sku"] == "OLD820"
-    assert row["sub_sku"] == "OLD820A"
-    # 旧世代无站点列：site/country 置空，不造数。
-    assert row["site"] is None
-    assert row["country"] is None
-    assert row["developer_department"] == "产品开发四部"
-    assert row["developer_name"] == "金彩"
-    assert row["keyword"] == "pet bed"
-    assert row["main_sku_name"] == "宠物窝"
-    assert row["sub_sku_name"] == "蓝色招财猫S码"
-    assert row["product_type"] is None and row["reason"] is None
-    assert row["snapshot"]["generation"] == "old"
-    assert row["snapshot"]["site_raw"] is None
-    cells = row["snapshot"]["fields_by_cell"]
-    # 重复『子SKU』表头取首列（L），数据不串列。
-    assert cells["L"]["value"] == "OLD820A" and "M" not in cells
-    # 带换行的竞品表头与参考定价（比索）全列保真。
-    assert cells["N"] == {"header": "竞品单价\n（链接1）\n(比索）", "group": "竞品单价\n（链接1）\n(比索）",
-                          "value": 130}
-    assert cells["O"]["value"] == 392
-    assert cells["P"]["header"] == "参考定价   （比索）" and cells["P"]["value"] == 130
-    # 双层分组（开发询价）与新世代同一套解析逻辑。
-    assert cells["Q"] == {"header": "国内参考链接", "group": "开发询价", "value": "https://detail.1688.com/offer/1"}
-    assert cells["R"] == {"header": "供应商名称", "group": "开发询价", "value": "唐山盈好"}
+
+    assert all(row["batch"] != "开发0820期" for row in report["rows"])
+    assert {entry["sheet"]: entry["reason"] for entry in report["skipped_sheets"]}["开发0820期--表格容易错行"] == "排除旧期"
 
 
-def test_parse_old_generation_single_layer_variants(tmp_path: Path) -> None:
+def test_parse_excludes_old_generation_single_layer_variants(tmp_path: Path) -> None:
     source = tmp_path / "选品1：旧世代单层变体.xlsx"
     build_old_generation_workbook(source)
     report = parse_selection1_workbook(source)
-    assert report["sheets"] == [
-        {"sheet": "开发0903期", "period": "开发0903期", "rows": 1, "skipped": 0, "generation": "old"},
-        {"sheet": "开发0827期", "period": "开发0827期", "rows": 2, "skipped": 0, "generation": "old"},
-    ]
-    assert report["skipped_sheets"] == [{"sheet": "开发0908期", "reason": "前3行未探测到主SKU/子SKU表头"}]
-    by_sub = {row["sub_sku"]: row for row in report["rows"]}
-    # 单层表头 + 空行：数据从第 3 行起；旧世代别名（关键词组 / 主SKU名称（33））生效。
-    blank_variant = by_sub["OLD903A"]
-    assert blank_variant["source_row"] == 3
-    assert blank_variant["main_sku"] == "OLD903"
-    assert blank_variant["keyword"] == "storage box"
-    assert blank_variant["main_sku_name"] == "收纳箱"
-    assert blank_variant["site"] is None and blank_variant["country"] is None
-    assert blank_variant["snapshot"]["generation"] == "old"
-    # 单层表头 + 数据紧跟（0827 变体）：第 2 行即数据，不被当成第二层表头吞掉。
-    first_direct = by_sub["OLD827A1"]
-    assert first_direct["source_row"] == 2
-    assert first_direct["main_sku"] == "OLD827"
-    second_direct = by_sub["OLD827A2"]
-    assert second_direct["source_row"] == 3
-    # 主SKU 空缺沿用现行回退规则（=子SKU），与新世代行为一致。
-    assert second_direct["main_sku"] == "OLD827A2"
-    assert second_direct["snapshot"]["generation"] == "old"
 
+    assert report["rows"] == []
+    assert report["sheets"] == []
+    assert {entry["sheet"]: entry["reason"] for entry in report["skipped_sheets"]} == {
+        "开发0903期": "排除旧期",
+        "开发0827期": "排除旧期",
+        "开发0908期": "排除旧期",
+    }
 
 def test_dry_run_writes_nothing(tmp_path: Path) -> None:
     report = parse_fixture(tmp_path)
     with SessionLocal() as db:
         plan = plan_selection1_rows(db, report["rows"])
-    assert plan["would_create"] == 3
-    assert plan["by_period"]["开发0623期"] == {"rows": 2, "would_create": 2, "skipped": 0}
-    assert plan["by_period"]["开发0820期"] == {"rows": 1, "would_create": 1, "skipped": 0}
+    assert plan["would_create"] == 2
+    assert plan["by_period"] == {"开发0623期": {"rows": 2, "would_create": 2, "skipped": 0}}
     with SessionLocal() as db:
         assert db.query(models.NewProductOpportunity).count() == 0
         assert db.query(models.ImportBatch).count() == 0
         assert db.query(models.SourceRecordSnapshot).count() == 0
         assert db.query(models.AuditLog).count() == 0
-
 
 def test_apply_creates_archive_rows_without_tasks_or_notifications(tmp_path: Path) -> None:
     report = parse_fixture(tmp_path)
@@ -220,129 +192,348 @@ def test_apply_creates_archive_rows_without_tasks_or_notifications(tmp_path: Pat
             imported_by="test", source_sha256=report["source_sha256"],
         )
         db.commit()
-    assert counts["created"] == 3
+    assert counts["created"] == 2
     assert counts["batch_already_imported"] is False
     with SessionLocal() as db:
         opportunities = db.query(models.NewProductOpportunity).all()
         assert {item.source_type for item in opportunities} == {SOURCE_TYPE}
         assert {item.current_status for item in opportunities} == {"historical_archive"}
-        assert {item.sub_sku for item in opportunities} == {"HXG15GD", "TAB10KB", "OLD820A"}
-        old_row = next(item for item in opportunities if item.sub_sku == "OLD820A")
-        assert old_row.snapshot["generation"] == "old"
-        assert old_row.site is None and old_row.country is None
-        assert db.query(models.SourceRecordSnapshot).count() == 3
+        assert {item.sub_sku for item in opportunities} == {"HXG15GD", "TAB10KB"}
+        assert db.query(models.SourceRecordSnapshot).count() == 2
         assert db.query(models.FlowTask).count() == 0
         assert db.query(models.FlowInstance).count() == 0
         assert db.query(models.SalesClaimForecast).count() == 0
         assert db.query(models.NotificationLog).count() == 0
         batch = db.query(models.ImportBatch).one()
         assert batch.status == "completed"
-        assert batch.created_count == 3
-
+        assert batch.created_count == 2
 
 def test_rerun_is_idempotent(tmp_path: Path) -> None:
     report = parse_fixture(tmp_path)
     with SessionLocal() as db:
-        apply_selection1_rows(
-            db, report["rows"], source_label=report["source_file"], batch_tag="t1",
-            source_sha256=report["source_sha256"],
-        )
+        apply_selection1_rows(db, report["rows"], source_label=report["source_file"], batch_tag="t1", source_sha256=report["source_sha256"])
         db.commit()
     with SessionLocal() as db:
-        same_tag = apply_selection1_rows(
-            db, report["rows"], source_label=report["source_file"], batch_tag="t1",
-            source_sha256=report["source_sha256"],
-        )
+        same_tag = apply_selection1_rows(db, report["rows"], source_label=report["source_file"], batch_tag="t1", source_sha256=report["source_sha256"])
         db.commit()
     assert same_tag["batch_already_imported"] is True
     assert same_tag["created"] == 0
     with SessionLocal() as db:
-        second = apply_selection1_rows(
-            db, report["rows"], source_label=report["source_file"], batch_tag="t2",
-            source_sha256=report["source_sha256"],
-        )
+        second = apply_selection1_rows(db, report["rows"], source_label=report["source_file"], batch_tag="t2", source_sha256=report["source_sha256"])
         db.commit()
-    # 同文件换新批次标签允许通过批次闸（扩范围补导场景），行级判重兜底不重复建行。
     assert second["batch_already_imported"] is False
     assert second["created"] == 0
-    assert second["skipped_existing_archive"] == 3
+    assert second["skipped_existing_archive"] == 2
     with SessionLocal() as db:
-        third = apply_selection1_rows(
-            db, report["rows"], source_label=report["source_file"], batch_tag="t3",
-            source_sha256=None,
-        )
+        third = apply_selection1_rows(db, report["rows"], source_label=report["source_file"], batch_tag="t3", source_sha256=None)
         db.commit()
     assert third["created"] == 0
-    assert third["skipped_existing_archive"] == 3
+    assert third["skipped_existing_archive"] == 2
     with SessionLocal() as db:
-        assert db.query(models.NewProductOpportunity).count() == 3
-        assert db.query(models.SourceRecordSnapshot).count() == 3
+        assert db.query(models.NewProductOpportunity).count() == 2
+        assert db.query(models.SourceRecordSnapshot).count() == 2
 
-
-def test_existing_current_flow_row_is_skipped_and_untouched(tmp_path: Path) -> None:
+def test_existing_current_flow_row_receives_source_backfill_without_state_change(tmp_path: Path) -> None:
     with SessionLocal() as db:
-        db.add(
-            models.NewProductOpportunity(
-                source_type=CURRENT_SELECTION1_SOURCE_TYPE,
-                source_sheet="开发0623期",
-                batch="开发0623期",
-                main_sku="HXG15G",
-                sub_sku="HXG15GD",
-                site="PH",
-                country="PH",
-                current_status="pending_assignment",
-                snapshot={"marker": "keep-me"},
-            )
-        )
+        db.add(models.NewProductOpportunity(
+            source_type=CURRENT_SELECTION1_SOURCE_TYPE,
+            source_sheet="开发0623期", batch="开发0623期", main_sku="HXG15G", sub_sku="HXG15GD",
+            site="PH", country="PH", current_status="pending_assignment", snapshot={"marker": "keep-me"},
+        ))
         db.commit()
     report = parse_fixture(tmp_path)
+    source_row = next(row for row in report["rows"] if row["sub_sku"] == "HXG15GD")
+    source_row["image_url"] = "https://oss.example/HXG15GD.png"
     with SessionLocal() as db:
-        counts = apply_selection1_rows(
-            db, report["rows"], source_label=report["source_file"], batch_tag="t-current",
-            source_sha256=report["source_sha256"],
-        )
+        counts = apply_selection1_rows(db, report["rows"], source_label=report["source_file"], batch_tag="t-current", source_sha256=report["source_sha256"])
         db.commit()
-    assert counts["created"] == 2
+    assert counts["created"] == 1
     assert counts["skipped_existing_current_flow"] == 1
+    assert counts["backfilled_existing_current_flow"] == 1
     with SessionLocal() as db:
-        current = db.query(models.NewProductOpportunity).filter_by(
-            source_type=CURRENT_SELECTION1_SOURCE_TYPE
-        ).one()
+        current = db.query(models.NewProductOpportunity).filter_by(source_type=CURRENT_SELECTION1_SOURCE_TYPE).one()
         assert current.current_status == "pending_assignment"
-        assert current.snapshot == {"marker": "keep-me"}
-        assert (
-            db.query(models.NewProductOpportunity)
-            .filter_by(source_type=SOURCE_TYPE, sub_sku="HXG15GD")
-            .count()
-            == 0
-        )
+        assert current.main_sku_name == "挂钩"
+        assert current.image_url == "https://oss.example/HXG15GD.png"
+        assert current.snapshot["marker"] == "keep-me"
+        assert current.snapshot["historical_selection1"] == source_row["snapshot"]
+        assert db.query(models.SourceRecordSnapshot).filter_by(opportunity_id=current.id).count() == 1
+        assert db.query(models.NewProductOpportunity).filter_by(source_type=SOURCE_TYPE, sub_sku="HXG15GD").count() == 0
         created = db.query(models.NewProductOpportunity).filter_by(source_type=SOURCE_TYPE).all()
-        assert {item.sub_sku for item in created} == {"TAB10KB", "OLD820A"}
+        assert {item.sub_sku for item in created} == {"TAB10KB"}
 
+
+def test_existing_archive_row_receives_image_and_latest_source_snapshot(tmp_path: Path) -> None:
+    report = parse_fixture(tmp_path)
+    source_row = next(row for row in report["rows"] if row["sub_sku"] == "HXG15GD")
+    source_row["image_url"] = "https://oss.example/HXG15GD.png"
+    with SessionLocal() as db:
+        db.add(models.NewProductOpportunity(
+            source_type=SOURCE_TYPE, source_sheet="开发0623期", batch="开发0623期",
+            main_sku="HXG15G", sub_sku="HXG15GD", country="PH", site="PH",
+            current_status="historical_archive",
+            snapshot={"development_source": {"supplier": "keep"}, "fields_by_cell": {"A": {"value": "old"}}},
+        ))
+        db.commit()
+    with SessionLocal() as db:
+        counts = apply_selection1_rows(db, report["rows"], source_label=report["source_file"], batch_tag="t-archive", source_sha256=report["source_sha256"])
+        db.commit()
+    assert counts["created"] == 1
+    assert counts["skipped_existing_archive"] == 1
+    assert counts["backfilled_existing_archive"] == 1
+    with SessionLocal() as db:
+        archive = db.query(models.NewProductOpportunity).filter_by(source_type=SOURCE_TYPE, sub_sku="HXG15GD").one()
+        assert archive.current_status == "historical_archive"
+        assert archive.image_url == "https://oss.example/HXG15GD.png"
+        assert archive.snapshot["development_source"] == {"supplier": "keep"}
+        assert archive.snapshot["fields_by_cell"] == source_row["snapshot"]["fields_by_cell"]
+        assert db.query(models.SourceRecordSnapshot).filter_by(opportunity_id=archive.id).count() == 1
 
 def test_revert_removes_batch_and_allows_reimport(tmp_path: Path) -> None:
     report = parse_fixture(tmp_path)
     with SessionLocal() as db:
-        apply_selection1_rows(
-            db, report["rows"], source_label=report["source_file"], batch_tag="t-revert",
-            source_sha256=report["source_sha256"],
-        )
+        apply_selection1_rows(db, report["rows"], source_label=report["source_file"], batch_tag="t-revert", source_sha256=report["source_sha256"])
         db.commit()
     with SessionLocal() as db:
         reverted = revert_selection1_import(db, "t-revert", actor="test")
         db.commit()
-    assert reverted == {"reverted_opportunities": 3, "reverted_snapshots": 3}
+    assert reverted == {"reverted_opportunities": 2, "reverted_snapshots": 2}
     with SessionLocal() as db:
         assert db.query(models.NewProductOpportunity).count() == 0
         assert db.query(models.SourceRecordSnapshot).count() == 0
         assert db.query(models.ImportBatch).one().status == "reverted"
     with SessionLocal() as db:
-        again = apply_selection1_rows(
-            db, report["rows"], source_label=report["source_file"], batch_tag="t-after-revert",
-            source_sha256=report["source_sha256"],
-        )
+        again = apply_selection1_rows(db, report["rows"], source_label=report["source_file"], batch_tag="t-after-revert", source_sha256=report["source_sha256"])
         db.commit()
     assert again["batch_already_imported"] is False
-    assert again["created"] == 3
+    assert again["created"] == 2
     with SessionLocal() as db:
         assert db.query(models.NotificationLog).count() == 0
+
+
+def test_same_sheet_and_sub_sku_with_different_site_or_main_sku_create_distinct_archives() -> None:
+    rows = [
+        {"source_file": "selection1.xlsx", "source_sheet": "开发0623期", "source_row": 10, "batch": "开发新品0623期", "country": "PH", "site": "菲律宾", "main_sku": "MAIN-PH", "sub_sku": "SHARED-SUB", "snapshot": {"source_reference": {"source_row": 10}}},
+        {"source_file": "selection1.xlsx", "source_sheet": "开发0623期", "source_row": 11, "batch": "开发新品0623期", "country": "TH", "site": "泰国", "main_sku": "MAIN-TH", "sub_sku": "SHARED-SUB", "snapshot": {"source_reference": {"source_row": 11}}},
+    ]
+    with SessionLocal() as db:
+        assert plan_selection1_rows(db, rows)["would_create"] == 2
+        counts = apply_selection1_rows(db, rows, source_label="selection1.xlsx", batch_tag="t-distinct-identity")
+        db.commit()
+    assert counts["created"] == 2
+    with SessionLocal() as db:
+        archives = db.query(models.NewProductOpportunity).filter_by(source_type=SOURCE_TYPE).all()
+        assert {(item.country, item.main_sku, item.sub_sku) for item in archives} == {
+            ("PH", "MAIN-PH", "SHARED-SUB"), ("TH", "MAIN-TH", "SHARED-SUB"),
+        }
+
+
+def test_missing_first_main_sku_falls_back_to_sub_sku_with_source_marker(tmp_path: Path) -> None:
+    source = tmp_path / "selection1-missing-main.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "开发0623期"
+    sheet.append(["站点", "主SKU", "子SKU"])
+    sheet.append([None, None, None])
+    sheet.append(["菲律宾", None, "SUB-NO-MAIN"])
+    workbook.save(source)
+
+    row = parse_selection1_workbook(source)["rows"][0]
+    assert row["main_sku"] == "SUB-NO-MAIN"
+    assert row["snapshot"]["backfilled_fields"] == {"main_sku": {"source": "sub_sku", "value": "SUB-NO-MAIN"}}
+    with SessionLocal() as db:
+        assert plan_selection1_rows(db, [row])["would_create"] == 1
+
+
+def test_parse_excludes_last_year_legacy_period(tmp_path: Path) -> None:
+    source = tmp_path / "selection1-legacy.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "开发0924期"
+    sheet.append(["站点", "主SKU", "子SKU"])
+    sheet.append(["菲律宾", "LEGACY", "LEGACY-A"])
+    workbook.save(source)
+
+    report = parse_selection1_workbook(source)
+    assert report["rows"] == []
+    assert report["skipped_sheets"] == [{"sheet": "开发0924期", "reason": "排除旧期"}]
+
+
+def test_parse_0707_uses_leading_site_column_without_header(tmp_path: Path) -> None:
+    source = tmp_path / "selection1-0707.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "开发0707期"
+    sheet.append([None, "开发部门", "主SKU", "子SKU"])
+    sheet.append(["菲律宾", "海外仓", "MAIN-0707", "SUB-0707"])
+    workbook.save(source)
+
+    row = parse_selection1_workbook(source)["rows"][0]
+    assert row["country"] == "PH"
+    assert row["site"] == "菲律宾"
+    assert row["snapshot"]["site_resolution"] == "leading_site_column"
+
+
+def test_parse_0414_inherits_one_checked_site_within_main_sku_group(tmp_path: Path) -> None:
+    source = tmp_path / "selection1-0414.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "开发0414期"
+    sheet.append(["主SKU", "子SKU", "Shopee"])
+    sheet.append([None, None, "PH"])
+    sheet.append(["MAIN-0414", "SUB-0414-A", "✔"])
+    sheet.append([None, "SUB-0414-B", None])
+    workbook.save(source)
+
+    rows = parse_selection1_workbook(source)["rows"]
+    inherited = next(row for row in rows if row["sub_sku"] == "SUB-0414-B")
+    assert inherited["country"] == "PH"
+    assert inherited["site"] == "PH"
+    assert inherited["snapshot"]["site_resolution"] == "checkbox_inherited"
+
+
+def test_parse_0414_keeps_site_empty_when_group_has_no_checkmark(tmp_path: Path) -> None:
+    source = tmp_path / "selection1-0414-no-check.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "开发0414期"
+    sheet.append(["主SKU", "子SKU", "Shopee"])
+    sheet.append([None, None, "PH"])
+    sheet.append(["MAIN-EMPTY", "SUB-EMPTY-A", None])
+    sheet.append([None, "SUB-EMPTY-B", None])
+    workbook.save(source)
+
+    rows = parse_selection1_workbook(source)["rows"]
+    assert {(row["country"], row["site"]) for row in rows} == {(None, None)}
+    assert {row["snapshot"]["site_resolution"] for row in rows} == {"checkbox_group_unchecked"}
+
+
+def test_parse_backfills_missing_main_sku_and_sub_sku_name(tmp_path: Path) -> None:
+    source = tmp_path / "selection1-fallbacks.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "开发0623期"
+    sheet.append(["站点", "主SKU名称", "主SKU", "子SKU名称", "子SKU"])
+    sheet.append(["菲律宾", "主商品名", None, None, "SUB-ONLY"])
+    workbook.save(source)
+
+    row = parse_selection1_workbook(source)["rows"][0]
+    assert row["main_sku"] == "SUB-ONLY"
+    assert row["sub_sku_name"] == "主商品名"
+    assert row["snapshot"]["backfilled_fields"] == {
+        "main_sku": {"source": "sub_sku", "value": "SUB-ONLY"},
+        "sub_sku_name": {"source": "main_sku_name", "value": "主商品名"},
+    }
+
+def test_parse_excludes_period_outside_current_historical_migration_scope(tmp_path: Path) -> None:
+    source = tmp_path / "selection1-current-future-period.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "开发1001期"
+    sheet.append(["站点", "主SKU", "子SKU"])
+    sheet.append(["菲律宾", "CURRENT-1001", "CURRENT-1001-A"])
+    workbook.save(source)
+
+    report = parse_selection1_workbook(source)
+    assert report["rows"] == []
+    assert report["skipped_sheets"] == [{"sheet": "开发1001期", "reason": "排除非本次历史期"}]
+
+
+def test_normalize_same_identity_merges_empty_complement_and_preserves_sources() -> None:
+    rows = [
+        {
+            "source_file": "selection1.xlsx", "source_sheet": "开发0526期", "source_row": 129,
+            "source_type": SOURCE_TYPE, "batch": "开发0526期", "country": "TH", "site": "泰国",
+            "main_sku": "WHHG972", "sub_sku": "WHHG972A2", "main_sku_name": "同款商品",
+            "sub_sku_name": None, "keyword": "原关键词",
+            "snapshot": {"source_reference": {"source_row": 129}},
+        },
+        {
+            "source_file": "selection1.xlsx", "source_sheet": "开发0526期", "source_row": 130,
+            "source_type": SOURCE_TYPE, "batch": "开发0526期", "country": "TH", "site": "泰国",
+            "main_sku": "WHHG972", "sub_sku": "WHHG972A2", "main_sku_name": "同款商品",
+            "sub_sku_name": "WHHG972A2规格", "keyword": None,
+            "snapshot": {"source_reference": {"source_row": 130}},
+        },
+    ]
+
+    normalized = normalize_selection1_history_rows(rows)
+
+    assert len(normalized["rows"]) == 1
+    row = normalized["rows"][0]
+    assert row["keyword"] == "原关键词"
+    assert row["sub_sku_name"] == "WHHG972A2规格"
+    assert row["snapshot"]["merged_source_rows"] == [129, 130]
+    assert normalized["merged_groups"] == [{"identity": ["开发0526期", "th", "WHHG972", "WHHG972A2"], "source_rows": [129, 130]}]
+
+
+def test_normalize_same_main_with_different_children_keeps_both_rows() -> None:
+    rows = [
+        {
+            "source_file": "selection1.xlsx", "source_sheet": "开发0526期", "source_row": 129,
+            "source_type": SOURCE_TYPE, "batch": "开发0526期", "country": "TH", "site": "泰国",
+            "main_sku": "HFL045", "sub_sku": "HFL045S", "snapshot": {"source_reference": {"source_row": 129}},
+        },
+        {
+            "source_file": "selection1.xlsx", "source_sheet": "开发0526期", "source_row": 130,
+            "source_type": SOURCE_TYPE, "batch": "开发0526期", "country": "TH", "site": "泰国",
+            "main_sku": "HFL045", "sub_sku": "HFL045L", "snapshot": {"source_reference": {"source_row": 130}},
+        },
+    ]
+
+    normalized = normalize_selection1_history_rows(rows)
+
+    assert [row["sub_sku"] for row in normalized["rows"]] == ["HFL045S", "HFL045L"]
+    assert normalized["merged_groups"] == []
+    assert normalized["business_repair_rows"] == []
+
+
+def test_normalize_same_identity_with_conflicting_business_value_requires_business_fix() -> None:
+    rows = [
+        {
+            "source_file": "selection1.xlsx", "source_sheet": "开发0526期", "source_row": 129,
+            "source_type": SOURCE_TYPE, "batch": "开发0526期", "country": "TH", "site": "泰国",
+            "main_sku": "WHHG972", "sub_sku": "WHHG972A2", "product_type": "利润款",
+            "snapshot": {"source_reference": {"source_row": 129}},
+        },
+        {
+            "source_file": "selection1.xlsx", "source_sheet": "开发0526期", "source_row": 130,
+            "source_type": SOURCE_TYPE, "batch": "开发0526期", "country": "TH", "site": "泰国",
+            "main_sku": "WHHG972", "sub_sku": "WHHG972A2", "product_type": "淘汰款",
+            "snapshot": {"source_reference": {"source_row": 130}},
+        },
+    ]
+
+    normalized = normalize_selection1_history_rows(rows)
+
+    assert normalized["rows"] == []
+    assert normalized["business_repair_rows"][0]["conflicting_fields"] == {
+        "product_type": ["利润款", "淘汰款"],
+    }
+
+def test_apply_normalizes_duplicate_identity_before_archive_write() -> None:
+    rows = [
+        {
+            "source_file": "selection1.xlsx", "source_sheet": "开发0526期", "source_row": 129,
+            "source_type": SOURCE_TYPE, "batch": "开发0526期", "country": "TH", "site": "泰国",
+            "main_sku": "WHHG972", "sub_sku": "WHHG972A2", "main_sku_name": "同款商品",
+            "keyword": "原关键词", "snapshot": {"source_reference": {"source_row": 129}},
+        },
+        {
+            "source_file": "selection1.xlsx", "source_sheet": "开发0526期", "source_row": 130,
+            "source_type": SOURCE_TYPE, "batch": "开发0526期", "country": "TH", "site": "泰国",
+            "main_sku": "WHHG972", "sub_sku": "WHHG972A2", "main_sku_name": "同款商品",
+            "sub_sku_name": "WHHG972A2规格", "snapshot": {"source_reference": {"source_row": 130}},
+        },
+    ]
+
+    with SessionLocal() as db:
+        counts = apply_selection1_rows(db, rows, source_label="selection1.xlsx", batch_tag="t-normalize-before-apply")
+        db.commit()
+
+    assert counts["created"] == 1
+    with SessionLocal() as db:
+        archive = db.query(models.NewProductOpportunity).filter_by(source_type=SOURCE_TYPE).one()
+        assert archive.keyword == "原关键词"
+        assert archive.sub_sku_name == "WHHG972A2规格"
+        assert archive.snapshot["merged_source_rows"] == [129, 130]
