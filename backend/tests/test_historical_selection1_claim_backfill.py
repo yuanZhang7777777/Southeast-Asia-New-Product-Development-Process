@@ -298,6 +298,110 @@ def test_text_with_digits_in_daily_sales_is_rejection_not_claim() -> None:
         assert claim.reject_reason == "暂不认领，竞品100"
 
 
+def test_non_migration_period_snapshots_do_not_backfill_claims() -> None:
+    with SessionLocal() as db:
+        _add_opportunity(
+            db,
+            sheet="开发1001期",
+            sub_sku="B1001-HISTORY",
+            source_row=31,
+            cells=_cells(
+                [
+                    ("BV", "主销售员", "历史销售"),
+                    ("BW", "是否认领", "是"),
+                    ("BX", "认领单销", 1),
+                ]
+            ),
+        )
+        db.add(
+            models.NewProductOpportunity(
+                source_type=CURRENT_SELECTION1_SOURCE_TYPE,
+                source_sheet="开发0924期",
+                source_row=32,
+                batch="开发0924期",
+                main_sku="CURRENT-0924",
+                sub_sku="CURRENT-0924-A",
+                current_status="claim_submitted",
+                snapshot={
+                    "historical_selection1": {
+                        "business_period": "开发0924期",
+                        "fields_by_cell": _cells(
+                            [
+                                ("BV", "主销售员", "现行历史销售"),
+                                ("BW", "是否认领", "是"),
+                                ("BX", "认领单销", 1),
+                            ]
+                        ),
+                    }
+                },
+            )
+        )
+        db.commit()
+
+    with SessionLocal() as db:
+        report = backfill_selection1_claims(db, apply=True, actor="test")
+        db.commit()
+
+    assert report["created"] == 0
+    assert report["total"] == 0
+    with SessionLocal() as db:
+        assert db.query(models.SalesClaimForecast).filter_by(source_column=CLAIM_SOURCE_COLUMN).count() == 0
+
+
+def test_non_migration_period_claims_are_not_normalized_or_deleted() -> None:
+    with SessionLocal() as db:
+        _add_opportunity(
+            db,
+            sheet="开发1001期",
+            sub_sku="B1001-EXISTING",
+            source_row=33,
+            cells=_cells(
+                [
+                    ("BV", "主销售员", "正确销售"),
+                    ("BW", "是否认领", "否"),
+                    ("BX", "认领单销", "不认领"),
+                ]
+            ),
+        )
+        db.flush()
+        opportunity = db.query(models.NewProductOpportunity).one()
+        db.add(
+            models.SalesClaimForecast(
+                opportunity_id=opportunity.id,
+                salesperson_name="旧销售",
+                claim_result="claim",
+                claim_daily_sales=9,
+                source_column=CLAIM_SOURCE_COLUMN,
+            )
+        )
+        db.commit()
+
+    with SessionLocal() as db:
+        report = normalize_selection1_claims(db, apply=True, actor="test")
+        db.commit()
+
+    assert report == {"updated": 0, "deleted_extra": 0, "skipped_referenced": 0}
+    with SessionLocal() as db:
+        claim = db.query(models.SalesClaimForecast).filter_by(source_column=CLAIM_SOURCE_COLUMN).one()
+        assert claim.salesperson_name == "旧销售"
+        assert claim.claim_result == "claim"
+        assert claim.claim_daily_sales == 9
+
+
+def test_default_claim_backfill_does_not_upload_evidence(monkeypatch) -> None:
+    seed_archive_rows()
+
+    def fail_upload(*args, **kwargs):
+        raise AssertionError("upload should require explicit evidence path")
+
+    monkeypatch.setattr(claim_backfill, "upload_claim_evidence_image", fail_upload)
+    with SessionLocal() as db:
+        report = backfill_selection1_claims(db, apply=True, actor="test")
+        db.commit()
+
+    assert report["created"] == 6
+
+
 def test_caigen_period_preserves_each_salesperson_claim_or_rejection() -> None:
     with SessionLocal() as db:
         _add_opportunity(

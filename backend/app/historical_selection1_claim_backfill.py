@@ -75,6 +75,7 @@ PERIOD_CLAIM_LAYOUTS = {
     "开发0714期": {"reject_reason": "BW", "salesperson": "BX", "claim_flag": "BY", "daily_sales": "BZ", "feedback_summary": "CA", "note": "CB"},
     "开发0721期": {"reject_reason": "BW", "salesperson": "BX", "claim_flag": "BY", "daily_sales": "BZ", "feedback_summary": "CA", "note": "CB"},
 }
+ALLOWED_CLAIM_PERIODS = frozenset({*PERIOD_CLAIM_LAYOUTS, "开发0727期-财根"})
 # 表头包含匹配只作为未列位化历史行的保底；当前导入范围均应命中上方布局。
 FIELD_KEYWORDS = {
     "salesperson": ("主销售员",),
@@ -230,11 +231,23 @@ def claim_facts_from_snapshot(
 def _historical_snapshot(opportunity: models.NewProductOpportunity) -> tuple[dict[str, Any] | None, str | None]:
     snapshot = dict(opportunity.snapshot or {})
     if opportunity.source_type == SOURCE_TYPE:
-        return snapshot, snapshot.get("business_period") or opportunity.batch
+        period = _normalize_claim_period(snapshot.get("business_period") or opportunity.batch or opportunity.source_sheet)
+        return (snapshot, period) if period in ALLOWED_CLAIM_PERIODS else (None, None)
     nested = snapshot.get("historical_selection1")
     if isinstance(nested, dict):
-        return nested, nested.get("business_period") or opportunity.batch
+        period = _normalize_claim_period(nested.get("business_period") or opportunity.batch or opportunity.source_sheet)
+        return (nested, period) if period in ALLOWED_CLAIM_PERIODS else (None, None)
     return None, None
+
+
+def _normalize_claim_period(value: Any) -> str | None:
+    text = _clean_text(value)
+    if not text:
+        return None
+    if text == "开发-财根团队汇总" or ("0727" in text and "财根" in text):
+        return "开发0727期-财根"
+    match = re.search(r"开发(?:新品)?(\d{4})期", text)
+    return f"开发{match.group(1)}期" if match else text
 
 
 def _claim_exists(
