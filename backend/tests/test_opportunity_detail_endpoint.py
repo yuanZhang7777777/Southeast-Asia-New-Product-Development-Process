@@ -1,5 +1,6 @@
 import os
 import sys
+import json
 from pathlib import Path
 
 os.environ["DATABASE_URL"] = f"sqlite:///{Path(__file__).with_name('test_workflow.db')}"
@@ -62,6 +63,75 @@ def test_detail_endpoint_returns_full_snapshot() -> None:
     assert body["snapshot"] == SNAPSHOT
     assert body["main_sku"] == "MAIN-1"
     assert body["latest_claim_result"] is None
+
+
+def test_detail_endpoint_returns_historical_claim_facts_without_replacing_platform_summary() -> None:
+    opportunity_id = add_opportunity()
+    with SessionLocal() as db:
+        opportunity = db.get(models.NewProductOpportunity, opportunity_id)
+        assert opportunity is not None
+        opportunity.batch = "开发0623期"
+        opportunity.source_row = 184
+        history_claim = models.SalesClaimForecast(
+            opportunity_id=opportunity.id,
+            salesperson_name="历史运营甲",
+            claim_result="claim",
+            claim_daily_sales=0.5,
+            feedback_summary="历史调研结论",
+            source_column="history_selection1",
+            note=json.dumps(
+                {
+                    "history_source": {"business_period": "开发0526期", "source_row": 71, "claim_column": "BX"},
+                    "evidence_images": [{"name": "history-proof.png", "url": "/uploaded-sources/claim-evidence/OPP/history-proof.png", "type": "image/png", "size": 123}],
+                },
+                ensure_ascii=False,
+            ),
+        )
+        history_reject = models.SalesClaimForecast(
+            opportunity_id=opportunity.id,
+            salesperson_name="历史运营乙",
+            claim_result="reject",
+            reject_reason="来源拒绝理由",
+            feedback_summary="历史销售反馈",
+            source_column="history_selection2",
+        )
+        platform_claim = models.SalesClaimForecast(
+            opportunity_id=opportunity.id,
+            salesperson_name="当前运营",
+            claim_result="claim",
+            claim_daily_sales=3,
+            source_column="platform",
+        )
+        db.add_all([history_claim, history_reject, platform_claim])
+        db.commit()
+        history_claim_id = history_claim.id
+        platform_claim_id = platform_claim.id
+
+    response = client.get(f"/opportunities/{opportunity_id}")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["latest_claim_record_id"] == platform_claim_id
+    assert body["latest_claim_salesperson"] == "当前运营"
+    facts = {item["salesperson_name"]: item for item in body["historical_claims"]}
+    assert set(facts) == {"历史运营甲", "历史运营乙"}
+    assert facts["历史运营甲"] == {
+        "id": history_claim_id,
+        "salesperson_name": "历史运营甲",
+        "claim_result": "claim",
+        "claim_daily_sales": 0.5,
+        "reject_reason": None,
+        "feedback_summary": "历史调研结论",
+        "source_column": "history_selection1",
+        "source_period": "开发0526期",
+        "source_row": 71,
+        "evidence_images": [{"name": "history-proof.png", "url": "/uploaded-sources/claim-evidence/OPP/history-proof.png", "type": "image/png", "size": 123}],
+        "manager_review_status": None,
+        "manager_review_comment": None,
+    }
+    assert facts["历史运营乙"]["claim_result"] == "reject"
+    assert facts["历史运营乙"]["reject_reason"] == "来源拒绝理由"
+    assert facts["历史运营乙"]["source_period"] == "开发0623期"
 
 
 def test_detail_endpoint_missing_id_returns_404() -> None:

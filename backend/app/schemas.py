@@ -61,6 +61,7 @@ class OpportunityBase(BaseModel):
     developer_department: str | None = None
     developer_name: str | None = None
     category_level1: str | None = None
+    category_level2: str | None = None
     keyword: str | None = None
     image_url: str | None = None
     main_sku_name: str | None = None
@@ -94,8 +95,24 @@ class OpportunityListRead(OpportunityBase):
     model_config = {"from_attributes": True}
 
 
+class HistoricalClaimRead(BaseModel):
+    id: str
+    salesperson_name: str | None = None
+    claim_result: str | None = None
+    claim_daily_sales: float | None = None
+    reject_reason: str | None = None
+    feedback_summary: str | None = None
+    source_column: str | None = None
+    source_period: str | None = None
+    source_row: int | None = None
+    evidence_images: list[dict[str, Any]] = Field(default_factory=list)
+    manager_review_status: str | None = None
+    manager_review_comment: str | None = None
+
+
 class OpportunityRead(OpportunityListRead):
     snapshot: dict[str, Any] = Field(default_factory=dict)
+    historical_claims: list[HistoricalClaimRead] = Field(default_factory=list)
 
 
 class OpportunityImportRequest(BaseModel):
@@ -110,6 +127,7 @@ class OpportunityUpdateRequest(BaseModel):
     site: str | None = None
     country: str | None = None
     category_level1: str | None = None
+    category_level2: str | None = None
     developer_department: str | None = None
     developer_name: str | None = None
     keyword: str | None = None
@@ -249,6 +267,7 @@ class AssignmentBoardRow(BaseModel):
     batch: str | None = None
     site: str | None = None
     category_level1: str | None = None
+    category_level2: str | None = None
     main_sku: str
     main_sku_name: str | None = None
     sub_sku: str
@@ -977,6 +996,14 @@ class OperatorAssignmentProfileCreate(BaseModel):
     @classmethod
     def empty_key_categories(cls, value: object) -> list[object]:
         return list(value or [])
+
+    @field_validator("key_categories")
+    @classmethod
+    def key_categories_level1_limit(cls, value: list[OperatorCategorySelection]) -> list[OperatorCategorySelection]:
+        level1_values = {item.level1.strip() for item in value if item.level1.strip()}
+        if len(level1_values) > 6:
+            raise ValueError("最多配置 6 个一级类目组")
+        return value
     assignment_priority: int = 0
     display_order: int | None = None
     enabled: bool = True
@@ -991,6 +1018,16 @@ class OperatorAssignmentProfileUpdate(BaseModel):
     assignment_priority: int | None = None
     display_order: int | None = None
     enabled: bool | None = None
+
+    @field_validator("key_categories")
+    @classmethod
+    def key_categories_level1_limit(cls, value: list[OperatorCategorySelection] | None) -> list[OperatorCategorySelection] | None:
+        if value is None:
+            return None
+        level1_values = {item.level1.strip() for item in value if item.level1.strip()}
+        if len(level1_values) > 6:
+            raise ValueError("最多配置 6 个一级类目组")
+        return value
 
 
 class OperatorAssignmentProfileRead(OperatorAssignmentProfileCreate):

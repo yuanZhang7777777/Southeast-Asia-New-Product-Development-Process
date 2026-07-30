@@ -36,9 +36,28 @@ def test_plm_excel_history_keeps_latest_owner_and_marks_multi_salesperson() -> N
     assert result["hard_conflicts"][0]["salespeople"] == ["销售A", "销售B"]
 
 
-def write_plm(path: Path, date_text: str, salesperson: str) -> None:
+def test_plm_excel_history_preserves_new_arrival_when_later_row_is_restock() -> None:
+    tmp_path = Path("outputs/test_tmp") / f"plm_excel_{uuid.uuid4().hex}"
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    first = tmp_path / "plm-2026-07-20.xlsx"
+    later = tmp_path / "plm-2026-07-25.xlsx"
+    write_plm(first, "2026-07-20", "销售A")
+    write_plm(later, "2026-07-25", "销售A", first_listing_date="2026-07-20")
+
+    result = build_plm_excel_history(
+        [("2026-07-20", first), ("2026-07-25", later)],
+        bloc_name=GROUP_EIGHT,
+    )
+
+    assert result["matches"][0]["arrival_type"] == "restock"
+    assert result["new_arrival_matches"][0]["arrival_date"] == "2026-07-20"
+    assert result["new_arrival_matches"][0]["arrival_type"] == "new_arrival"
+
+
+def write_plm(path: Path, date_text: str, salesperson: str, first_listing_date: str | None = None) -> None:
     workbook = Workbook()
     sheet = workbook.active
+    first_listing = first_listing_date or date_text
     sheet.append(["商品名称", "子SKU", "主SKU", "销售员", "集团", "海外仓", "国家", "最后一次入库时间", "首次上架时间"])
-    sheet.append(["商品", " SUB-1 ", "MAIN-1", salesperson, GROUP_EIGHT, "菲律宾仓", "菲律宾", f"{date_text} 10:00:00", f"{date_text} 00:00:00"])
+    sheet.append(["商品", " SUB-1 ", "MAIN-1", salesperson, GROUP_EIGHT, "菲律宾仓", "菲律宾", f"{date_text} 10:00:00", f"{first_listing} 00:00:00"])
     workbook.save(path)

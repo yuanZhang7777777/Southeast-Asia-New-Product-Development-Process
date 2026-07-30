@@ -159,3 +159,34 @@ def test_operator_and_manager_notification_jobs_are_split(monkeypatch) -> None:
     calls.clear()
     assert scheduler.run_manager_notification_jobs(settings, now) == {"elimination": 1, "manager_review": 1}
     assert calls == ["elimination", "review", "commit"]
+
+
+def test_plm_sync_processes_downloaded_workbook(monkeypatch) -> None:
+    calls: dict[str, object] = {}
+
+    class FakeSession:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+    workbook = Path("/data/plm/plm-2026-07-26.xlsx")
+    monkeypatch.setattr(scheduler, "download_plm_export", lambda *_args, **_kwargs: workbook)
+    monkeypatch.setattr(scheduler, "SessionLocal", lambda: FakeSession())
+
+    def fake_process(db, path, date_text, **kwargs):
+        calls.update({"db": db, "path": path, "date_text": date_text, **kwargs})
+        return {"new_arrival_count": 2, "arrival_record_count": 1}
+
+    monkeypatch.setattr(scheduler, "process_plm_arrival_workbook", fake_process)
+    report = scheduler.run_plm_sync(Settings(workflow_automation_enabled=True), "2026-07-26")
+
+    assert report == {
+        "file": "plm-2026-07-26.xlsx",
+        "arrival": {"new_arrival_count": 2, "arrival_record_count": 1},
+    }
+    assert calls["path"] == workbook
+    assert calls["date_text"] == "2026-07-26"
+    assert calls["source_file"] == workbook.name
+    assert calls["workflow_automation_enabled"] is True

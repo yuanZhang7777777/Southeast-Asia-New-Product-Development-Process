@@ -171,6 +171,19 @@ def test_card_test_receiver_redirects_operator_card_to_named_user() -> None:
         assert sender.cards[0].subject_name == "销售A"
 
 
+def test_operator_card_does_not_target_legacy_sales_mapping() -> None:
+    sender = FakeSender()
+    settings = Settings(dingtalk_card_autosend_enabled=True, platform_base_url="https://np.example")
+    with SessionLocal() as db:
+        db.add(models.RoleMapping(name="旧销售", role="sales", dingtalk_user_id="dt-legacy", enabled=True))
+        db.flush()
+
+        log = services.notify_operator_new_product_todo_card(db, "旧销售", "legacy-sales", settings, sender)
+
+        assert log.send_status == "skipped_no_receiver"
+        assert sender.cards == []
+
+
 def test_test_recipient_mode_audit_records_original_and_actual_receiver() -> None:
     calls: list[tuple[str, dict, dict]] = []
 

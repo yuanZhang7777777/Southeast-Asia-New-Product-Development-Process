@@ -3,11 +3,15 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import re
+import warnings
 from collections import Counter
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
+from xml.etree import ElementTree
+from zipfile import ZipFile
 
 from openpyxl import load_workbook
 
@@ -95,12 +99,12 @@ def market_record(path: Path, source_sha256: str, sheet_name: str, source_row: i
         "reference_daily_sales": number_value(value_by_header(row, headers, "竟对参考单销(=子sku月销/30)")),
         "reference_price": number_value(value_by_header(row, headers, "竟对参考售价")),
         "product_type": value_by_header(row, headers, "产品类型"),
-        "stable_price": number_value(value_by_header(row, headers, "稳定期定价 （PHP)")) or number_value(value_by_header(row, headers, "稳定期定价 （PHP）")),
+        "stable_price": number_value(value_by_header_prefix(row, headers, "稳定期定价")),
         "claimed_daily_sales": number_value(value_by_header(row, headers, "认领单销")),
         "secondary_research_at": time_value(value_by_header(row, headers, "调研时间", occurrence=2)),
-        "secondary_competitor_url": value_by_header(row, headers, "竞对链接"),
+        "secondary_competitor_url": value_by_header_prefix(row, headers, "竞对链接") or value_by_header_prefix(row, headers, "锚定链接"),
         "secondary_conclusion": value_by_header(row, headers, "调研结论--价格/月销/市场趋势变化等，没有变化就填“无变化”-可以不用填竞对链接"),
-        "positioning": value_by_header(row, headers, "产品定位（引流款/利润款/淘汰款）"),
+        "positioning": value_by_header_prefix(row, headers, "产品定位"),
         "target_daily_sales": number_value(value_by_header(row, headers, "目标单销")),
         "selling_points": value_by_header(row, headers, "卖点总结"),
         "arrival_note": value_by_header(row, headers, "到货通知"),
@@ -128,17 +132,22 @@ def audit_listing_monitor(path: Path, development_main_skus: set[str], finebi_ke
     source_sha256 = sha256_file(path)
     records: list[dict[str, Any]] = []
     anomalies: list[dict[str, Any]] = []
-    workbook = load_workbook(path, read_only=True, data_only=False, keep_links=False)
+    raw_items = raw_numeric_column_values(path, LISTING_SHEET, "F")
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message=r"Cell .* is marked as a date but the serial value .* is outside the limits.*")
+        workbook = load_workbook(path, read_only=True, data_only=False, keep_links=False)
     try:
         if LISTING_SHEET not in workbook.sheetnames:
             return {"summary": {"raw_row_count": 0}, "anomalies": [{"message": f"missing sheet {LISTING_SHEET}"}], "records": []}
         worksheet = workbook[LISTING_SHEET]
         worksheet.reset_dimensions()
-        rows = list(worksheet.iter_rows(values_only=True))
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", message=r"Cell .* is marked as a date but the serial value .* is outside the limits.*")
+            rows = list(worksheet.iter_rows(values_only=True))
         for source_row, row in enumerate(rows[LISTING_HEADER_ROW:], start=LISTING_HEADER_ROW + 1):
             if not any(text_value(value) for value in row):
                 continue
-            record = listing_record(path, source_sha256, source_row, row)
+            record = listing_record(path, source_sha256, source_row, row, raw_items.get(source_row))
             records.append(record)
             if not valid_item(record["item"]):
                 anomalies.append({"source_row": source_row, "item": record["item"], "message": "invalid item"})
@@ -158,9 +167,14 @@ def audit_listing_monitor(path: Path, development_main_skus: set[str], finebi_ke
     return {"summary": summary, "anomalies": anomalies, "records": records}
 
 
-def listing_record(path: Path, source_sha256: str, source_row: int, row: tuple[Any, ...]) -> dict[str, Any]:
+def listing_record(path: Path, source_sha256: str, source_row: int, row: tuple[Any, ...], raw_item: str | None = None) -> dict[str, Any]:
     country_raw = text_value(cell(row, 2))
     weeks = [week_record(index + 1, row, WEEK_METRIC_COLUMNS[index], WEEK_REVIEW_COLUMNS[index]) for index in range(4)]
+    item = item_text(cell(row, 5))
+    item_recovery = None
+    if not valid_item(item) and raw_item:
+        item = raw_item
+        item_recovery = "raw_numeric_cell"
     return {
         "source_reference": {"source_file": path.name, "source_sha256": source_sha256, "source_sheet": LISTING_SHEET, "source_row": source_row},
         "operation_date": time_value(cell(row, 0)),
@@ -169,7 +183,8 @@ def listing_record(path: Path, source_sha256: str, source_row: int, row: tuple[A
         "country_raw": country_raw,
         "salesperson": text_value(cell(row, 3)),
         "shop": text_value(cell(row, 4)),
-        "item": item_text(cell(row, 5)),
+        "item": item,
+        "item_recovery": item_recovery,
         "strategy": {
             "optimization": text_value(cell(row, 6)),
             "brush_order": text_value(cell(row, 7)),
@@ -229,6 +244,48 @@ def value_by_header(row: tuple[Any, ...], headers: dict[str, int], header: str, 
     if occurrence > 1:
         key = f"{key}#{occurrence}"
     return text_value(cell(row, headers[key])) if key in headers else None
+
+
+def value_by_header_prefix(row: tuple[Any, ...], headers: dict[str, int], prefix: str) -> Any:
+    normalized_prefix = normalize_header(prefix)
+    for header, index in headers.items():
+        if header.split("#", 1)[0].startswith(normalized_prefix):
+            return text_value(cell(row, index))
+    return None
+
+
+def raw_numeric_column_values(path: Path, sheet_name: str, column: str) -> dict[int, str]:
+    main_ns = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+    document_rel_ns = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+    package_rel_ns = "http://schemas.openxmlformats.org/package/2006/relationships"
+    try:
+        with ZipFile(path) as archive:
+            workbook = ElementTree.fromstring(archive.read("xl/workbook.xml"))
+            sheet = next(
+                item for item in workbook.findall(f"{{{main_ns}}}sheets/{{{main_ns}}}sheet")
+                if item.get("name") == sheet_name
+            )
+            rel_id = sheet.get(f"{{{document_rel_ns}}}id")
+            relationships = ElementTree.fromstring(archive.read("xl/_rels/workbook.xml.rels"))
+            target = next(
+                item.get("Target") for item in relationships.findall(f"{{{package_rel_ns}}}Relationship")
+                if item.get("Id") == rel_id
+            )
+            target = target.lstrip("/")
+            if not target.startswith("xl/"):
+                target = f"xl/{target}"
+            sheet_xml = ElementTree.fromstring(archive.read(target))
+    except (ElementTree.ParseError, KeyError, OSError, StopIteration, ValueError):
+        return {}
+    result: dict[int, str] = {}
+    for item in sheet_xml.findall(f".//{{{main_ns}}}c"):
+        reference = item.get("r") or ""
+        if not re.fullmatch(rf"{re.escape(column)}(\d+)", reference) or item.get("t") not in {None, "n"}:
+            continue
+        value = item.find(f"{{{main_ns}}}v")
+        if value is not None and value.text:
+            result[int(reference[len(column):])] = item_text(value.text) or ""
+    return result
 
 
 def duplicate_records(records: list[dict[str, Any]], keys: tuple[str, ...]) -> list[dict[str, Any]]:

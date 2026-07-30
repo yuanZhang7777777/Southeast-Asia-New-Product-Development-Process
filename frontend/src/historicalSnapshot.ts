@@ -88,7 +88,8 @@ export type HistoryCellSectionKey = "development" | "market" | "pricing" | "cost
 export type HistoryCellSections = Record<HistoryCellSectionKey, HistoryCellField[]>;
 
 export function isHistorySelection1Item(item: SnapshotItem) {
-  return item.source_type === "history_selection1" || snapshotOf(item).archive_type === "historical_selection1";
+  const snapshot = snapshotOf(item);
+  return item.source_type === "history_selection1" || snapshot.archive_type === "historical_selection1" || isRecord(snapshot.historical_selection1);
 }
 
 // 列位兜底（Z-AN 竞品、AO-AX 定价、AQ-BR 成本等）只对真正是选品1列布局的来源成立；
@@ -98,7 +99,7 @@ export function hasSelection1ColumnLayout(item: SnapshotItem) {
 }
 
 export function isSelection2Item(item: SnapshotItem) {
-  return item.source_type === "selection2_caigen_claim_feedback";
+  return item.source_type === "selection2_caigen_claim_feedback" || item.source_type === "history_selection2";
 }
 
 export type Selection2SectionKey = "market" | "pricing" | "cost";
@@ -113,8 +114,8 @@ const selection2SectionKeywords: Record<Selection2SectionKey, readonly string[]>
 export function selection2HeaderFields(item: SnapshotItem, section: Selection2SectionKey): HistoryCellField[] {
   if (!isSelection2Item(item)) return [];
   const snapshot = snapshotOf(item);
-  const headersByColumn = isRecord(snapshot.headers_by_column) ? snapshot.headers_by_column : {};
-  const fieldsByColumn = isRecord(snapshot.fields_by_column) ? snapshot.fields_by_column : {};
+  const headersByColumn = isRecord(snapshot.headers_by_column) ? snapshot.headers_by_column : isRecord(snapshot.headers_by_cell) ? snapshot.headers_by_cell : {};
+  const fieldsByColumn = isRecord(snapshot.fields_by_column) ? snapshot.fields_by_column : isRecord(snapshot.raw_cells_by_cell) ? snapshot.raw_cells_by_cell : {};
   const cells = isRecord(snapshot.cells) ? snapshot.cells : {};
   const keywords = selection2SectionKeywords[section];
   const rows: HistoryCellField[] = [];
@@ -138,7 +139,9 @@ function headerText(value: unknown) {
 // 旧世代（generation=old）行分组可能缺失，缺失或未识别分组落入 other（基础信息底部折叠区）。
 export function historyFieldsByCellSections(item: SnapshotItem): HistoryCellSections | null {
   if (!isHistorySelection1Item(item)) return null;
-  const cells = snapshotOf(item).fields_by_cell;
+  const snapshot = snapshotOf(item);
+  const historySnapshot = isRecord(snapshot.historical_selection1) ? snapshot.historical_selection1 : snapshot;
+  const cells = historySnapshot.fields_by_cell;
   if (!isRecord(cells)) return null;
   const sections: HistoryCellSections = { development: [], market: [], pricing: [], cost: [], other: [] };
   const columns = Object.keys(cells).sort((left, right) => columnNumber(left) - columnNumber(right));

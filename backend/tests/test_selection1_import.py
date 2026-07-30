@@ -56,6 +56,32 @@ def test_selection1_import_creates_batch_and_links_snapshots(tmp_path: Path) -> 
     assert db.query(models.FlowTask).count() == 0
 
 
+def test_selection1_import_reads_single_header_template_data_from_second_row(tmp_path: Path) -> None:
+    workbook_path = tmp_path / "selection1_standard_template.xlsx"
+    workbook = Workbook()
+    worksheet = workbook.active
+    worksheet.title = "选品1未来标准表头"
+    worksheet.append(["站点", "开发部门", "开发员", "一级类目", "二级类目", "关键词", "产品图片", "主SKU名称", "主SKU", "子SKU名称", "子SKU", "产品类型", "开品理由"])
+    worksheet.append(["PH", "开发一部", "开发员A", "家居厨卫", "收纳整理", "收纳", None, "收纳盒", "MAIN-TEMPLATE", "收纳盒蓝色", "SUB-TEMPLATE", "利润款", "市场需求明确"])
+    workbook.save(workbook_path)
+
+    response = client.post(
+        "/opportunities/import/selection1",
+        json={"source_file": str(workbook_path), "source_sheet": "选品1未来标准表头", "business_period": "开发0728期"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["imported_count"] == 1
+    with SessionLocal() as db:
+        opportunity = db.query(models.NewProductOpportunity).one()
+    assert opportunity.source_row == 2
+    assert opportunity.main_sku == "MAIN-TEMPLATE"
+    assert opportunity.sub_sku == "SUB-TEMPLATE"
+    assert opportunity.category_level1 == "家居厨卫"
+    assert opportunity.category_level2 == "收纳整理"
+    assert opportunity.keyword == "收纳"
+
+
 def test_selection1_business_period_is_separate_from_source_sheet(tmp_path: Path) -> None:
     workbook_path = tmp_path / "selection1_business_period.xlsx"
     build_selection1_fixture(workbook_path, sheet_name="选品1原始数据")

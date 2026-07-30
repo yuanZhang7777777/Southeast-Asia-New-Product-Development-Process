@@ -8,6 +8,8 @@ import {
   buildProductBoardRows,
   filterProductBoardRows,
   hasMultipleOwners,
+  limitProductBoardRows,
+  PRODUCT_BOARD_RENDER_STEP,
   ProductBoardFilters,
   ProductBoardRow,
   productBoardStatusLabel,
@@ -33,6 +35,7 @@ export function ProductBoardView({
   const [error, setError] = useState("");
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [filters, setFilters] = useState<ProductBoardFilters>({});
+  const [rowLimit, setRowLimit] = useState(PRODUCT_BOARD_RENDER_STEP);
 
   useEffect(() => {
     if (role === "operator" && !operatorName.trim()) {
@@ -63,7 +66,12 @@ export function ProductBoardView({
   const rows = useMemo(() => buildProductBoardRows(groups), [groups]);
   const effectiveFilters = role === "operator" ? { ...filters, owner: operatorName.trim() } : filters;
   const visibleRows = useMemo(() => filterProductBoardRows(rows, effectiveFilters), [rows, effectiveFilters]);
+  const renderedRows = useMemo(() => limitProductBoardRows(visibleRows, rowLimit), [visibleRows, rowLimit]);
   const options = useMemo(() => buildOptions(rows), [rows]);
+
+  useEffect(() => {
+    setRowLimit(PRODUCT_BOARD_RENDER_STEP);
+  }, [effectiveFilters.query, effectiveFilters.businessPeriod, effectiveFilters.owner, effectiveFilters.status, effectiveFilters.site]);
 
   return (
     <div className="product-board">
@@ -101,6 +109,7 @@ export function ProductBoardView({
       {error && <div className="notice red">{error}</div>}
       <div className="dashboard-summary">
         <span className="tag">主 SKU 组：{visibleRows.length} / {rows.length}</span>
+        {visibleRows.length > renderedRows.length && <span className="tag">已显示：{renderedRows.length}</span>}
         <span className="tag">责任明细：{visibleRows.reduce((sum, row) => sum + row.responsibilities.length, 0)}</span>
         {loading && <span className="tag">加载中...</span>}
       </div>
@@ -125,7 +134,7 @@ export function ProductBoardView({
                 <td colSpan={8}>当前条件下没有商品</td>
               </tr>
             )}
-            {visibleRows.map((row) => {
+            {renderedRows.map((row) => {
               const firstOpportunityId = row.child_skus[0]?.opportunity_id || "";
               return (
                 <Fragment key={row.key}>
@@ -172,6 +181,13 @@ export function ProductBoardView({
             })}
           </tbody>
         </table>
+        {visibleRows.length > renderedRows.length && (
+          <div className="product-board-load-more">
+            <button className="btn" type="button" onClick={() => setRowLimit((current) => current + PRODUCT_BOARD_RENDER_STEP)}>
+              加载更多（{renderedRows.length} / {visibleRows.length}）
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

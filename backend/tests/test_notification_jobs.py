@@ -702,7 +702,7 @@ def test_listing_reminder_cards_count_statuses_and_dedupe_per_operator_per_day()
         assert card.left_label == "待刊登"
         assert card.right_label == "待二调"
         assert card.tip_text == "MAIN-1|新品一、MAIN-2|新品二"
-        assert card.action_url == "https://np.example/?from=ding&role=operator"
+        assert card.action_url == "https://np.example/?from=ding&role=operator&view=research"
         db.flush()
         log = db.query(models.NotificationLog).one()
         assert log.send_status == "sent"
@@ -718,6 +718,29 @@ def test_listing_reminder_cards_count_statuses_and_dedupe_per_operator_per_day()
         assert [log.dedupe_key for log in third] == ["dingtalk_card:listing-reminder:2026-07-28:销售A"]
         assert len(sender.todo_cards) == 2
 
+
+def test_listing_reminder_test_redirect_logs_actual_receiver() -> None:
+    settings = Settings(
+        dingtalk_card_autosend_enabled=True,
+        dingtalk_card_test_receiver_name="测试收件人",
+        platform_base_url="https://np.example",
+    )
+    sender = FakeSender()
+    with SessionLocal() as db:
+        db.add_all(
+            [
+                models.RoleMapping(name="销售A", role="operator", dingtalk_user_id="dt-sales-a", enabled=True),
+                models.RoleMapping(name="测试收件人", role="super_admin", dingtalk_user_id="dt-tester", enabled=True),
+            ]
+        )
+        _seed_arrived_claim(db, "claim-test-redirect", "销售A", "MAIN-1", "SUB-1", CLAIM_WAITING_SECONDARY_RESEARCH)
+        db.flush()
+
+        send_operator_listing_reminder_cards(db, settings, sender, "2026-07-27")
+
+        assert sender.todo_cards[0].receiver_dingtalk_user_id == "dt-tester"
+        assert sender.todo_cards[0].subject_name == "销售A"
+        assert db.query(models.NotificationLog).one().receiver_name == "测试收件人"
 
 def test_listing_reminder_cards_send_nothing_when_no_qualifying_claims() -> None:
     settings = Settings(dingtalk_card_autosend_enabled=True, platform_base_url="https://np.example")

@@ -3,9 +3,9 @@
 - 数据源：source_type=history_selection1 档案行或当前选品1行中的 `historical_selection1`
   快照（键=列字母，值={"header","group","value"}，全列保真）。0414~0721 各期认领区
   使用已核对的固定列位，只有未列位化来源才降级用表头匹配，避免同名表头错读。
-- 判定：主销售员空/错误值 → no_claim_info 跳过（历史没认领人就是没认领过，不造数）；
-  正数认领单销→claim；明确拒绝/不认领理由→reject；认领单销中的非数字文字作为拒绝理由保留；
-  0 和空值均不创建历史认领行。
+- 判定：主销售员空但同业务期/国家/站点/主SKU组内唯一主销售员明确，且本行有认领信号时继承该销售员；
+  无可继承销售员才 no_claim_info 跳过；正数认领单销→claim；
+  明确拒绝/不认领理由、空单销或 0 单销→reject；认领单销中的非数字文字作为拒绝理由保留。
 - 落库：SalesClaimForecast(source_column=claim_source="history_selection1")，
   不建 FlowTask/FlowInstance、不发通知、不动 opportunity.current_status、不动既有认领行。
 - 安全自检（2026-07-27 逐点核实）：现行流程消费认领行处均过滤 source_column='platform'，
@@ -46,7 +46,7 @@ from app import models
 from app.field_mapping import normalize_header, text_value
 from app.historical_archive_import import APPLY_ALLOWED_ENVS
 from app.historical_central_import import ERROR_VALUES, sheet_image_anchors
-from app.historical_selection1_import import SOURCE_TYPE
+from app.historical_selection1_import import SOURCE_TYPE, normalize_selection1_history_rows
 from app.oss_storage import upload_claim_evidence_image
 from app.selection1_importer import SOURCE_TYPE as CURRENT_SELECTION1_SOURCE_TYPE
 from app.selection2_importer import normalize_claim_result
@@ -58,6 +58,29 @@ NORMALIZE_AUDIT_ACTION = "history.selection1_claims_normalized"
 EVIDENCE_AUDIT_ACTION = "history.selection1_claim_evidence_backfilled"
 REVERT_AUDIT_ACTION = "history.selection1_claims_reverted"
 EVIDENCE_BUNDLE_MANIFEST = "evidence_manifest.json"
+STANDARD_CLAIM_LAYOUT = {
+    "reject_reason": "BZ",
+    "salesperson": "CA",
+    "claim_flag": "CB",
+    "daily_sales": "CC",
+    "feedback_summary": "CD",
+    "note": "CE",
+}
+FINANCE_SHIFTED_CLAIM_LAYOUT = {
+    "salesperson": "BZ",
+    "claim_flag": "CA",
+    "daily_sales": "CB",
+    "reject_reason": "CC",
+    "feedback_summary": "CD",
+    "note": "CE",
+}
+FINANCE_SPLIT_SHEET_PERIODS = {
+    "开发-财根团队6.24-6.30": "开发0624期-财根",
+    "开发-财根团队7.1-7.7": "开发0701期-财根",
+    "开发-财根团队7.8-7.14": "开发0708期-财根",
+    "开发-财根团队7.15-7.21": "开发0715期-财根",
+}
+FINANCE_SPLIT_CLAIM_PERIODS = frozenset(FINANCE_SPLIT_SHEET_PERIODS.values())
 # 旧表每期的认领区位置不同，必须按已核对的期数列位读取；不能再按最靠前的同名表头猜测。
 PERIOD_CLAIM_LAYOUTS = {
     "开发0414期": {"salesperson": "IT", "claim_flag": "IU", "daily_sales": "IV", "feedback_summary": "IW", "note": "IX"},
@@ -75,7 +98,8 @@ PERIOD_CLAIM_LAYOUTS = {
     "开发0714期": {"reject_reason": "BW", "salesperson": "BX", "claim_flag": "BY", "daily_sales": "BZ", "feedback_summary": "CA", "note": "CB"},
     "开发0721期": {"reject_reason": "BW", "salesperson": "BX", "claim_flag": "BY", "daily_sales": "BZ", "feedback_summary": "CA", "note": "CB"},
 }
-ALLOWED_CLAIM_PERIODS = frozenset({*PERIOD_CLAIM_LAYOUTS, "开发0727期-财根"})
+ALLOWED_CLAIM_PERIODS = frozenset({*PERIOD_CLAIM_LAYOUTS, *FINANCE_SPLIT_CLAIM_PERIODS, "开发0727期-财根"})
+CANONICAL_CLAIM_PERIODS = frozenset({*PERIOD_CLAIM_LAYOUTS, *FINANCE_SPLIT_CLAIM_PERIODS})
 # 表头包含匹配只作为未列位化历史行的保底；当前导入范围均应命中上方布局。
 FIELD_KEYWORDS = {
     "salesperson": ("主销售员",),
@@ -96,10 +120,38 @@ CLAIM_REFERENCE_COLUMNS = (
 )
 
 
+def _standard_claim_layout_available(cells: dict[str, Any]) -> bool:
+    required = {"CA": "主销售员", "CB": "是否认领", "CC": "认领单销"}
+    for column, keyword in required.items():
+        header = normalize_header((cells.get(column) or {}).get("header"))
+        if keyword not in header:
+            return False
+    return True
+
+
+def _finance_split_claim_layout(cells: dict[str, Any]) -> dict[str, str]:
+    salesperson = _clean_text((cells.get("BZ") or {}).get("value"))
+    flag = _clean_text((cells.get("CA") or {}).get("value"))
+    if salesperson and salesperson not in {"是", "否", "Y", "N"} and normalize_claim_result(flag):
+        return FINANCE_SHIFTED_CLAIM_LAYOUT
+    return STANDARD_CLAIM_LAYOUT
+
+
+def _claim_layout(snapshot: dict | None, business_period: str | None) -> dict[str, str] | None:
+    cells = (snapshot or {}).get("fields_by_cell") or {}
+    if business_period in FINANCE_SPLIT_CLAIM_PERIODS:
+        return _finance_split_claim_layout(cells)
+    if (snapshot or {}).get("source_schema") == "selection1_standard_v20260729":
+        return STANDARD_CLAIM_LAYOUT
+    if business_period == "开发0414期" and _standard_claim_layout_available(cells):
+        return STANDARD_CLAIM_LAYOUT
+    return PERIOD_CLAIM_LAYOUTS.get(business_period or "")
+
+
 def claim_fields_from_snapshot(snapshot: dict | None, business_period: str | None = None) -> dict[str, Any]:
     """按已核对的期数列位读取认领区；无布局才降级为表头匹配。"""
     cells = (snapshot or {}).get("fields_by_cell") or {}
-    layout = PERIOD_CLAIM_LAYOUTS.get(business_period or "")
+    layout = _claim_layout(snapshot, business_period)
     if layout:
         fields: dict[str, Any] = {"source_columns": layout}
         mismatches: dict[str, str] = {}
@@ -109,7 +161,7 @@ def claim_fields_from_snapshot(snapshot: dict | None, business_period: str | Non
                 fields[field] = None
                 continue
             header = normalize_header(cell.get("header"))
-            expected = FIELD_KEYWORDS.get(field, ())
+            expected = () if layout is FINANCE_SHIFTED_CLAIM_LAYOUT else FIELD_KEYWORDS.get(field, ())
             if expected and header and not any(keyword in header for keyword in expected):
                 mismatches[field] = f"{column}:{header}"
             fields[field] = cell.get("value")
@@ -171,9 +223,21 @@ def decide_claim(fields: dict[str, Any]) -> tuple[str, dict[str, Any] | None]:
             "feedback_summary": feedback_summary,
         }
     if daily_sales is None:
-        return "unclaimed", None
+        return "reject", {
+            "salesperson_name": salesperson,
+            "claim_result": "reject",
+            "claim_daily_sales": None,
+            "reject_reason": "来源表未填写认领单销",
+            "feedback_summary": feedback_summary,
+        }
     if daily_sales == 0:
-        return "zero_daily_sales", None
+        return "reject", {
+            "salesperson_name": salesperson,
+            "claim_result": "reject",
+            "claim_daily_sales": None,
+            "reject_reason": "来源表认领单销为0",
+            "feedback_summary": feedback_summary,
+        }
     if daily_sales < 0:
         return "invalid_value", None
     return "claim", {
@@ -183,6 +247,32 @@ def decide_claim(fields: dict[str, Any]) -> tuple[str, dict[str, Any] | None]:
         "reject_reason": None,
         "feedback_summary": feedback_summary,
     }
+
+
+def _has_claim_signal(fields: dict[str, Any]) -> bool:
+    return any(
+        _clean_text(fields.get(key)) is not None
+        for key in ("claim_flag", "daily_sales", "reject_reason", "feedback_summary", "note")
+    )
+
+
+def _claim_facts_from_snapshot_with_inheritance(
+    snapshot: dict | None,
+    business_period: str | None,
+    inherited_salesperson: str | None = None,
+) -> list[tuple[str, dict[str, Any] | None, str]]:
+    if business_period == "开发0727期-财根":
+        return _caigen_claim_facts(snapshot)
+    fields = claim_fields_from_snapshot(snapshot, business_period)
+    if fields.get("layout_mismatch"):
+        return [("layout_mismatch", None, "layout")]
+    if inherited_salesperson and not _clean_text(fields.get("salesperson")) and _has_claim_signal(fields):
+        fields = dict(fields)
+        fields["salesperson"] = inherited_salesperson
+        fields["source_columns"] = {**(fields.get("source_columns") or {}), "salesperson": "inherited_main_sku_group"}
+    outcome, payload = decide_claim(fields)
+    source_column = str((fields.get("source_columns") or {}).get("salesperson") or "fallback")
+    return [(outcome, payload, source_column)]
 
 
 def _caigen_claim_facts(snapshot: dict | None) -> list[tuple[str, dict[str, Any] | None, str]]:
@@ -218,14 +308,153 @@ def claim_facts_from_snapshot(
     snapshot: dict | None,
     business_period: str | None,
 ) -> list[tuple[str, dict[str, Any] | None, str]]:
-    if business_period == "开发0727期-财根":
-        return _caigen_claim_facts(snapshot)
-    fields = claim_fields_from_snapshot(snapshot, business_period)
-    if fields.get("layout_mismatch"):
-        return [("layout_mismatch", None, "layout")]
-    outcome, payload = decide_claim(fields)
-    source_column = str((fields.get("source_columns") or {}).get("salesperson") or "fallback")
-    return [(outcome, payload, source_column)]
+    return _claim_facts_from_snapshot_with_inheritance(snapshot, business_period)
+
+
+def _canonical_source_reference(row: dict[str, Any], period: str, source_column: str) -> dict[str, Any]:
+    return {
+        "source_file": row.get("source_file"),
+        "source_sheet": row.get("source_sheet"),
+        "source_row": row.get("source_row"),
+        "source_rows": row.get("source_rows") or [row.get("source_row")],
+        "business_period": period,
+        "country": row.get("country"),
+        "site": row.get("site"),
+        "main_sku": row.get("main_sku"),
+        "sub_sku": row.get("sub_sku"),
+        "claim_column": source_column,
+    }
+
+
+def _claim_group_key(period: str | None, country: Any, site: Any, main_sku: Any) -> tuple[str, str, str, str]:
+    return (
+        str(period or ""),
+        str(country or ""),
+        str(site or ""),
+        str(main_sku or ""),
+    )
+
+
+def _row_claim_group_key(row: dict[str, Any], period: str | None) -> tuple[str, str, str, str]:
+    return _claim_group_key(period, row.get("country"), row.get("site"), row.get("main_sku"))
+
+
+def _archive_inherited_salespeople(rows: list[dict[str, Any]]) -> dict[tuple[str, str, str, str], str]:
+    names_by_group: dict[tuple[str, str, str, str], set[str]] = defaultdict(set)
+    for row in rows:
+        period = _normalize_claim_period(row.get("batch") or row.get("source_sheet"))
+        if period is None:
+            continue
+        name = _clean_text(claim_fields_from_snapshot(row.get("snapshot"), period).get("salesperson"))
+        if name:
+            names_by_group[_row_claim_group_key(row, period)].add(name)
+    return {key: next(iter(names)) for key, names in names_by_group.items() if len(names) == 1}
+
+
+def _inherited_for_archive_row(
+    row: dict[str, Any],
+    period: str | None,
+    inherited_by_group: dict[tuple[str, str, str, str], str],
+) -> str | None:
+    return inherited_by_group.get(_row_claim_group_key(row, period))
+
+
+def _repair_matches_source_row(repair: dict[str, Any], row: dict[str, Any]) -> bool:
+    return (
+        row.get("source_file") == repair.get("source_file")
+        and row.get("source_sheet") == repair.get("source_sheet")
+        and row.get("batch") == repair.get("business_period")
+        and row.get("country") == repair.get("country")
+        and row.get("site") == repair.get("site")
+        and row.get("main_sku") == repair.get("main_sku")
+        and row.get("sub_sku") == repair.get("sub_sku")
+        and row.get("source_row") in set(repair.get("source_rows") or [])
+    )
+
+
+def build_selection1_canonical_package(rows: list[dict[str, Any] | None]) -> dict[str, Any]:
+    """Return a no-write canonical package for the confirmed 0414~0721 claim scope."""
+    scoped_rows = [
+        dict(row)
+        for row in rows
+        if row is not None
+        and _normalize_claim_period(row.get("batch") or row.get("source_sheet")) in CANONICAL_CLAIM_PERIODS
+    ]
+    normalized = normalize_selection1_history_rows(scoped_rows)
+    archive_rows = normalized["rows"]
+    inherited_by_group = _archive_inherited_salespeople(archive_rows)
+
+    claim_facts: list[dict[str, Any]] = []
+    for row in archive_rows:
+        period = _normalize_claim_period(row.get("batch") or row.get("source_sheet"))
+        if period is None:
+            continue
+        inherited_salesperson = _inherited_for_archive_row(row, period, inherited_by_group)
+        for outcome, payload, source_column in _claim_facts_from_snapshot_with_inheritance(
+            row.get("snapshot"),
+            period,
+            inherited_salesperson,
+        ):
+            if payload is not None:
+                claim_facts.append(
+                    {
+                        "outcome": outcome,
+                        **_canonical_source_reference(row, period, source_column),
+                        **payload,
+                    }
+                )
+
+    unresolved: list[dict[str, Any]] = []
+    unresolved_claim_facts: list[dict[str, Any]] = []
+    for repair in normalized["business_repair_rows"]:
+        repair_rows = [row for row in scoped_rows if _repair_matches_source_row(repair, row)]
+        unresolved.append(
+            {
+                **repair,
+                "source_records": [
+                    {
+                        "source_row": row.get("source_row"),
+                        "main_sku_name": row.get("main_sku_name"),
+                        "sub_sku_name": row.get("sub_sku_name"),
+                        "snapshot": row.get("snapshot"),
+                    }
+                    for row in repair_rows
+                ],
+            }
+        )
+        period = _normalize_claim_period(repair.get("business_period"))
+        for row in repair_rows:
+            inherited_salesperson = _inherited_for_archive_row(row, period, inherited_by_group)
+            for outcome, payload, source_column in _claim_facts_from_snapshot_with_inheritance(
+                row.get("snapshot"),
+                period,
+                inherited_salesperson,
+            ):
+                if payload is not None:
+                    unresolved_claim_facts.append(
+                        {
+                            "outcome": outcome,
+                            **_canonical_source_reference(row, period or "", source_column),
+                            **payload,
+                        }
+                    )
+
+    return {
+        "archive_rows": archive_rows,
+        "claim_facts": claim_facts,
+        "unresolved": unresolved,
+        "unresolved_claim_facts": unresolved_claim_facts,
+        "counts": {
+            "raw_rows": len(scoped_rows),
+            "archive_rows": len(archive_rows),
+            "claim_facts": len(claim_facts),
+            "claims": sum(item["outcome"] == "claim" for item in claim_facts),
+            "rejections": sum(item["outcome"] == "reject" for item in claim_facts),
+            "unresolved_groups": len(unresolved),
+            "unresolved_rows": sum(len(item["source_records"]) for item in unresolved),
+            "unresolved_claim_facts": len(unresolved_claim_facts),
+        },
+    }
 
 
 def _historical_snapshot(opportunity: models.NewProductOpportunity) -> tuple[dict[str, Any] | None, str | None]:
@@ -240,10 +469,46 @@ def _historical_snapshot(opportunity: models.NewProductOpportunity) -> tuple[dic
     return None, None
 
 
+def _opportunity_claim_group_key(
+    opportunity: models.NewProductOpportunity,
+    period: str | None,
+) -> tuple[str, str, str, str]:
+    return _claim_group_key(period, opportunity.country, opportunity.site, opportunity.main_sku)
+
+
+def _opportunity_inherited_salespeople(
+    opportunities: list[models.NewProductOpportunity],
+    active_periods: frozenset[str] | set[str],
+) -> dict[str, str]:
+    names_by_group: dict[tuple[str, str, str, str], set[str]] = defaultdict(set)
+    context: dict[str, tuple[tuple[str, str, str, str], dict[str, Any], str]] = {}
+    for opportunity in opportunities:
+        snapshot, period = _historical_snapshot(opportunity)
+        if snapshot is None or not period or period not in active_periods:
+            continue
+        key = _opportunity_claim_group_key(opportunity, period)
+        context[opportunity.id] = (key, snapshot, period)
+        name = _clean_text(claim_fields_from_snapshot(snapshot, period).get("salesperson"))
+        if name:
+            names_by_group[key].add(name)
+
+    unique_by_group = {key: next(iter(names)) for key, names in names_by_group.items() if len(names) == 1}
+    inherited: dict[str, str] = {}
+    for opportunity_id, (key, snapshot, period) in context.items():
+        name = unique_by_group.get(key)
+        if name and not _clean_text(claim_fields_from_snapshot(snapshot, period).get("salesperson")):
+            inherited[opportunity_id] = name
+    return inherited
+
+
 def _normalize_claim_period(value: Any) -> str | None:
     text = _clean_text(value)
     if not text:
         return None
+    if text in FINANCE_SPLIT_SHEET_PERIODS:
+        return FINANCE_SPLIT_SHEET_PERIODS[text]
+    if text in FINANCE_SPLIT_CLAIM_PERIODS:
+        return text
     if text == "开发-财根团队汇总" or ("0727" in text and "财根" in text):
         return "开发0727期-财根"
     match = re.search(r"开发(?:新品)?(\d{4})期", text)
@@ -349,7 +614,14 @@ def _claim_note_payload(claim: models.SalesClaimForecast, opportunity: models.Ne
 
 def _claim_evidence_columns(period: str | None) -> set[str]:
     layout = PERIOD_CLAIM_LAYOUTS.get(period or "") or {}
-    return {column for field, column in layout.items() if field in {"feedback_summary", "note"}}
+    columns = {column for field, column in layout.items() if field in {"feedback_summary", "note"}}
+    if period == "开发0414期":
+        columns.update(
+            column for field, column in STANDARD_CLAIM_LAYOUT.items() if field in {"feedback_summary", "note"}
+        )
+    if period in FINANCE_SPLIT_CLAIM_PERIODS:
+        columns.update({"CC", "CD", "CE"})
+    return columns
 
 
 def write_selection1_claim_evidence_bundle(
@@ -458,16 +730,24 @@ def selection1_claim_evidence_manifest(
         )
 
     # Dry-runs run before historical claim rows exist, so derive the same source keys from archive snapshots.
-    opportunities = db.scalars(
+    opportunities = list(db.scalars(
         select(models.NewProductOpportunity)
         .where(models.NewProductOpportunity.source_type.in_((SOURCE_TYPE, CURRENT_SELECTION1_SOURCE_TYPE)))
         .order_by(models.NewProductOpportunity.batch, models.NewProductOpportunity.source_row)
-    )
+    ))
+    inherited_by_opportunity = _opportunity_inherited_salespeople(opportunities, ALLOWED_CLAIM_PERIODS)
     for opportunity in opportunities:
         snapshot, period = _historical_snapshot(opportunity)
         if snapshot is None or not period:
             continue
-        if not any(payload is not None for _, payload, _ in claim_facts_from_snapshot(snapshot, period)):
+        if not any(
+            payload is not None
+            for _, payload, _ in _claim_facts_from_snapshot_with_inheritance(
+                snapshot,
+                period,
+                inherited_by_opportunity.get(opportunity.id),
+            )
+        ):
             continue
         reference = snapshot.get("source_reference") or {}
         add_source(
@@ -571,7 +851,14 @@ def backfill_selection1_claim_evidence(
     return report
 
 
-def backfill_selection1_claims(db: Session, *, apply: bool = False, actor: str | None = None) -> dict[str, Any]:
+def backfill_selection1_claims(
+    db: Session,
+    *,
+    apply: bool = False,
+    actor: str | None = None,
+    periods: frozenset[str] | set[str] | None = None,
+) -> dict[str, Any]:
+    active_periods = ALLOWED_CLAIM_PERIODS if periods is None else frozenset(periods)
     counts = {
         "total": 0,
         "claim": 0,
@@ -590,14 +877,15 @@ def backfill_selection1_claims(db: Session, *, apply: bool = False, actor: str |
         select(models.SalesClaimForecast).where(models.SalesClaimForecast.source_column == CLAIM_SOURCE_COLUMN)
     ):
         existing_by_opportunity[claim.opportunity_id].append(claim)
-    opportunities = db.scalars(
+    opportunities = list(db.scalars(
         select(models.NewProductOpportunity)
         .where(models.NewProductOpportunity.source_type.in_((SOURCE_TYPE, CURRENT_SELECTION1_SOURCE_TYPE)))
         .order_by(models.NewProductOpportunity.batch, models.NewProductOpportunity.source_row)
-    )
+    ))
+    inherited_by_opportunity = _opportunity_inherited_salespeople(opportunities, active_periods)
     for opportunity in opportunities:
         snapshot, period = _historical_snapshot(opportunity)
-        if snapshot is None or not period:
+        if snapshot is None or not period or period not in active_periods:
             continue
         counts["total"] += 1
         stats = by_period.setdefault(
@@ -615,7 +903,11 @@ def backfill_selection1_claims(db: Session, *, apply: bool = False, actor: str |
             },
         )
         stats["rows"] += 1
-        for outcome, payload, source_column in claim_facts_from_snapshot(snapshot, period):
+        for outcome, payload, source_column in _claim_facts_from_snapshot_with_inheritance(
+            snapshot,
+            period,
+            inherited_by_opportunity.get(opportunity.id),
+        ):
             if payload and payload.get("salesperson_name"):
                 owner_names.add(str(payload["salesperson_name"]))
             if payload is not None and _claim_exists(existing_by_opportunity[opportunity.id], payload):
@@ -647,8 +939,15 @@ def backfill_selection1_claims(db: Session, *, apply: bool = False, actor: str |
     return report
 
 
-def normalize_selection1_claims(db: Session, *, apply: bool = False, actor: str | None = None) -> dict[str, int]:
+def normalize_selection1_claims(
+    db: Session,
+    *,
+    apply: bool = False,
+    actor: str | None = None,
+    periods: frozenset[str] | set[str] | None = None,
+) -> dict[str, int]:
     """Correct stale historical facts only when none of them are already referenced by a flow."""
+    active_periods = ALLOWED_CLAIM_PERIODS if periods is None else frozenset(periods)
     existing_by_opportunity: dict[str, list[models.SalesClaimForecast]] = defaultdict(list)
     for claim in db.scalars(
         select(models.SalesClaimForecast).where(models.SalesClaimForecast.source_column == CLAIM_SOURCE_COLUMN)
@@ -656,18 +955,23 @@ def normalize_selection1_claims(db: Session, *, apply: bool = False, actor: str 
         existing_by_opportunity[claim.opportunity_id].append(claim)
 
     operations: list[tuple[str, models.SalesClaimForecast, dict[str, Any] | None, str | None, models.NewProductOpportunity, dict[str, Any]]] = []
-    opportunities = db.scalars(
+    opportunities = list(db.scalars(
         select(models.NewProductOpportunity)
         .where(models.NewProductOpportunity.source_type.in_((SOURCE_TYPE, CURRENT_SELECTION1_SOURCE_TYPE)))
         .order_by(models.NewProductOpportunity.batch, models.NewProductOpportunity.source_row)
-    )
+    ))
+    inherited_by_opportunity = _opportunity_inherited_salespeople(opportunities, active_periods)
     for opportunity in opportunities:
         snapshot, period = _historical_snapshot(opportunity)
-        if snapshot is None or not period:
+        if snapshot is None or not period or period not in active_periods:
             continue
         expected = [
             (payload, source_column)
-            for _, payload, source_column in claim_facts_from_snapshot(snapshot, period)
+            for _, payload, source_column in _claim_facts_from_snapshot_with_inheritance(
+                snapshot,
+                period,
+                inherited_by_opportunity.get(opportunity.id),
+            )
             if payload is not None
         ]
         remaining = list(existing_by_opportunity.get(opportunity.id, []))

@@ -39,20 +39,23 @@ test("四个分区固定为用户管理、导入批次、FineBI 拉取、系统�
   );
 });
 
-test("角色标签覆盖已知角色，未知角色原样展示并保留为下拉选项", () => {
+test("角色下拉提供运营、主管和超级管理员", () => {
   assert.equal(roleLabel("operator"), "运营");
   assert.equal(roleLabel("manager"), "主管");
   assert.equal(roleLabel("super_admin"), "超级管理员");
-  assert.equal(roleLabel("sales"), "销售");
   assert.equal(roleLabel("custom_role"), "custom_role");
   const options = roleOptions("custom_role");
   assert.deepEqual(
     options.map((option) => option.value),
-    ["operator", "sales", "manager", "super_admin", "custom_role"]
+    ["operator", "manager", "super_admin", "custom_role"]
   );
   assert.deepEqual(
     roleOptions("manager").map((option) => option.value),
-    ["operator", "sales", "manager", "super_admin"]
+    ["operator", "manager", "super_admin"]
+  );
+  assert.deepEqual(
+    roleOptions("sales").map((option) => option.value),
+    ["operator", "manager", "super_admin", "sales"]
   );
 });
 

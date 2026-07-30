@@ -217,15 +217,7 @@ def build_plan(
             (bench["main_skus"] if bench else set())
             | set().union(*(bucket["main_skus"] for bucket in period_data.values()), set())
         )
-        finebi_weeks = [
-            {
-                "period": period,
-                "window": period_window(period, year),
-                **{field: bucket[field] for field in ("orders", "revenue", "gross_profit", "row_count", "source_file")},
-                "main_skus": sorted(bucket["main_skus"]),
-            }
-            for period, bucket in sorted(period_data.items())
-        ]
+        finebi_weeks = _first_four_finebi_weeks(period_data, year)
         workbench_fallback_weeks = []
         review_weeks = []
         if bench:
@@ -281,6 +273,17 @@ def build_plan(
     return {"summary": summary, "items": items}
 
 
+
+def _first_four_finebi_weeks(period_data: dict[str, dict[str, Any]], year: int) -> list[dict[str, Any]]:
+    return [
+        {
+            "period": period,
+            "window": period_window(period, year),
+            **{field: bucket[field] for field in ("orders", "revenue", "gross_profit", "row_count", "source_file")},
+            "main_skus": sorted(bucket["main_skus"]),
+        }
+        for period, bucket in sorted(period_data.items())[:4]
+    ]
 def apply_plan(db: Session, plan: dict[str, Any], source_label: str, imported_by: str | None = None) -> dict[str, int]:
     batch = models.ImportBatch(
         source_type=SOURCE_TYPE,

@@ -151,6 +151,44 @@ def test_product_board_isolates_same_sku_by_business_period() -> None:
     ]
 
 
+def test_product_board_hides_replaced_selection1_history_records() -> None:
+    with SessionLocal() as db:
+        db.add_all([
+            models.NewProductOpportunity(
+                source_type="selection1_developer_claim_feedback",
+                source_file="selection1.xlsx",
+                source_sheet="开发0623期",
+                source_row=1,
+                batch="开发0623期",
+                site="PH",
+                country="PH",
+                main_sku="MAIN-REBUILD",
+                sub_sku="SUB-1",
+                current_status="historical_archive",
+            ),
+            models.NewProductOpportunity(
+                source_type="history_selection1",
+                source_file="old.xlsx",
+                source_sheet="开发新品0623期",
+                source_row=1,
+                batch="开发0623期",
+                site="PH",
+                country="PH",
+                main_sku="MAIN-REBUILD",
+                sub_sku="SUB-1",
+                current_status="replaced_by_normalized_selection1",
+            ),
+        ])
+        db.commit()
+
+    response = client.get("/product-board")
+
+    assert response.status_code == 200
+    [group] = response.json()
+    assert group["main_sku"] == "MAIN-REBUILD"
+    assert len(group["child_skus"]) == 1
+
+
 def test_product_board_groups_same_sku_across_source_types() -> None:
     prepare_approved_group(
         sub_skus=("SUB-1", "SUB-2"),
@@ -165,6 +203,56 @@ def test_product_board_groups_same_sku_across_source_types() -> None:
     assert (group["business_period"], group["site"], group["main_sku"]) == ("2026-W29", "PH", "MAIN-BOARD")
     assert [child["sub_sku"] for child in group["child_skus"]] == ["SUB-1", "SUB-2"]
     assert [item["salesperson_name"] for item in group["responsibilities"]] == ["Owner A", "Owner B"]
+
+
+def test_product_board_shows_historical_claim_relationships() -> None:
+    with SessionLocal() as db:
+        opportunity = models.NewProductOpportunity(
+            source_type="history_selection1",
+            source_file="selection1.xlsx",
+            source_sheet="开发0414期",
+            source_row=1,
+            batch="开发0414期",
+            site="PH",
+            country="PH",
+            main_sku="MAIN-HISTORY",
+            main_sku_name="历史主品",
+            sub_sku="SUB-HISTORY",
+            sub_sku_name="历史子品",
+            current_status="historical_archive",
+        )
+        db.add(opportunity)
+        db.flush()
+        db.add_all([
+            models.SalesClaimForecast(
+                opportunity_id=opportunity.id,
+                salesperson_name="历史运营甲",
+                claim_result="claim",
+                claim_daily_sales=0.5,
+                source_column="history_selection1",
+            ),
+            models.SalesClaimForecast(
+                opportunity_id=opportunity.id,
+                salesperson_name="历史运营乙",
+                claim_result="reject",
+                reject_reason="来源拒绝理由",
+                source_column="history_selection1",
+            ),
+        ])
+        db.commit()
+
+    response = client.get("/product-board?business_period=开发0414期")
+
+    assert response.status_code == 200
+    [group] = response.json()
+    assert group["main_sku"] == "MAIN-HISTORY"
+    assert {
+        (item["salesperson_name"], item["claim_daily_sales"], item["visible_status"])
+        for item in group["responsibilities"]
+    } == {
+        ("历史运营甲", 0.5, "historical_archive"),
+        ("历史运营乙", None, "historical_archive"),
+    }
 
 
 def prepare_approved_group(

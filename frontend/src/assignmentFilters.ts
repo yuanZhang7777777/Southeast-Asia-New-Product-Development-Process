@@ -3,6 +3,7 @@ export type AssignmentFilter = {
   site?: string;
   category?: string;
   operator?: string;
+  batch?: string;
 };
 
 export type AssignmentFilterItem = {
@@ -20,6 +21,8 @@ export type AssignmentFilterOpportunity = {
   site?: string | null;
   country?: string | null;
   category_level1?: string | null;
+  category_level2?: string | null;
+  batch?: string | null;
 };
 
 export type AssignmentFilterGroup<T extends AssignmentFilterOpportunity = AssignmentFilterOpportunity> = {
@@ -50,6 +53,7 @@ export function filterAssignmentItems<
   return items.filter((item) => {
     const group = groups.find((entry) => entry.items.some((opportunity) => item.opportunity_ids.includes(opportunity.id)));
     const opportunities = group?.items || [];
+    if (filter.batch && !opportunities.some((opportunity) => (opportunity.batch || "").trim() === filter.batch)) return false;
     if (filter.site && !opportunities.some((opportunity) => normalizeSiteText(opportunity.site || opportunity.country) === normalizeSiteText(filter.site))) return false;
     if (filter.category && !opportunities.some((opportunity) => (opportunity.category_level1 || "").trim() === filter.category)) return false;
     const selectedOperator = drafts[assignmentFilterItemKey(item)];
@@ -61,7 +65,9 @@ export function filterAssignmentItems<
         opportunity.main_sku,
         opportunity.sub_sku,
         opportunity.main_sku_name,
-        opportunity.sub_sku_name
+        opportunity.sub_sku_name,
+        opportunity.category_level1,
+        opportunity.category_level2
       ])
     ].filter(Boolean).join(" "));
     return tokens.some((token) => haystack.includes(token));

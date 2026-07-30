@@ -1,7 +1,6 @@
 import type { CompanyCategory, OperatorCategorySelection } from "./api";
 
-export const KEY_CATEGORY_LEVEL1_LIMIT = 3;
-export const KEY_CATEGORY_LEVEL2_LIMIT = 2;
+export const KEY_CATEGORY_LEVEL1_LIMIT = 6;
 
 export function categorySelectionKey(selection: Pick<OperatorCategorySelection, "level1" | "level2">) {
   return selection.level1 + "|||" + (selection.level2 || "");
@@ -68,9 +67,6 @@ export function addKeyCategory(
   }
   if (sameLevel1.some((item) => !item.level2)) return { error: "已选择整个一级类目，无需再选二级" };
   if (sameLevel1.some((item) => item.level2 === level2)) return { error: "该类目已添加" };
-  if (sameLevel1.length >= KEY_CATEGORY_LEVEL2_LIMIT) {
-    return { error: `每组一级类目最多选择 ${KEY_CATEGORY_LEVEL2_LIMIT} 个二级类目` };
-  }
   return { selections: normalizeCategorySelections([...selected, { level1, level2 }]) };
 }
 

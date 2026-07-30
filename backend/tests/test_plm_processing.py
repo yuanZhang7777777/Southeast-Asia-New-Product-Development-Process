@@ -336,3 +336,137 @@ def add_export_candidate(
             sub_sku=opportunity.sub_sku, claim_daily_sales=1, stocking_quantity=30, country="PH",
         ))
     return claim
+
+
+def test_plm_processing_skips_secondary_research_when_active_item_exists(tmp_path: Path) -> None:
+    workbook_path = tmp_path / "plm.xlsx"
+    build_workbook(workbook_path)
+    with SessionLocal() as db:
+        opportunity, claim = make_claim("SUB-A", "PH", SALES_A, "waiting_arrival")
+        db.add_all([opportunity, claim])
+        db.flush()
+        add_stocking_export(db, opportunity, claim)
+        listing = models.ListingRecord(
+            source_group_key="history:MAIN-1",
+            source_claim_ids=[],
+            source_type="history_listing",
+            business_period=opportunity.batch,
+            country="PH",
+            site="PH",
+            main_sku=opportunity.main_sku,
+            salesperson_name=SALES_A,
+            shop="Shopee-PH",
+            item="ITEM-1",
+            listing_strategy="history",
+            status="active",
+            tracking_status="active",
+        )
+        db.add(listing)
+        db.flush()
+        db.add(models.ListingSkuBinding(
+            listing_record_id=listing.id,
+            main_sku=opportunity.main_sku,
+            sub_sku=opportunity.sub_sku,
+            binding_source="history_listing",
+        ))
+        db.commit()
+
+        result = process_plm_arrival_workbook(
+            db,
+            workbook_path,
+            "2026-07-12",
+            source_file="plm.xlsx",
+            bloc_name=GROUP_EIGHT,
+            workflow_automation_enabled=True,
+        )
+
+        item = db.query(models.PlmArrivalItem).filter_by(source_row=2).one()
+        assert result["matched_count"] == 0
+        assert result["arrival_record_count"] == 0
+        assert item.match_status == "already_listed"
+        assert db.get(models.SalesClaimForecast, claim.id).downstream_status == "waiting_arrival"
+
+def test_active_listing_keys_include_shared_item_binding() -> None:
+    with SessionLocal() as db:
+        listing = models.ListingRecord(
+            source_group_key="history:REP-MAIN",
+            source_claim_ids=[],
+            source_type="history_listing",
+            business_period="history",
+            country="PH",
+            site="PH",
+            main_sku="REP-MAIN",
+            salesperson_name=SALES_A,
+            shop="Shopee-PH",
+            item="ITEM-SHARED",
+            listing_strategy="history",
+            status="active",
+            tracking_status="active",
+        )
+        db.add(listing)
+        db.flush()
+        db.add(models.ListingSkuBinding(
+            listing_record_id=listing.id,
+            main_sku="MAIN-1",
+            sub_sku="SUB-A",
+            binding_source="history_listing",
+        ))
+        db.commit()
+
+        assert ("MAIN-1", "PH") in plm_processing._active_listing_keys(db)
+
+def test_plm_processing_activates_historical_claim_after_verified_new_arrival(tmp_path: Path) -> None:
+    workbook_path = tmp_path / "plm.xlsx"
+    build_workbook(workbook_path)
+    with SessionLocal() as db:
+        user = models.User(name="历史销售", dingtalk_user_id="dt-history-sales", enabled=True)
+        db.add(user)
+        db.flush()
+        db.add(models.RoleMapping(
+            user_id=user.id,
+            name="历史销售",
+            dingtalk_user_id=user.dingtalk_user_id,
+            role="operator",
+            enabled=True,
+        ))
+        opportunity = models.NewProductOpportunity(
+            source_type="history_selection1",
+            source_file="selection1.xlsx",
+            source_sheet="开发0623期",
+            source_row=2,
+            batch="开发0623期",
+            country="PH",
+            site="PH",
+            main_sku="MAIN-1",
+            sub_sku="SUB-A",
+            current_status="historical_archive",
+            snapshot={},
+        )
+        db.add(opportunity)
+        db.flush()
+        db.add(models.SalesClaimForecast(
+            opportunity_id=opportunity.id,
+            salesperson_name="历史销售",
+            claim_result="claim",
+            claim_daily_sales=1.5,
+            source_column="history_selection1",
+            claim_source="history_selection1",
+        ))
+        db.commit()
+
+        result = process_plm_arrival_workbook(
+            db,
+            workbook_path,
+            "2026-07-12",
+            source_file="plm.xlsx",
+            bloc_name=GROUP_EIGHT,
+            workflow_automation_enabled=True,
+        )
+
+        item = db.query(models.PlmArrivalItem).filter_by(source_row=2).one()
+        active_claim = db.query(models.SalesClaimForecast).filter_by(source_column="platform").one()
+        assert result["matched_count"] == 1
+        assert item.match_status == "matched_historical"
+        assert active_claim.salesperson_name == "历史销售"
+        assert active_claim.downstream_status == "waiting_secondary_research"
+        assert db.query(models.ArrivalRecord).filter_by(claim_record_id=active_claim.id).count() == 1

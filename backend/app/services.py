@@ -39,6 +39,7 @@ from app.workflow_status import (
     OPPORTUNITY_CLAIM_SUBMITTED,
     OPPORTUNITY_CONFIRMED_NOT_CLAIM,
     OPPORTUNITY_DISABLED,
+    OPPORTUNITY_REPLACED_BY_NORMALIZED_SELECTION1,
     OPPORTUNITY_OPEN_CLAIM_POOL,
     OPPORTUNITY_PENDING_ASSIGNMENT,
     OPPORTUNITY_READY_FOR_STOCKING,
@@ -286,6 +287,7 @@ OPPORTUNITY_UPDATE_FIELDS = (
     "site",
     "country",
     "category_level1",
+    "category_level2",
     "developer_department",
     "developer_name",
     "keyword",
@@ -675,6 +677,7 @@ def list_assignment_board(
                 batch=(opportunity.batch or opportunity.source_sheet or "").strip() or None,
                 site=opportunity.site or opportunity.country,
                 category_level1=opportunity.category_level1,
+                category_level2=opportunity.category_level2,
                 main_sku=opportunity.main_sku,
                 main_sku_name=opportunity.main_sku_name,
                 sub_sku=opportunity.sub_sku,
@@ -727,7 +730,7 @@ def confirm_assignment(
             current_node="sales_claim",
             current_status=OPPORTUNITY_ASSIGNED,
             owner_user_id=payload.assignee_user_id,
-            owner_role="sales",
+            owner_role="operator",
             deadline_at=payload.deadline_at,
         )
         db.add(flow)
@@ -738,7 +741,7 @@ def confirm_assignment(
             task_type="sales_claim",
             assignee_user_id=payload.assignee_user_id,
             assignee_name=payload.assignee_name,
-            assignee_role="sales",
+            assignee_role="operator",
             deadline_at=payload.deadline_at,
         )
         opportunity.current_status = OPPORTUNITY_ASSIGNED
@@ -759,6 +762,7 @@ def confirm_assignment(
 def _expand_assignment_groups(db: Session, selected: list[models.NewProductOpportunity]) -> list[models.NewProductOpportunity]:
     opportunities_by_id: dict[str, models.NewProductOpportunity] = {}
     for opportunity in selected:
+        target_site = normalize_site_code(opportunity.site or opportunity.country) or ""
         query = select(models.NewProductOpportunity).where(
             models.NewProductOpportunity.source_type == opportunity.source_type,
             models.NewProductOpportunity.main_sku == opportunity.main_sku,
@@ -769,6 +773,8 @@ def _expand_assignment_groups(db: Session, selected: list[models.NewProductOppor
         else:
             query = query.where(models.NewProductOpportunity.batch == opportunity.batch)
         for group_opportunity in db.scalars(query):
+            if (normalize_site_code(group_opportunity.site or group_opportunity.country) or "") != target_site:
+                continue
             opportunities_by_id[group_opportunity.id] = group_opportunity
     return list(opportunities_by_id.values())
 
@@ -1119,14 +1125,14 @@ def create_returned_claim_task(db: Session, opportunity_id: str, actor_name: str
     flow.current_node = "sales_claim"
     flow.current_status = OPPORTUNITY_RETURNED_FOR_SUPPLEMENT
     flow.owner_user_id = original_task.assignee_user_id if original_task else None
-    flow.owner_role = "sales"
+    flow.owner_role = "operator"
     task = models.FlowTask(
         flow_instance_id=flow.id,
         node_code="sales_claim",
         task_type="sales_claim",
         assignee_user_id=original_task.assignee_user_id if original_task else None,
         assignee_name=claim.salesperson_name if claim else None,
-        assignee_role="sales",
+        assignee_role="operator",
     )
     db.add(task)
     audit(db, "claim.returned_for_supplement", "flow_task", task.id, {"opportunity_id": opportunity_id}, actor_name)
@@ -2765,7 +2771,7 @@ def list_product_board_groups(
     site: str | None = None,
     query: str | None = None,
 ) -> list[dict]:
-    filters = [models.NewProductOpportunity.current_status != OPPORTUNITY_DISABLED]
+    filters = [models.NewProductOpportunity.current_status.notin_([OPPORTUNITY_DISABLED, OPPORTUNITY_REPLACED_BY_NORMALIZED_SELECTION1])]
     if business_period:
         filters.append(models.NewProductOpportunity.batch == business_period)
     if site:
@@ -2814,7 +2820,7 @@ def list_product_board_groups(
         .outerjoin(
             models.SalesClaimForecast,
             (models.SalesClaimForecast.opportunity_id == models.NewProductOpportunity.id)
-            & (models.SalesClaimForecast.source_column == "platform"),
+            & (models.SalesClaimForecast.source_column.in_(("platform", "history_selection1"))),
         )
         .where(*filters)
         .order_by(
@@ -4477,7 +4483,7 @@ def notify_operator_new_product_todo_card(
     return _send_or_skip_dingtalk_todo(
         db,
         receiver_name=operator_name,
-        receiver_roles=("operator", "sales"),
+        receiver_roles=("operator",),
         card_role="operator",
         left_count=left_count,
         right_count=right_count,
@@ -4613,7 +4619,7 @@ def _send_or_skip_dingtalk_todo(
     test_receiver_name: str = "",
 ) -> models.NotificationLog:
     target_name = test_receiver_name.strip() or receiver_name
-    target_roles = ("operator", "sales", "supervisor", "manager", "super_admin") if test_receiver_name.strip() else receiver_roles
+    target_roles = ("operator", "supervisor", "manager", "super_admin") if test_receiver_name.strip() else receiver_roles
     mapping = dingtalk_mapping_for_name(db, target_name, target_roles)
     dedupe_key = f"dingtalk_card:{card_role}:{out_track_id}"
     if mapping is not None and not test_receiver_name.strip() and not mapping.notification_enabled:

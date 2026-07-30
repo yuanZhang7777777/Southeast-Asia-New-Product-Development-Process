@@ -8,7 +8,6 @@ import {
   categoryLevel2Options,
   categorySelectionLabel,
   KEY_CATEGORY_LEVEL1_LIMIT,
-  KEY_CATEGORY_LEVEL2_LIMIT,
   normalizeCategorySelections,
   removeKeyCategory
 } from "../src/keyCategories.ts";
@@ -67,33 +66,43 @@ test("添加：重复与冲突有提示", () => {
   );
 });
 
-test("上限：最多 3 组一级，每组最多 2 个二级", () => {
-  const threeGroups = [
+test("上限：最多 6 组一级，已有一级下二级不限数量", () => {
+  const sixGroups = [
     { level1: "家居厨卫", level2: null },
     { level1: "汽摩配", level2: null },
-    { level1: "户外运动", level2: null }
+    { level1: "户外运动", level2: null },
+    { level1: "商办工业", level2: null },
+    { level1: "健康与美容", level2: null },
+    { level1: "灯饰", level2: null }
   ];
-  const overflow = addKeyCategory(threeGroups, { level1: "商办工业", level2: null });
+  const overflow = addKeyCategory(sixGroups, { level1: "母婴用品", level2: null });
   assert.equal(overflow.error, `最多添加 ${KEY_CATEGORY_LEVEL1_LIMIT} 组一级类目`);
 
   const twoLevel2 = [
     { level1: "家居厨卫", level2: "收纳清洁" },
     { level1: "家居厨卫", level2: "厨房用品" }
   ];
-  const level2Overflow = addKeyCategory(twoLevel2, { level1: "家居厨卫", level2: "卫浴用品" });
-  assert.equal(level2Overflow.error, `每组一级类目最多选择 ${KEY_CATEGORY_LEVEL2_LIMIT} 个二级类目`);
+  const thirdLevel2 = addKeyCategory(twoLevel2, { level1: "家居厨卫", level2: "卫浴用品" });
+  assert.deepEqual(thirdLevel2.selections, [
+    { level1: "家居厨卫", level2: "收纳清洁" },
+    { level1: "家居厨卫", level2: "厨房用品" },
+    { level1: "家居厨卫", level2: "卫浴用品" }
+  ]);
 
-  // 已满 3 组时，已有组内仍可补二级。
+  // 已满 6 组时，已有组内仍可补二级。
   const mixed = addKeyCategory(
     [
       { level1: "家居厨卫", level2: "收纳清洁" },
       { level1: "汽摩配", level2: null },
-      { level1: "户外运动", level2: null }
+      { level1: "户外运动", level2: null },
+      { level1: "商办工业", level2: null },
+      { level1: "健康与美容", level2: null },
+      { level1: "灯饰", level2: null }
     ],
     { level1: "家居厨卫", level2: "厨房用品" }
   );
   assert.equal(mixed.error, undefined);
-  assert.equal(mixed.selections!.length, 4);
+  assert.equal(mixed.selections!.length, 7);
 });
 
 test("删除标签与标签文案", () => {

@@ -15,6 +15,7 @@ from app.historical_archive_import import (  # noqa: E402
     HISTORICAL_ARCHIVE_STATUS,
     apply_archive_to_db,
     build_archive_rows,
+    build_unlinked_archive_rows,
     write_archive_review_outputs,
 )
 
@@ -236,6 +237,64 @@ def test_writes_conflict_and_pending_secondary_workbooks() -> None:
         shutil.rmtree(output_dir, ignore_errors=True)
 
 
+def test_unlinked_sources_become_archive_only_rows_with_provisional_listing_identity() -> None:
+    report = {
+        "unlinked_market_rows": [
+            {
+                "country": "PH",
+                "main_sku": "MARKET-MAIN",
+                "sub_sku": "MARKET-SUB",
+                "salesperson": "运营A",
+                "product_bucket": "开发新品0707期",
+                "source_file": "market.xlsx",
+                "source_sheet": "PH精品",
+                "source_row": 9,
+            }
+        ],
+        "unlinked_listing_rows": [
+            {
+                "country": "TH",
+                "main_sku": "LISTING-MAIN",
+                "shop": "Shopee-1TH",
+                "item": "1234567890",
+                "salesperson": "运营B",
+                "operation_date": "2026-07-20 00:00:00",
+                "source_file": "listing.xlsx",
+                "source_sheet": "精品流程",
+                "source_row": 88,
+            }
+        ],
+    }
+
+    rows = build_unlinked_archive_rows(report)
+
+    assert len(rows) == 2
+    market = next(row for row in rows if row["main_sku"] == "MARKET-MAIN")
+    listing = next(row for row in rows if row["main_sku"] == "LISTING-MAIN")
+    assert market["sub_sku"] == "MARKET-SUB"
+    assert market["snapshot"]["link_status"] == "unlinked_market"
+    assert market["snapshot"]["archive_only"] is True
+    assert listing["sub_sku"].startswith("HIST-LISTING-")
+    assert listing["sub_sku_name"] == "待关联子SKU"
+    assert listing["snapshot"]["identity_kind"] == "listing_only_provisional"
+    assert listing["snapshot"]["listing"]["shop"] == "Shopee-1TH"
+    assert listing["snapshot"]["listing"]["item"] == "1234567890"
+    assert listing["snapshot"]["creates_tasks"] is False
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(bind=engine)
+    with Session(engine) as db:
+        result = apply_archive_to_db(db, rows, source_file="coverage.json", imported_by="tester")
+        db.commit()
+        opportunities = db.scalars(select(models.NewProductOpportunity)).all()
+        flow_tasks = db.scalars(select(models.FlowTask)).all()
+        claims = db.scalars(select(models.SalesClaimForecast)).all()
+
+    assert result.created_count == 2
+    assert result.skipped_count == 0
+    assert len(opportunities) == 2
+    assert flow_tasks == []
+    assert claims == []
 def test_apply_archive_only_creates_opportunities_and_snapshots_idempotently() -> None:
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(bind=engine)

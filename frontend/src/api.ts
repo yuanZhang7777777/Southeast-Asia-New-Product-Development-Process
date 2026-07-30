@@ -10,6 +10,7 @@ export type Opportunity = {
   developer_department?: string | null;
   developer_name?: string | null;
   category_level1?: string | null;
+  category_level2?: string | null;
   main_sku: string;
   main_sku_name?: string | null;
   sub_sku: string;
@@ -244,6 +245,7 @@ export type AssignmentBoardRow = {
   batch?: string | null;
   site?: string | null;
   category_level1?: string | null;
+  category_level2?: string | null;
   main_sku: string;
   main_sku_name?: string | null;
   sub_sku: string;

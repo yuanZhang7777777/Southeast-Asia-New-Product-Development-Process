@@ -37,11 +37,13 @@ def preview_main_sku_assignment_groups(
     }
     next_recency = max([value for value in recency.values() if value != float("-inf")], default=0.0) + 1.0
     output: list[schemas.AssignmentPreviewItem] = []
+    category_loads: dict[tuple[str, str], int] = defaultdict(int)
     for (_source_type, _batch, main_sku, _site), items in sorted(grouped.items(), key=lambda pair: (-len(pair[1]), pair[0][2], pair[0][3])):
-        chosen, reason = _choose_profile(items, enabled_profiles, loads, recency)
+        chosen, reason = _choose_profile(items, enabled_profiles, loads, recency, category_loads)
         count = len(items)
         if chosen is not None:
             loads[chosen.operator_name] += 1
+            category_loads[(chosen.operator_name, _category_key(items))] += 1
             recency[chosen.operator_name] = next_recency
             next_recency += 1.0
         output.append(
@@ -56,52 +58,64 @@ def preview_main_sku_assignment_groups(
     return output
 
 
-def _choose_profile(items: list[Any], profiles: list[Any], loads: dict[str, int], recency: dict[str, float]) -> tuple[Any | None, str]:
+def _choose_profile(
+    items: list[Any],
+    profiles: list[Any],
+    loads: dict[str, int],
+    recency: dict[str, float],
+    category_loads: dict[tuple[str, str], int],
+) -> tuple[Any | None, str]:
     site = _first_text(items, "site") or _first_text(items, "country")
     category = _first_text(items, "category_level1")
     category_level2 = _first_text(items, "category_level2")
-    site_profiles = [profile for profile in profiles if _same_site(getattr(profile, "key_site", None), site)]
-    if not site_profiles:
-        return None, "无站点匹配"
+    category_key = _category_key(items)
+    site_profiles = [profile for profile in profiles if _same_site(getattr(profile, "key_site", None), site)] or profiles
+    ranked_profiles = [(profile, _category_rank(profile, category, category_level2)) for profile in site_profiles]
+    best_rank = min((rank for _profile, rank in ranked_profiles), default=2)
+    if category and best_rank < 2:
+        pool = [(profile, rank) for profile, rank in ranked_profiles if rank == best_rank]
+        reason = _reason(best_rank)
+    else:
+        pool = [(profile, 2) for profile in profiles]
+        reason = "无类目-均衡分配"
 
     scored = []
-    for profile in site_profiles:
-        category_rank = _category_rank(profile, category, category_level2)
-        category_priority = 0 if category_rank < 2 else 2
+    for profile, category_rank in pool:
+        name = getattr(profile, "operator_name")
         scored.append(
             (
-                loads[getattr(profile, "operator_name")],
-                category_priority,
+                loads[name],
+                category_loads[(name, category_key)],
                 -_int_attr(profile, "assignment_priority"),
-                recency[getattr(profile, "operator_name")],
+                recency[name],
                 _int_attr(profile, "display_order"),
-                getattr(profile, "operator_name"),
+                name,
                 profile,
                 category_rank,
             )
         )
 
-    best_load, best_category_priority, _priority, _recency, _order, _name, chosen, best_category_rank = min(scored)
-    site_loads = [load for load, *_rest in scored]
-    reason = _reason(best_category_rank)
-    if best_category_priority != 2 and len(set(site_loads)) > 1 and best_load == min(site_loads):
-        reason = f"{reason}；负载更低"
+    _load, _category_load, _priority, _recency, _order, _name, chosen, _best_category_rank = min(scored)
     return chosen, reason
 
 
 def _category_rank(profile: Any, category: str | None, category_level2: str | None = None) -> int:
-    if _matches_key_categories(getattr(profile, "key_categories", None), category, category_level2):
-        return 0
+    if not category:
+        return 2
+    selection_rank = _key_categories_rank(getattr(profile, "key_categories", None), category, category_level2)
+    if selection_rank < 2:
+        return selection_rank
     if _same_category(getattr(profile, "key_category1", None), category):
-        return 0
+        return 1
     if _same_category(getattr(profile, "key_category2", None), category):
-        return 0
+        return 1
     return 2
 
 
-def _matches_key_categories(selections: Any, category: str | None, category_level2: str | None) -> bool:
+def _key_categories_rank(selections: Any, category: str | None, category_level2: str | None) -> int:
     if not selections:
-        return False
+        return 2
+    best_rank = 2
     for selection in selections:
         if not isinstance(selection, dict):
             continue
@@ -110,19 +124,29 @@ def _matches_key_categories(selections: Any, category: str | None, category_leve
         if not _same_category(level1, category):
             continue
         if level2 and category_level2:
-            return _same_category(level2, category_level2)
-        return True
-    return False
+            if _same_category(level2, category_level2):
+                best_rank = min(best_rank, 0)
+            continue
+        best_rank = min(best_rank, 1)
+    return best_rank
 
 
 def _reason(category_rank: int) -> str:
-    parts = ["重点站点匹配"]
     if category_rank == 0:
-        parts.append("重点类目匹配")
-    else:
-        parts.append("品类未匹配")
-        parts.append("负载均衡")
-    return "；".join(parts)
+        return "二级类目命中"
+    if category_rank == 1:
+        return "一级类目命中"
+    return "无类目-均衡分配"
+
+
+def _category_key(items: list[Any]) -> str:
+    return "|".join(
+        value or ""
+        for value in (
+            _norm_category(_first_text(items, "category_level1")),
+            _norm_category(_first_text(items, "category_level2")),
+        )
+    )
 
 
 def _first_text(items: list[Any], field: str) -> str | None:

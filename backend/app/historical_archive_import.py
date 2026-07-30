@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -101,9 +102,116 @@ def build_archive_rows(report: dict[str, Any], sample_per_status: int | None = N
     records = list(report.get("records") or [])
     if sample_per_status is not None:
         records = _sample_by_status(records, sample_per_status)
-    return [_archive_row(record) for record in records]
+    return [_archive_row(record) for record in records] + build_unlinked_archive_rows(report)
 
 
+
+def build_unlinked_archive_rows(report: dict[str, Any]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for record in report.get("unlinked_market_rows") or []:
+        rows.append(_unlinked_market_archive_row(record))
+    for record in report.get("unlinked_listing_rows") or []:
+        rows.append(_unlinked_listing_archive_row(record))
+    return rows
+
+
+def _unlinked_market_archive_row(record: dict[str, Any]) -> dict[str, Any]:
+    source = _source_reference(record)
+    snapshot = {
+        "archive_type": "historical_market_monitor",
+        "archive_only": True,
+        "creates_tasks": False,
+        "link_status": "unlinked_market",
+        "identity_kind": "market_monitor_exact_sku",
+        "classification_status": "待关联市场监控来源",
+        "source_reference": source,
+        "raw_source_record": record,
+    }
+    return {
+        "source_type": HISTORICAL_ARCHIVE_SOURCE_TYPE,
+        "source_file": source.get("source_file"),
+        "source_sheet": source.get("source_sheet"),
+        "source_row": source.get("source_row"),
+        "batch": business_period_from_bucket(record.get("product_bucket")) or HISTORICAL_ARCHIVE_BATCH,
+        "country": record.get("country"),
+        "site": record.get("country"),
+        "developer_department": None,
+        "developer_name": record.get("salesperson"),
+        "category_level1": None,
+        "keyword": None,
+        "image_url": None,
+        "main_sku_name": record.get("product_name"),
+        "main_sku": record.get("main_sku"),
+        "sub_sku_name": record.get("product_name") or record.get("sub_sku"),
+        "sub_sku": record.get("sub_sku"),
+        "product_type": None,
+        "reason": None,
+        "current_status": HISTORICAL_ARCHIVE_STATUS,
+        "snapshot": snapshot,
+    }
+
+
+def _unlinked_listing_archive_row(record: dict[str, Any]) -> dict[str, Any]:
+    source = _source_reference(record)
+    shop = record.get("shop")
+    item = record.get("item")
+    snapshot = {
+        "archive_type": "historical_listing_monitor",
+        "archive_only": True,
+        "creates_tasks": False,
+        "link_status": "unlinked_listing",
+        "identity_kind": "listing_only_provisional",
+        "classification_status": "待关联刊登来源",
+        "listing": {
+            "source": "listing_monitor",
+            "evidence_status": "listing_only_provisional",
+            "evidence_status_label": "待关联子SKU",
+            "metric_dimension": "item_summary" if item else None,
+            "metric_owner_main_sku": record.get("main_sku"),
+            "metrics_are_item_summary": bool(item),
+            "shop": shop,
+            "item": item,
+            "operation_date": record.get("operation_date"),
+            "finebi_fillable": False,
+        },
+        "source_reference": source,
+        "raw_source_record": record,
+    }
+    return {
+        "source_type": HISTORICAL_ARCHIVE_SOURCE_TYPE,
+        "source_file": source.get("source_file"),
+        "source_sheet": source.get("source_sheet"),
+        "source_row": source.get("source_row"),
+        "batch": HISTORICAL_ARCHIVE_BATCH,
+        "country": record.get("country"),
+        "site": record.get("country"),
+        "developer_department": None,
+        "developer_name": record.get("salesperson"),
+        "category_level1": None,
+        "keyword": None,
+        "image_url": None,
+        "main_sku_name": None,
+        "main_sku": record.get("main_sku"),
+        "sub_sku_name": "待关联子SKU",
+        "sub_sku": _provisional_listing_sub_sku(record),
+        "product_type": None,
+        "reason": None,
+        "current_status": HISTORICAL_ARCHIVE_STATUS,
+        "snapshot": snapshot,
+    }
+
+
+def _source_reference(record: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "source_file": record.get("source_file"),
+        "source_sheet": record.get("source_sheet"),
+        "source_row": record.get("source_row"),
+    }
+
+
+def _provisional_listing_sub_sku(record: dict[str, Any]) -> str:
+    raw = "|".join(str(record.get(key) or "") for key in ("country", "main_sku", "shop", "item", "source_file", "source_sheet", "source_row"))
+    return f"HIST-LISTING-{hashlib.sha1(raw.encode('utf-8')).hexdigest()[:12].upper()}"
 def write_archive_review_outputs(rows: list[dict[str, Any]], output_dir: str | Path, run_date: str) -> ReviewOutput:
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)

@@ -16,6 +16,8 @@ export type ProductBoardRow = ProductBoardGroup & {
   statuses: string[];
 };
 
+export const PRODUCT_BOARD_RENDER_STEP = 50;
+
 export const productBoardStatusMeta: Record<string, { label: string; klass: string }> = {
   pending_assignment: { label: "待分配", klass: "amber" },
   open_claim_pool: { label: "财根机会池", klass: "amber" },
@@ -77,6 +79,10 @@ export function filterProductBoardRows(rows: ProductBoardRow[], filters: Product
         row.responsibilities.map((item) => `${item.salesperson_name || ""} ${productBoardStatusLabel(item.visible_status)}`).join(" ")
       ].join(" ")).includes(needle);
     });
+}
+
+export function limitProductBoardRows<T>(rows: T[], limit: number): T[] {
+  return rows.slice(0, Math.max(0, limit));
 }
 
 export function hasMultipleOwners(group: Pick<ProductBoardGroup, "responsibilities">): boolean {

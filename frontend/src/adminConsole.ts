@@ -11,17 +11,18 @@ export const ADMIN_SECTIONS: { key: AdminSectionKey; label: string }[] = [
 
 const ROLE_LABELS: Record<string, string> = {
   operator: "运营",
-  sales: "销售",
   manager: "主管",
   super_admin: "超级管理员"
 };
+
+const ROLE_OPTION_VALUES = ["operator", "manager", "super_admin"];
 
 export function roleLabel(role: string) {
   return ROLE_LABELS[role] || role;
 }
 
 export function roleOptions(currentRole: string): { value: string; label: string }[] {
-  const values = Object.keys(ROLE_LABELS);
+  const values = [...ROLE_OPTION_VALUES];
   if (currentRole && !values.includes(currentRole)) values.push(currentRole);
   return values.map((value) => ({ value, label: roleLabel(value) }));
 }

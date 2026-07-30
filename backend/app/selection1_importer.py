@@ -39,6 +39,7 @@ MAIN_FIELD_ALIASES = {
     "developer_department": ["开发部门", "部门"],
     "developer_name": ["开发员"],
     "category_level1": ["一级类目"],
+    "category_level2": ["二级类目"],
     "keyword": ["关键词"],
     "image_url": ["产品图片"],
     "main_sku_name": ["主SKU名称"],
@@ -139,7 +140,8 @@ def import_selection1_workbook(db: Session, payload: schemas.Selection1ImportReq
     except AttributeError:
         pass
     source_max_column = max(worksheet.max_column or 0, MAX_SOURCE_COLUMN)
-    headers_by_column = source_headers_by_column(worksheet, source_max_column)
+    header_rows, data_start_row = selection1_header_layout(worksheet, source_max_column)
+    headers_by_column = source_headers_by_column(worksheet, source_max_column, header_rows=header_rows)
     product_images = images_by_row(worksheet, source_column_for_alias(headers_by_column, ["产品图片"], "F"))
 
     created_count = 0
@@ -150,7 +152,10 @@ def import_selection1_workbook(db: Session, payload: schemas.Selection1ImportReq
     task_count = 0
     processed_count = 0
 
-    for source_row, row in enumerate(worksheet.iter_rows(min_row=3, max_col=source_max_column, values_only=True), start=3):
+    for source_row, row in enumerate(
+        worksheet.iter_rows(min_row=data_start_row, max_col=source_max_column, values_only=True),
+        start=data_start_row,
+    ):
         if payload.max_rows is not None and processed_count >= payload.max_rows:
             break
         parsed = parse_selection1_row(row, headers_by_column)
@@ -269,10 +274,12 @@ def parse_selection1_row(row: tuple[Any, ...], headers_by_column: dict[str, list
 
 
 def parse_main_fields(raw_values: dict[str, Any], values: dict[str, Any], headers_by_column: dict[str, list[str]]) -> dict[str, Any]:
-    return {
+    main = {
         field: source_value(raw_values, headers_by_column, MAIN_FIELD_ALIASES[field], column, values)
         for column, field in MAIN_COLUMNS.items()
     }
+    main["category_level2"] = source_value(raw_values, headers_by_column, MAIN_FIELD_ALIASES["category_level2"], "", values)
+    return main
 
 def upsert_opportunity(
     db: Session,
@@ -339,13 +346,35 @@ def add_source_snapshot(db: Session, opportunity: models.NewProductOpportunity, 
     )
 
 
-def source_headers_by_column(worksheet: Any, max_col: int) -> dict[str, list[str]]:
+def selection1_header_layout(worksheet: Any, max_col: int) -> tuple[tuple[int, ...], int]:
+    first_row_headers = source_headers_by_column(worksheet, max_col, header_rows=(1,))
+    second_row_headers = source_headers_by_column(worksheet, max_col, header_rows=(2,))
+    if has_required_sku_headers(second_row_headers):
+        return (1, 2), 3
+    if has_required_sku_headers(first_row_headers):
+        return (1,), 2
+    return (1, 2), 3
+
+
+def has_required_sku_headers(headers_by_column: dict[str, list[str]]) -> bool:
+    return all(
+        source_column_for_alias(headers_by_column, MAIN_FIELD_ALIASES[field], "")
+        for field in ("main_sku", "sub_sku")
+    )
+
+
+def source_headers_by_column(
+    worksheet: Any,
+    max_col: int,
+    header_rows: tuple[int, ...] = (1, 2),
+) -> dict[str, list[str]]:
     headers: dict[str, list[str]] = {}
     for index in range(1, max_col + 1):
         column = get_column_letter(index)
-        top = text_value(worksheet.cell(row=1, column=index).value)
-        sub = text_value(worksheet.cell(row=2, column=index).value)
-        candidates = [value for value in (top, sub, f"{top} / {sub}" if top and sub else None) if value]
+        values = [text_value(worksheet.cell(row=row, column=index).value) for row in header_rows]
+        candidates = [value for value in values if value]
+        if len(values) == 2 and values[0] and values[1]:
+            candidates.append(f"{values[0]} / {values[1]}")
         if candidates:
             headers[column] = candidates
     return headers

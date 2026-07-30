@@ -1,7 +1,7 @@
 from pathlib import Path
 import sys
 
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -106,3 +106,47 @@ def test_audit_listing_monitor_counts_anomalies_and_missing_finebi_metrics() -> 
     assert listing_report["summary"]["missing_week_metric_rows"] == 1
     assert listing_report["summary"]["finebi_fillable_rows"] == 0
     assert listing_report["anomalies"][0]["item"] == "#VALUE!"
+
+def test_audit_recovers_item_number_from_invalid_date_formatted_cell() -> None:
+    root = Path(".codex_tmp/test_historical_monitoring_sources")
+    root.mkdir(parents=True, exist_ok=True)
+    market = root / "market.xlsx"
+    listing = root / "listing-date-item.xlsx"
+    build_market_workbook(market)
+    build_listing_workbook(listing)
+    workbook = load_workbook(listing)
+    worksheet = workbook["精品流程"]
+    worksheet["F4"] = 49011345856
+    worksheet["F4"].number_format = "yyyy-mm-dd"
+    workbook.save(listing)
+
+    report = audit_historical_monitoring_sources(market, listing)
+
+    listing_report = report["listing_monitor"]
+    assert listing_report["records"][0]["item"] == "49011345856"
+    assert listing_report["records"][0]["item_recovery"] == "raw_numeric_cell"
+
+
+def test_audit_reads_market_header_variants_for_anchor_positioning_and_stable_price() -> None:
+    root = Path(".codex_tmp/test_historical_monitoring_sources")
+    root.mkdir(parents=True, exist_ok=True)
+    market = root / "market-variants.xlsx"
+    listing = root / "listing.xlsx"
+    build_market_workbook(market)
+    build_listing_workbook(listing)
+    workbook = load_workbook(market)
+    worksheet = workbook["PH精品"]
+    worksheet["AE2"] = "稳定期定价 （THB）"
+    worksheet["AM2"] = "竞对链接（锚定竞对）"
+    worksheet["AO2"] = "产品定位（引流款/利润款/淘汰款/稳定款/清仓款）"
+    worksheet["AE3"] = 88
+    worksheet["AM3"] = "https://example.test/anchor"
+    worksheet["AO3"] = "稳定款"
+    workbook.save(market)
+
+    report = audit_historical_monitoring_sources(market, listing)
+
+    record = report["market_monitor"]["records"][0]
+    assert record["stable_price"] == 88
+    assert record["secondary_competitor_url"] == "https://example.test/anchor"
+    assert record["positioning"] == "稳定款"

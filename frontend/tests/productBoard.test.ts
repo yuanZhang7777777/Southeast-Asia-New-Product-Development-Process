@@ -2,7 +2,14 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-import { buildProductBoardRows, filterProductBoardRows, hasMultipleOwners, productBoardStatusLabel } from "../src/productBoard.ts";
+import {
+  buildProductBoardRows,
+  filterProductBoardRows,
+  hasMultipleOwners,
+  limitProductBoardRows,
+  PRODUCT_BOARD_RENDER_STEP,
+  productBoardStatusLabel
+} from "../src/productBoard.ts";
 
 const productBoardViewSource = readFileSync(new URL("../src/ProductBoardView.tsx", import.meta.url), "utf8");
 
@@ -85,6 +92,18 @@ test("multi-owner tag only appears when more than one owner is responsible", () 
 test("product board keeps business-period filtering without a generic date picker", () => {
   assert.match(productBoardViewSource, /全部期数/);
   assert.doesNotMatch(productBoardViewSource, /type="date"/);
+});
+
+test("product board renders the first 50 rows by default", () => {
+  const rows = Array.from({ length: PRODUCT_BOARD_RENDER_STEP + 5 }, (_, index) => ({
+    ...baseGroup,
+    key: `2026-W29|PH|MAIN-${index}`,
+    main_sku: `MAIN-${index}`
+  }));
+
+  assert.equal(PRODUCT_BOARD_RENDER_STEP, 50);
+  assert.equal(limitProductBoardRows(rows, PRODUCT_BOARD_RENDER_STEP).length, 50);
+  assert.equal(limitProductBoardRows(rows, PRODUCT_BOARD_RENDER_STEP)[49].main_sku, "MAIN-49");
 });
 
 

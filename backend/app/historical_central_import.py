@@ -37,8 +37,8 @@ def business_period_from_sheet(sheet_name: str) -> str | None:
     return f"开发{int(match.group(1)):02d}{int(match.group(2)):02d}期"
 
 
-def sheet_image_bytes(archive: zipfile.ZipFile, sheet_name: str) -> dict[int, tuple[bytes, str]]:
-    """按行号取 sheet 内嵌图片（zip 直读，避免整簿载入内存）。"""
+def sheet_image_anchors(archive: zipfile.ZipFile, sheet_name: str) -> dict[int, list[tuple[int, bytes, str]]]:
+    """按 Excel 行列读取 sheet 内嵌图片（zip 直读，避免整簿载入内存）。"""
     workbook_xml = ElementTree.fromstring(archive.read("xl/workbook.xml"))
     workbook_rels = ElementTree.fromstring(archive.read("xl/_rels/workbook.xml.rels"))
     rel_targets = {rel.get("Id"): rel.get("Target") for rel in workbook_rels.iter(f"{REL_NS}Relationship")}
@@ -69,7 +69,7 @@ def sheet_image_bytes(archive: zipfile.ZipFile, sheet_name: str) -> dict[int, tu
         for rel in drawing_rels.iter(f"{REL_NS}Relationship"):
             target = str(Path("xl/drawings") / rel.get("Target")).replace("\\", "/")
             media_by_rid[rel.get("Id")] = re.sub(r"xl/drawings/\.\./", "xl/", target)
-    images: dict[int, tuple[bytes, str]] = {}
+    images: dict[int, list[tuple[int, bytes, str]]] = defaultdict(list)
     drawing = ElementTree.fromstring(archive.read(drawing_path))
     for anchor in [*drawing.iter(f"{XDR}twoCellAnchor"), *drawing.iter(f"{XDR}oneCellAnchor")]:
         anchor_from = anchor.find(f"{XDR}from")
@@ -77,13 +77,23 @@ def sheet_image_bytes(archive: zipfile.ZipFile, sheet_name: str) -> dict[int, tu
         if anchor_from is None or blip is None:
             continue
         row_element = anchor_from.find(f"{XDR}row")
+        column_element = anchor_from.find(f"{XDR}col")
         media_path = media_by_rid.get(blip.get(f"{R_NS}embed", ""))
-        if row_element is None or not media_path or media_path not in archive.namelist():
+        if row_element is None or column_element is None or not media_path or media_path not in archive.namelist():
             continue
         row = int(row_element.text or 0) + 1
-        if row not in images:
-            images[row] = (archive.read(media_path), Path(media_path).suffix.lstrip(".") or "png")
-    return images
+        column = int(column_element.text or 0) + 1
+        images[row].append((column, archive.read(media_path), Path(media_path).suffix.lstrip(".") or "png"))
+    return dict(images)
+
+
+def sheet_image_bytes(archive: zipfile.ZipFile, sheet_name: str) -> dict[int, tuple[bytes, str]]:
+    """兼容旧导入器：每行保留第一张图片。"""
+    return {
+        row: (anchors[0][1], anchors[0][2])
+        for row, anchors in sheet_image_anchors(archive, sheet_name).items()
+        if anchors
+    }
 
 
 def parse_central_workbook(

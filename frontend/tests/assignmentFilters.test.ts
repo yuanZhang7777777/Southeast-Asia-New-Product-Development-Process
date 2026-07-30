@@ -6,11 +6,11 @@ import { filterAssignmentItems, moveOperatorWithinSite, reorderOperatorWithinSit
 const groups = [
   {
     key: "PH-A",
-    items: [{ id: "a", main_sku: "MAIN-A", sub_sku: "SUB-RED", main_sku_name: "Red rack", site: "PH", category_level1: "家居厨卫" }]
+    items: [{ id: "a", main_sku: "MAIN-A", sub_sku: "SUB-RED", main_sku_name: "Red rack", site: "PH", category_level1: "家居厨卫", batch: "开发0721期" }]
   },
   {
     key: "TH-B",
-    items: [{ id: "b", main_sku: "MAIN-B", sub_sku: "SUB-BLUE", main_sku_name: "Blue bag", site: "TH", category_level1: "户外运动" }]
+    items: [{ id: "b", main_sku: "MAIN-B", sub_sku: "SUB-BLUE", main_sku_name: "Blue bag", site: "TH", category_level1: "户外运动", batch: "开发0714期" }]
   }
 ];
 
@@ -28,6 +28,10 @@ test("多关键词任一命中，独立筛选条件之间同时满足", () => {
 
   assert.deepEqual(filtered.map((item) => item.main_sku), ["MAIN-B"]);
   assert.deepEqual(filterAssignmentItems(items, groups, {}, { query: "SUB-RED SUB-BLUE" }).map((item) => item.main_sku), ["MAIN-A", "MAIN-B"]);
+});
+
+test("待分配支持按业务期筛选", () => {
+  assert.deepEqual(filterAssignmentItems(items, groups, {}, { batch: "开发0721期" }).map((item) => item.main_sku), ["MAIN-A"]);
 });
 
 test("运营筛选同时匹配系统推荐和主管手动选择", () => {

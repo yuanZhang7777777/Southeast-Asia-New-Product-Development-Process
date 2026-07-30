@@ -790,6 +790,11 @@ textarea {
   background: #fff;
 }
 
+.product-board-load-more {
+  padding: 14px;
+  text-align: center;
+}
+
 .list-controls {
   display: flex;
   flex-wrap: nowrap;

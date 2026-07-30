@@ -41,6 +41,11 @@ test("商品详情打开时不卸载来源工作台以便返回原场景", () =>
   assert.match(appSource, /detailGroup && \(/);
   assert.match(appSource, /style=\{\{ display: detailGroup \? "none" : undefined \}\}/);
 });
+
+test("钉钉到货卡片可指定进入二次调研", () => {
+  assert.match(appSource, /params\.get\("view"\) === "research"/);
+});
+
 test("历史回填 development_source 可作为商品详情字段兜底", () => {
   assert.match(appSource, /historicalDevelopmentColumns/);
   assert.match(appSource, /development_source/);

@@ -9,6 +9,7 @@ from sqlalchemy import and_, select
 from sqlalchemy.orm import Session
 
 from app import models, services
+from app.historical_arrival_activation import activate_historical_arrival, listing_status_for_sku
 from app.plm_arrivals import parse_plm_arrival_preview
 from app.site_codes import normalize_site_code
 from app.workflow_status import CLAIM_RESULT_CLAIM, CLAIM_WAITING_ARRIVAL
@@ -43,7 +44,6 @@ def process_plm_arrival_workbook(
     db.add(batch)
     db.flush()
 
-    arrival_records = 0
     planned_responsibilities: list[dict[str, Any]] = []
     for row in preview["items"]:
         item = _arrival_item(batch.id, row)
@@ -51,40 +51,77 @@ def process_plm_arrival_workbook(
         if item.arrival_type != "new_arrival":
             item.match_status = "not_new_arrival"
             continue
-        matches = _exact_claim_matches(db, row)
-        if not matches:
-            item.match_status = "unmatched"
-            continue
-        item.matched_claim_record_id = matches[0][0].id
-        item.match_status = "matched"
-        item.raw_payload = {**(item.raw_payload or {}), "_matched_claim_record_ids": [claim.id for claim, _ in matches]}
-        planned_responsibilities.extend(_responsibility_rows(matches, item.product_name))
-        if not workflow_automation_enabled:
-            item.match_status = "matched_dry_run"
-            continue
-        db.flush()
-        for claim, opportunity in matches:
-            if _arrival_record_exists(db, batch.id, claim.id):
+        candidates = _exact_claim_matches(db, row)
+        matches, listing_status = _unlisted_claim_matches(db, candidates)
+        if matches:
+            item.matched_claim_record_id = matches[0][0].id
+            item.match_status = "matched"
+            item.raw_payload = {**(item.raw_payload or {}), "_matched_claim_record_ids": [claim.id for claim, _ in matches]}
+            planned_responsibilities.extend(_responsibility_rows(matches, item.product_name))
+            if not workflow_automation_enabled:
+                item.match_status = "matched_dry_run"
                 continue
-            services.open_secondary_research(db, claim.id, item.latest_storage_time)
-            db.add(
-                models.ArrivalRecord(
-                    opportunity_id=opportunity.id,
-                    claim_record_id=claim.id,
-                    plm_arrival_batch_id=batch.id,
-                    plm_arrival_item_id=item.id,
-                    salesperson_name=claim.salesperson_name,
-                    country=row.get("country") or opportunity.country,
-                    warehouse=row.get("warehouse"),
-                    arrived_quantity=_int_or_none(row.get("available_quantity")),
-                    arrived_at=item.latest_storage_time,
-                    note="PLM arrival exact match",
+            db.flush()
+            for claim, opportunity in matches:
+                if _arrival_record_exists(db, batch.id, claim.id):
+                    continue
+                services.open_secondary_research(db, claim.id, item.latest_storage_time)
+                db.add(
+                    models.ArrivalRecord(
+                        opportunity_id=opportunity.id,
+                        claim_record_id=claim.id,
+                        plm_arrival_batch_id=batch.id,
+                        plm_arrival_item_id=item.id,
+                        salesperson_name=claim.salesperson_name,
+                        country=row.get("country") or opportunity.country,
+                        warehouse=row.get("warehouse"),
+                        arrived_quantity=_int_or_none(row.get("available_quantity")),
+                        arrived_at=item.latest_storage_time,
+                        note="PLM arrival exact match",
+                    )
                 )
-            )
-            arrival_records += 1
+            continue
+        if candidates:
+            item.match_status = listing_status or "already_listed"
+            item.raw_payload = {
+                **(item.raw_payload or {}),
+                "_skipped_listing_claim_record_ids": [claim.id for claim, _ in candidates],
+            }
+            continue
+
+        db.flush()
+        historical = activate_historical_arrival(db, item, apply=workflow_automation_enabled)
+        item.raw_payload = {**(item.raw_payload or {}), "_historical_activation": historical}
+        if historical.get("status") == "already_activated":
+            item.match_status = "historical_deduped"
+            continue
+        runtime_claim_ids = historical.get("runtime_claim_ids") or ([historical["runtime_claim_id"]] if historical.get("runtime_claim_id") else [])
+        if runtime_claim_ids:
+            item.matched_claim_record_id = runtime_claim_ids[0]
+            matches = db.execute(
+                select(models.SalesClaimForecast, models.NewProductOpportunity)
+                .join(models.NewProductOpportunity, models.NewProductOpportunity.id == models.SalesClaimForecast.opportunity_id)
+                .where(models.SalesClaimForecast.id.in_(runtime_claim_ids))
+            ).all()
+            planned_responsibilities.extend(_responsibility_rows(matches, item.product_name))
+            item.match_status = "matched_historical" if workflow_automation_enabled else "matched_historical_dry_run"
+            continue
+        if historical.get("status") == "historical_candidate":
+            item.match_status = "matched_historical_dry_run"
+            planned_responsibilities.extend(_historical_responsibility_rows(db, historical, item.product_name))
+            continue
+        item.match_status = historical.get("status") if historical.get("status") in {
+            "already_listed",
+            "listing_binding_unresolved",
+            "owner_unmapped",
+            "owner_ambiguous",
+            "main_sku_ambiguous",
+            "missing_site_or_sub_sku",
+            "historical_secondary_research",
+        } else "unmatched"
 
     db.commit()
-    return _summary(db, batch, "processed", arrival_records, planned_responsibilities)
+    return _summary(db, batch, "processed", planned_responsibilities=planned_responsibilities)
 
 
 def _arrival_item(batch_id: str, row: dict[str, Any]) -> models.PlmArrivalItem:
@@ -156,6 +193,58 @@ def _exact_claim_matches(
     return matches
 
 
+def _unlisted_claim_matches(
+    db: Session,
+    candidates: list[tuple[models.SalesClaimForecast, models.NewProductOpportunity]],
+) -> tuple[list[tuple[models.SalesClaimForecast, models.NewProductOpportunity]], str | None]:
+    matches: list[tuple[models.SalesClaimForecast, models.NewProductOpportunity]] = []
+    blocked: list[str] = []
+    for claim, opportunity in candidates:
+        status = listing_status_for_sku(
+            db,
+            country=opportunity.site or opportunity.country,
+            main_sku=opportunity.main_sku,
+            sub_sku=opportunity.sub_sku,
+        )
+        if status is None:
+            matches.append((claim, opportunity))
+        else:
+            blocked.append(status)
+    if matches:
+        return matches, None
+    if "already_listed" in blocked:
+        return [], "already_listed"
+    return [], blocked[0] if blocked else None
+
+
+def _active_listing_keys(db: Session) -> set[tuple[str, str]]:
+    rows = list(
+        db.execute(
+            select(
+                models.ListingRecord.main_sku,
+                models.ListingRecord.country,
+                models.ListingRecord.site,
+                models.ListingRecord.item,
+                models.ListingSkuBinding.main_sku,
+            )
+            .outerjoin(models.ListingSkuBinding, models.ListingSkuBinding.listing_record_id == models.ListingRecord.id)
+            .where(models.ListingRecord.status == "active")
+        )
+    )
+    return {
+        (_sku_key(binding_main_sku or main_sku), normalize_site_code(site or country) or "")
+        for main_sku, country, site, item, binding_main_sku in rows
+        if _sku_key(binding_main_sku or main_sku) and _sku_key(item)
+    }
+
+
+def _opportunity_listing_key(opportunity: models.NewProductOpportunity) -> tuple[str, str]:
+    return (
+        _sku_key(opportunity.main_sku),
+        normalize_site_code(opportunity.site or opportunity.country) or "",
+    )
+
+
 def _arrival_record_exists(db: Session, batch_id: str, claim_id: str) -> bool:
     return (
         db.scalar(
@@ -190,6 +279,7 @@ def _summary(
         "unknown_count": sum(1 for item in items if item.arrival_type == "unknown"),
         "matched_count": len(responsibilities),
         "unmatched_count": sum(1 for item in items if item.match_status == "unmatched"),
+        "already_listed_count": sum(1 for item in items if item.match_status == "already_listed"),
         "arrival_record_count": arrival_record_count,
         "planned_responsibilities": responsibilities,
     }
@@ -232,6 +322,39 @@ def _responsibility_rows(
         }
         for claim, opportunity in matches
     ]
+
+
+def _historical_responsibility_rows(
+    db: Session,
+    decision: dict[str, Any],
+    product_name: str | None,
+) -> list[dict[str, Any]]:
+    rows = decision.get("activations") or [{
+        "opportunity_id": decision.get("opportunity_id"),
+        "owner_name": decision.get("owner_name"),
+    }]
+    result = []
+    for row in rows:
+        if row.get("status") != "historical_candidate":
+            continue
+        opportunity_id = row.get("opportunity_id")
+        if not isinstance(opportunity_id, str):
+            continue
+        opportunity = db.get(models.NewProductOpportunity, opportunity_id)
+        if opportunity is None:
+            continue
+        result.append({
+            "claim_record_id": None,
+            "opportunity_id": opportunity.id,
+            "business_period": opportunity.batch,
+            "salesperson_name": row.get("owner_name"),
+            "site": opportunity.site,
+            "country": opportunity.country,
+            "main_sku": opportunity.main_sku,
+            "sub_sku": opportunity.sub_sku,
+            "product_name": product_name or opportunity.main_sku_name or opportunity.sub_sku_name,
+        })
+    return result
 
 
 def _sku_key(value: Any) -> str:

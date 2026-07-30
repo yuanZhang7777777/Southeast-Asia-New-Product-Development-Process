@@ -8,6 +8,7 @@ OPPORTUNITY_WAITING_ARRIVAL = "waiting_arrival"
 OPPORTUNITY_CONFIRMED_NOT_CLAIM = "已确认不认领"
 OPPORTUNITY_RETURNED_FOR_SUPPLEMENT = "returned_for_supplement"
 OPPORTUNITY_DISABLED = "disabled"
+OPPORTUNITY_REPLACED_BY_NORMALIZED_SELECTION1 = "replaced_by_normalized_selection1"
 
 CLAIM_WAITING_ARRIVAL = "waiting_arrival"
 CLAIM_WAITING_EXPORT = "waiting_export"

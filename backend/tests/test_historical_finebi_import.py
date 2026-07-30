@@ -164,6 +164,36 @@ def test_shared_item_aggregation_review_and_idempotency(tmp_path: Path) -> None:
     assert len(summary_view["period_rows"]) == 3
 
 
+def test_finebi_metrics_start_at_first_complete_period_and_cap_at_four_weeks(tmp_path: Path) -> None:
+    workbench_rows = [workbench_row("MAINF", "Shopee-105PH", "10000000006")]
+    finebi_files = {
+        "0402-0408": [finebi_row("10000000006", "MAINF", "Shopee-105PH", 0.0, 0, 0.0)],
+        "0409-0415": [finebi_row("10000000006", "MAINF", "Shopee-105PH", 10.0, 1, 2.0)],
+        "0416-0422": [finebi_row("10000000006", "MAINF", "Shopee-105PH", 20.0, 2, 4.0)],
+        "0423-0429": [finebi_row("10000000006", "MAINF", "Shopee-105PH", 30.0, 3, 6.0)],
+        "0430-0506": [finebi_row("10000000006", "MAINF", "Shopee-105PH", 40.0, 4, 8.0)],
+        "0723-0729": [finebi_row("10000000006", "MAINF", "Shopee-105PH", 999.0, 99, 999.0)],
+    }
+    plan, counts, meta = run_import(tmp_path, workbench_rows, finebi_files)
+
+    assert meta["skipped"] == ["0723-0729"]
+    assert len(plan["items"][0]["finebi_weeks"]) == 4
+    assert [week["period"] for week in plan["items"][0]["finebi_weeks"]] == [
+        "0402-0408",
+        "0409-0415",
+        "0416-0422",
+        "0423-0429",
+    ]
+    assert counts["weeks_created"] == 4
+    with SessionLocal() as db:
+        weeks = db.query(models.ItemObservationPeriod).order_by(models.ItemObservationPeriod.week_number).all()
+        assert [week.period_start for week in weeks] == [
+            date(2026, 4, 2),
+            date(2026, 4, 9),
+            date(2026, 4, 16),
+            date(2026, 4, 23),
+        ]
+        assert weeks[0].order_count == 0
 def test_workbench_only_item_uses_fallback_metrics(tmp_path: Path) -> None:
     workbench_rows = [
         workbench_row("MAINC", "Shopee-102TH", "10000000002", country="TH",

@@ -1,3 +1,4 @@
+import json
 import re
 import shutil
 import uuid
@@ -118,7 +119,7 @@ def get_opportunity(
         raise HTTPException(status_code=404, detail="opportunity not found")
     if opportunity.current_status == OPPORTUNITY_DISABLED and auth and "super_admin" not in auth.role_keys:
         raise HTTPException(status_code=404, detail="opportunity not found")
-    attach_latest_summaries(db, [opportunity])
+    attach_latest_summaries(db, [opportunity], include_historical_claims=True)
     return opportunity
 
 
@@ -148,7 +149,7 @@ def update_opportunity(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     db.commit()
     db.refresh(item)
-    attach_latest_summaries(db, [item])
+    attach_latest_summaries(db, [item], include_historical_claims=True)
     return item
 
 
@@ -340,10 +341,16 @@ def period_file_name(prefix: str, source_sheet: str | None, import_batch_id: str
     return f"{prefix}-{period}.xlsx" if period else f"{prefix}.xlsx"
 
 
-def attach_latest_summaries(db: Session, opportunities: list[models.NewProductOpportunity]) -> None:
+def attach_latest_summaries(
+    db: Session,
+    opportunities: list[models.NewProductOpportunity],
+    *,
+    include_historical_claims: bool = False,
+) -> None:
     opportunity_ids = [opportunity.id for opportunity in opportunities]
     latest_claims: dict[str, models.SalesClaimForecast] = {}
     latest_reviews: dict[str, models.ReviewRecord] = {}
+    historical_claims: dict[str, list[dict[str, object]]] = {opportunity_id: [] for opportunity_id in opportunity_ids}
     if opportunity_ids:
         for item in db.scalars(
             select(models.SalesClaimForecast)
@@ -360,6 +367,45 @@ def attach_latest_summaries(db: Session, opportunities: list[models.NewProductOp
             .order_by(models.ReviewRecord.created_at.desc())
         ):
             latest_reviews.setdefault(item.opportunity_id, item)
+        if include_historical_claims:
+            claims = list(
+                db.scalars(
+                    select(models.SalesClaimForecast)
+                    .where(models.SalesClaimForecast.opportunity_id.in_(opportunity_ids))
+                    .order_by(models.SalesClaimForecast.created_at.asc(), models.SalesClaimForecast.id.asc())
+                )
+            )
+            historical = [item for item in claims if item.source_column != "platform"]
+            reviews_by_claim_id: dict[str, models.ReviewRecord] = {}
+            if historical:
+                for review in db.scalars(
+                    select(models.ReviewRecord)
+                    .where(models.ReviewRecord.claim_record_id.in_([item.id for item in historical]))
+                    .order_by(models.ReviewRecord.created_at.desc())
+                ):
+                    if review.claim_record_id:
+                        reviews_by_claim_id.setdefault(review.claim_record_id, review)
+            opportunities_by_id = {opportunity.id: opportunity for opportunity in opportunities}
+            for claim in historical:
+                opportunity = opportunities_by_id[claim.opportunity_id]
+                review = reviews_by_claim_id.get(claim.id)
+                metadata = _historical_claim_metadata(claim.note)
+                historical_claims[claim.opportunity_id].append(
+                    {
+                        "id": claim.id,
+                        "salesperson_name": claim.salesperson_name,
+                        "claim_result": claim.claim_result,
+                        "claim_daily_sales": claim.claim_daily_sales,
+                        "reject_reason": claim.reject_reason,
+                        "feedback_summary": claim.feedback_summary,
+                        "source_column": claim.source_column,
+                        "source_period": metadata.get("source_period") or opportunity.batch or opportunity.source_sheet,
+                        "source_row": metadata.get("source_row") or opportunity.source_row,
+                        "evidence_images": metadata.get("evidence_images") or [],
+                        "manager_review_status": review.review_status if review else None,
+                        "manager_review_comment": review.review_comment if review else None,
+                    }
+                )
     for opportunity in opportunities:
         claim = latest_claims.get(opportunity.id)
         review = latest_reviews.get(opportunity.id)
@@ -372,3 +418,22 @@ def attach_latest_summaries(db: Session, opportunities: list[models.NewProductOp
         opportunity.latest_claim_note = claim.note if claim else None
         opportunity.latest_review_status = review.review_status if review else None
         opportunity.latest_review_comment = review.review_comment if review else None
+        if include_historical_claims:
+            opportunity.historical_claims = historical_claims[opportunity.id]
+
+
+def _historical_claim_metadata(note: str | None) -> dict[str, object]:
+    try:
+        payload = json.loads(note or "{}")
+    except (json.JSONDecodeError, TypeError):
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    source = payload.get("history_source")
+    source = source if isinstance(source, dict) else {}
+    images = payload.get("evidence_images")
+    return {
+        "source_period": source.get("business_period"),
+        "source_row": source.get("source_row"),
+        "evidence_images": images if isinstance(images, list) else [],
+    }

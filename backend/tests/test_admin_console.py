@@ -202,6 +202,25 @@ def test_super_admin_can_adjust_and_disable_role_mapping() -> None:
     assert len(audits) == 2
 
 
+def test_super_admin_rejects_sales_role_option() -> None:
+    with SessionLocal() as db:
+        db.add(models.RoleMapping(name="Admin", role="super_admin", dingtalk_user_id="dt-admin", enabled=True))
+        mapping = models.RoleMapping(name="运营A", role="operator", enabled=True)
+        db.add(mapping)
+        db.commit()
+        mapping_id = mapping.id
+    admin = auth_headers("dt-admin")
+
+    created = client.post("/admin/role-mappings", headers=admin, json={"name": "销售", "role": "sales"})
+    patched = client.patch(f"/admin/role-mappings/{mapping_id}", headers=admin, json={"role": "sales"})
+
+    assert created.status_code == 400
+    assert patched.status_code == 400
+    with SessionLocal() as db:
+        assert db.get(models.RoleMapping, mapping_id).role == "operator"
+        assert db.query(models.OperatorAssignmentProfile).filter_by(operator_name="运营A").one_or_none() is None
+
+
 def test_admin_import_batches_are_paginated_and_filterable() -> None:
     with SessionLocal() as db:
         db.add(models.RoleMapping(name="Admin", role="super_admin", dingtalk_user_id="dt-admin", enabled=True))

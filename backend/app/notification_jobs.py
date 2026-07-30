@@ -20,7 +20,7 @@ from app.workflow_status import (
 
 
 MANAGER_ROLES = ("manager",)
-TEST_RECEIVER_ROLES = ("operator", "sales", "supervisor", "manager", "super_admin")
+TEST_RECEIVER_ROLES = ("operator", "supervisor", "manager", "super_admin")
 ELIMINATION_POSITIONING = "淘汰款"
 ELIMINATION_CARD_TITLE = "淘汰款提醒"
 ELIMINATION_MARKED_TITLE = "淘汰款已汇总"
@@ -69,7 +69,7 @@ def send_arrival_daily_cards(
     test_mapping = _test_receiver_mapping(db, settings) if groups else None
     for group in groups:
         dedupe_key = f"dingtalk_card:arrival:{group.arrival_date}:{group.salesperson_name}"
-        mapping = test_mapping or services.dingtalk_mapping_for_name(db, group.salesperson_name, ("operator", "sales"))
+        mapping = test_mapping or services.dingtalk_mapping_for_name(db, group.salesperson_name, ("operator",))
         if mapping is None or not mapping.dingtalk_user_id:
             logs.append(services.skipped_dingtalk_notification(db, dedupe_key, group.salesperson_name, "skipped_no_receiver"))
             continue
@@ -106,7 +106,7 @@ def send_operator_listing_reminder_cards(
         if group.waiting_listing_count == 0 and group.waiting_secondary_count == 0:
             continue
         dedupe_key = f"dingtalk_card:listing-reminder:{reminder_date}:{group.salesperson_name}"
-        mapping = test_mapping or services.dingtalk_mapping_for_name(db, group.salesperson_name, ("operator", "sales"))
+        mapping = test_mapping or services.dingtalk_mapping_for_name(db, group.salesperson_name, ("operator",))
         if mapping is None or not mapping.dingtalk_user_id:
             logs.append(services.skipped_dingtalk_notification(db, dedupe_key, group.salesperson_name, "skipped_no_receiver"))
             continue
@@ -116,12 +116,12 @@ def send_operator_listing_reminder_cards(
         total = group.waiting_listing_count + group.waiting_secondary_count
         payload = schemas.DingTalkNewProductTodoCardRequest(
             receiver_dingtalk_user_id=mapping.dingtalk_user_id,
-            receiver_name=group.salesperson_name,
+            receiver_name=mapping.name,
             receiver_role="operator",
             subject_name=group.salesperson_name,
             left_count=group.waiting_listing_count,
             right_count=group.waiting_secondary_count,
-            action_url=services.dingtalk_action_url(settings, "operator"),
+            action_url=services.dingtalk_action_url(settings, "operator", view="research"),
             out_track_id=dedupe_key,
             dedupe_key=dedupe_key,
             card_title=LISTING_REMINDER_CARD_TITLE,

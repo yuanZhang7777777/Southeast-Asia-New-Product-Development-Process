@@ -23,7 +23,10 @@ def create_role_mapping(
     db: Session = Depends(get_db),
     _auth: object = Depends(require_roles("super_admin")),
 ) -> models.RoleMapping:
-    item = models.RoleMapping(**payload.model_dump())
+    try:
+        item = models.RoleMapping(**{**payload.model_dump(), "role": admin_console._valid_role(payload.role)})
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     db.add(item)
     db.commit()
     db.refresh(item)
@@ -40,13 +43,16 @@ def update_role_mapping(
     mapping = db.get(models.RoleMapping, mapping_id)
     if mapping is None:
         raise HTTPException(status_code=404, detail="role mapping not found")
-    admin_console.update_role_mapping(
-        db,
-        mapping,
-        payload.model_dump(exclude_unset=True),
-        actor_name=auth.user.name if auth else None,
-        actor_user_id=auth.user.id if auth else None,
-    )
+    try:
+        admin_console.update_role_mapping(
+            db,
+            mapping,
+            payload.model_dump(exclude_unset=True),
+            actor_name=auth.user.name if auth else None,
+            actor_user_id=auth.user.id if auth else None,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     db.commit()
     db.refresh(mapping)
     return mapping

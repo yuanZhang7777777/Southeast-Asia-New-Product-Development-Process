@@ -215,6 +215,26 @@ test("选品1历史新世代 fields_by_cell 按 R1 分组归入板块且列序�
   assert.deepEqual(sections.development[0], { column: "N", label: "产品规格", group: "开发询价", value: "箱规：42*32*28CM 50pcs" });
 });
 
+test("现行选品1读取补回的历史字段快照", () => {
+  const item = {
+    source_type: "selection1_developer_claim_feedback",
+    snapshot: { historical_selection1: historySelection1NewGenItem.snapshot }
+  };
+  assert.equal(isHistorySelection1Item(item), true);
+  assert.deepEqual(historyFieldsByCellSections(item)?.development.map((field) => field.column), ["N", "Q"]);
+});
+test("商品详情把历史认领作为只读来源事实展示", () => {
+  const claimPane = appSource.slice(appSource.indexOf('{activeSection === "claim"'), appSource.indexOf('{activeSection === "secondary"'));
+  const claimTable = appSource.slice(appSource.indexOf("function ClaimReviewTable"), appSource.indexOf("function DetailFieldGrid"));
+
+  assert.match(claimPane, /historical_claims/);
+  assert.match(claimTable, /来源期/);
+  assert.match(claimTable, /来源行/);
+  assert.match(claimTable, /来源表未提供主管复核/);
+  assert.doesNotMatch(claimTable, /latest_claim_record_id/);
+  assert.doesNotMatch(claimTable, /api\.review/);
+});
+
 test("选品1历史旧世代（部分无分组）按竞品/定价/询价关键字归类，无分组落其他", () => {
   const sections = historyFieldsByCellSections(historySelection1OldGenItem);
   assert.ok(sections);
@@ -388,4 +408,32 @@ test("商品详情各板块以既有数据优先、fields_by_cell 派生补位�
   assert.match(appSource, /!competitorRows\(activeChild\)\.length && historySections\?\.market\.length/);
   assert.match(appSource, /pricingRows\(activeChild\)\.length \? \[\] : historySections\?\.pricing \?\? \[\]/);
   assert.match(appSource, /!archiveSection && !hasColumnRows \? historySections\?\.cost \?\? \[\] : \[\]/);
+});
+
+
+const readonlyHistoricalSelection2Item = {
+  source_type: "history_selection2",
+  snapshot: {
+    archive_type: "historical_selection2",
+    headers_by_cell: {
+      G: "\u8fdb\u4ef7",
+      H: "Shopee\u7a33\u5b9a\u671f\u5b9a\u4ef7",
+      AF: "\u4f4e\u4ef7\u9ad8\u6d88\u94fe\u63a5"
+    },
+    raw_cells_by_cell: {
+      G: 20,
+      H: 427,
+      AF: "https://shopee.ph/cheap-hot"
+    }
+  }
+};
+
+test("read-only selection2 uses its native semantic headers", () => {
+  assert.deepEqual(selection2HeaderFields(readonlyHistoricalSelection2Item, "pricing"), [
+    { column: "G", label: "\u8fdb\u4ef7", group: "", value: "20" },
+    { column: "H", label: "Shopee\u7a33\u5b9a\u671f\u5b9a\u4ef7", group: "", value: "427" }
+  ]);
+  assert.deepEqual(selection2HeaderFields(readonlyHistoricalSelection2Item, "market"), [
+    { column: "AF", label: "\u4f4e\u4ef7\u9ad8\u6d88\u94fe\u63a5", group: "", value: "https://shopee.ph/cheap-hot" }
+  ]);
 });

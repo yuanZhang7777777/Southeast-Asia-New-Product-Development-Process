@@ -359,6 +359,57 @@ def test_parse_excludes_last_year_legacy_period(tmp_path: Path) -> None:
     assert report["skipped_sheets"] == [{"sheet": "开发0924期", "reason": "排除旧期"}]
 
 
+def test_parse_new_caigen_split_sheet_uses_standard_headers_and_period(tmp_path: Path) -> None:
+    source = tmp_path / "selection1-caigen-split.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "开发-财根团队6.24-6.30"
+    sheet.append(["站点", "一级类目", "二级类目", "主SKU名称", "主SKU", "子SKU名称", "子SKU"])
+    sheet["BZ1"] = "不认领理由"
+    sheet["CA1"] = "主销售员"
+    sheet["CB1"] = "是否认领"
+    sheet["CC1"] = "认领单销"
+    sheet["CD1"] = "销售反馈总结"
+    sheet["CE1"] = "备注"
+    sheet.append(["菲律宾", "家居厨卫", "浴室收纳", "浴室架", "CG-MAIN", "黑色", "CG-SUB"])
+    sheet["CA2"] = "销售甲"
+    sheet["CB2"] = "是"
+    sheet["CC2"] = 0.5
+    sheet["CD2"] = "反馈"
+    workbook.save(source)
+
+    report = parse_selection1_workbook(source)
+
+    assert report["sheets"] == [{"sheet": "开发-财根团队6.24-6.30", "period": "开发0624期-财根", "rows": 1, "skipped": 0}]
+    row = report["rows"][0]
+    assert row["batch"] == "开发0624期-财根"
+    assert row["category_level1"] == "家居厨卫"
+    assert row["category_level2"] == "浴室收纳"
+    assert row["snapshot"]["fields_by_cell"]["CA"]["header"] == "主销售员"
+    assert row["snapshot"]["fields_by_cell"]["CC"]["value"] == 0.5
+
+
+def test_apply_preserves_second_level_category(tmp_path: Path) -> None:
+    source = tmp_path / "selection1-category2.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "开发0623期"
+    sheet.append(["站点", "一级类目", "二级类目", "主SKU", "子SKU"])
+    sheet.append(["菲律宾", "家居厨卫", "浴室收纳", "MAIN-CAT2", "SUB-CAT2"])
+    workbook.save(source)
+    report = parse_selection1_workbook(source)
+
+    with SessionLocal() as db:
+        counts = apply_selection1_rows(db, report["rows"], source_label=report["source_file"], batch_tag="t-cat2")
+        db.commit()
+
+    assert counts["created"] == 1
+    with SessionLocal() as db:
+        row = db.query(models.NewProductOpportunity).one()
+        assert row.category_level1 == "家居厨卫"
+        assert row.category_level2 == "浴室收纳"
+
+
 def test_parse_0707_uses_leading_site_column_without_header(tmp_path: Path) -> None:
     source = tmp_path / "selection1-0707.xlsx"
     workbook = Workbook()

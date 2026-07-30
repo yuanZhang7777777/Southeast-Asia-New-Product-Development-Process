@@ -49,7 +49,10 @@ def test_selection2_import_is_idempotent_and_keeps_multi_sales_feedback(tmp_path
     assert opportunity.source_type == "selection2_caigen_claim_feedback"
     assert opportunity.main_sku == "HXG15GD"
     assert opportunity.sub_sku == "HXG15GD"
-    assert opportunity.site is None
+    assert opportunity.site == "PH"
+    assert opportunity.country == "PH"
+    assert opportunity.category_level1 is None
+    assert opportunity.category_level2 is None
     assert opportunity.snapshot["headers_by_column"]["H"] == ["进价"]
     assert [snapshot.import_batch_id for snapshot in snapshots] == [
         first.json()["import_batch_id"],
@@ -162,7 +165,36 @@ def test_selection2_clean_import_has_no_prefill_claims(tmp_path: Path) -> None:
     with SessionLocal() as db:
         assert db.query(models.NewProductOpportunity).count() == 2
         assert db.query(models.SalesClaimForecast).count() == 0
-        assert db.query(models.FlowTask).count() == 2
+        assert db.query(models.FlowTask).count() == 0
+
+
+def test_selection2_standard_header_imports_spu_sku_as_ph_without_claim_task(tmp_path: Path) -> None:
+    workbook_path = tmp_path / "selection2_standard.xlsx"
+    workbook = Workbook()
+    worksheet = workbook.active
+    worksheet.title = "7.11期"
+    worksheet.append(["SPU", "SKU", "首单备货数量", "产品名称", "产品规格属性（材质、大小、颜色）", "图片", "进价", "Shopee稳定期定价"])
+    worksheet.append(["CG-MAIN", "CG-SUB-A", 10, "标准商品", "蓝色", "https://example.com/cg.jpg", 8.5, 199])
+    workbook.save(workbook_path)
+
+    response = client.post(
+        "/opportunities/import/selection2",
+        json={"source_file": str(workbook_path), "source_sheet": "7.11期"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["created_count"] == 1
+    assert response.json()["task_count"] == 0
+    with SessionLocal() as db:
+        opportunity = db.query(models.NewProductOpportunity).one()
+    assert opportunity.main_sku == "CG-MAIN"
+    assert opportunity.sub_sku == "CG-SUB-A"
+    assert opportunity.main_sku_name == "标准商品"
+    assert opportunity.sub_sku_name == "蓝色"
+    assert opportunity.site == "PH"
+    assert opportunity.country == "PH"
+    assert opportunity.category_level1 is None
+    assert opportunity.category_level2 is None
 
 
 def test_selection2_import_tolerates_datetime_cells(tmp_path: Path) -> None:

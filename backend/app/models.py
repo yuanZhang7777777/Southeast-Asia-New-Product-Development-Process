@@ -102,6 +102,7 @@ class NewProductOpportunity(TimestampMixin, Base):
     developer_department: Mapped[str | None] = mapped_column(String(128))
     developer_name: Mapped[str | None] = mapped_column(String(128))
     category_level1: Mapped[str | None] = mapped_column(String(128))
+    category_level2: Mapped[str | None] = mapped_column(String(128))
     keyword: Mapped[str | None] = mapped_column(String(255))
     image_url: Mapped[str | None] = mapped_column(Text)
     main_sku_name: Mapped[str | None] = mapped_column(String(255))

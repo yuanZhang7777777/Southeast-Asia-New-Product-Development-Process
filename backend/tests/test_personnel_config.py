@@ -56,6 +56,13 @@ def test_operator_profile_admin_crud_exposes_only_assignment_fields() -> None:
 
     from app.main import app
 
+    with SessionLocal() as db:
+        user = models.User(name="陈丽妹", enabled=True)
+        db.add(user)
+        db.flush()
+        db.add(models.RoleMapping(user_id=user.id, name="陈丽妹", role="operator", enabled=True))
+        db.commit()
+
     client = TestClient(app)
     create_response = client.post(
         "/admin/operator-profiles",
@@ -103,6 +110,31 @@ def test_operator_profile_admin_crud_exposes_only_assignment_fields() -> None:
     assert client.get("/admin/operator-profiles").json() == []
 
 
+def test_operator_profile_rejects_more_than_six_level1_category_groups() -> None:
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    with SessionLocal() as db:
+        user = models.User(name="陈丽妹", enabled=True)
+        db.add(user)
+        db.flush()
+        db.add(models.RoleMapping(user_id=user.id, name="陈丽妹", role="operator", enabled=True))
+        db.commit()
+
+    response = TestClient(app).post(
+        "/admin/operator-profiles",
+        json={
+            "operator_name": "陈丽妹",
+            "enabled": True,
+            "key_categories": [{"level1": f"类目{i}", "level2": ""} for i in range(7)],
+        },
+    )
+
+    assert response.status_code == 422
+    assert "最多配置 6 个一级类目组" in response.text
+
+
 def test_company_categories_import_from_company_category_sheet(tmp_path: Path) -> None:
     workbook_path = tmp_path / "海外仓新品主攻类目.xlsx"
     workbook = Workbook()
@@ -136,6 +168,13 @@ def test_operator_profile_admin_crud_saves_multi_category_selection() -> None:
     from fastapi.testclient import TestClient
 
     from app.main import app
+
+    with SessionLocal() as db:
+        user = models.User(name="陈丽妹", enabled=True)
+        db.add(user)
+        db.flush()
+        db.add(models.RoleMapping(user_id=user.id, name="陈丽妹", role="operator", enabled=True))
+        db.commit()
 
     client = TestClient(app)
     create_response = client.post(
@@ -180,6 +219,7 @@ def test_assignment_matches_any_configured_category_at_same_weight() -> None:
             site="PH",
             country="PH",
             category_level1="家居厨卫",
+            category_level2=None,
         )
     ]
     profiles = [
@@ -204,11 +244,107 @@ def test_assignment_matches_any_configured_category_at_same_weight() -> None:
     result = preview_main_sku_assignment_groups(opportunities, profiles, initial_loads={"未命中": 0, "命中": 0})
 
     assert result[0].suggested_assignee == "命中"
-    assert result[0].match_reason == "重点站点匹配；重点类目匹配"
+    assert result[0].match_reason == "一级类目命中"
+
+
+def test_assignment_exact_level2_match_beats_lower_load_level1_match() -> None:
+    from types import SimpleNamespace
+
+    from app.assignment_rules import preview_main_sku_assignment_groups
+
+    opportunities = [
+        SimpleNamespace(
+            id="opp-1",
+            source_type="selection1",
+            batch="开发0728期",
+            main_sku="MAIN-1",
+            site="PH",
+            country="PH",
+            category_level1="家居厨卫",
+            category_level2="收纳整理",
+        )
+    ]
+    profiles = [
+        SimpleNamespace(operator_name="一级低负载", key_site="PH", key_categories=[{"level1": "家居厨卫"}], assignment_priority=0, display_order=1, enabled=True),
+        SimpleNamespace(operator_name="二级高负载", key_site="PH", key_categories=[{"level1": "家居厨卫", "level2": "收纳整理"}], assignment_priority=0, display_order=2, enabled=True),
+    ]
+
+    result = preview_main_sku_assignment_groups(opportunities, profiles, initial_loads={"一级低负载": 0, "二级高负载": 9})
+
+    assert result[0].suggested_assignee == "二级高负载"
+    assert result[0].match_reason == "二级类目命中"
+
+
+def test_assignment_without_category_falls_back_to_lowest_load_enabled_operator() -> None:
+    from types import SimpleNamespace
+
+    from app.assignment_rules import preview_main_sku_assignment_groups
+
+    opportunities = [
+        SimpleNamespace(
+            id="opp-1",
+            source_type="selection2",
+            batch="选品2-财根0711期",
+            main_sku="CG-MAIN",
+            site="PH",
+            country="PH",
+            category_level1=None,
+            category_level2=None,
+        )
+    ]
+    profiles = [
+        SimpleNamespace(operator_name="PH高负载", key_site="PH", key_categories=[{"level1": "家居厨卫"}], assignment_priority=0, display_order=1, enabled=True),
+        SimpleNamespace(operator_name="TH低负载", key_site="TH", key_categories=[{"level1": "汽摩配"}], assignment_priority=0, display_order=2, enabled=True),
+    ]
+
+    result = preview_main_sku_assignment_groups(opportunities, profiles, initial_loads={"PH高负载": 5, "TH低负载": 1})
+
+    assert result[0].suggested_assignee == "TH低负载"
+    assert result[0].match_reason == "无类目-均衡分配"
+
+
+def test_assignment_honors_sixth_category_and_balances_matching_operators() -> None:
+    from types import SimpleNamespace
+
+    from app.assignment_rules import preview_main_sku_assignment_groups
+
+    sixth_category = [
+        {"level1": "类目1"},
+        {"level1": "类目2"},
+        {"level1": "类目3"},
+        {"level1": "类目4"},
+        {"level1": "类目5"},
+        {"level1": "目标类目"},
+    ]
+    profiles = [
+        SimpleNamespace(operator_name="运营甲", key_site="PH", key_categories=sixth_category, assignment_priority=0, display_order=1, enabled=True),
+        SimpleNamespace(operator_name="运营乙", key_site="PH", key_categories=sixth_category, assignment_priority=0, display_order=2, enabled=True),
+    ]
+    opportunities = [
+        SimpleNamespace(id=f"opp-{index}", source_type="selection1", batch="开发0728期", main_sku=f"MAIN-{index}", site="PH", country="PH", category_level1="目标类目", category_level2=None)
+        for index in range(6)
+    ]
+
+    suggestions = preview_main_sku_assignment_groups(opportunities, profiles, initial_loads={"运营甲": 0, "运营乙": 0})
+
+    assert [item.suggested_assignee for item in suggestions].count("运营甲") == 3
+    assert [item.suggested_assignee for item in suggestions].count("运营乙") == 3
 def test_operator_profiles_keep_append_order_and_priority() -> None:
     from fastapi.testclient import TestClient
 
     from app.main import app
+
+    with SessionLocal() as db:
+        users = [models.User(name="Beta", enabled=True), models.User(name="Alpha", enabled=True)]
+        db.add_all(users)
+        db.flush()
+        db.add_all(
+            [
+                models.RoleMapping(user_id=users[0].id, name="Beta", role="operator", enabled=True),
+                models.RoleMapping(user_id=users[1].id, name="Alpha", role="operator", enabled=True),
+            ]
+        )
+        db.commit()
 
     client = TestClient(app)
     first = client.post(

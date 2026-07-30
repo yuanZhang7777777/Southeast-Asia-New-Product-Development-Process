@@ -20,7 +20,7 @@ FEATURE_SWITCH_SETTINGS = (
 )
 
 
-ROLE_OPTIONS = {"operator", "sales", "manager", "super_admin"}
+ROLE_OPTIONS = {"operator", "manager", "super_admin"}
 
 
 def list_users(db: Session) -> list[schemas.AdminUserRead]:
@@ -205,6 +205,9 @@ def update_role_mapping(
     actor_name: str | None = None,
     actor_user_id: str | None = None,
 ) -> models.RoleMapping:
+    values = dict(values)
+    if "role" in values:
+        values["role"] = _valid_role(values["role"])
     changed: dict[str, dict[str, object]] = {}
     for field in ("name", "role", "dingtalk_user_id", "group_name", "site", "manager_user_id", "enabled", "notification_enabled"):
         if field in values and getattr(mapping, field) != values[field]:

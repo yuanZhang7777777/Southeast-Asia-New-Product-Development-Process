@@ -15,6 +15,7 @@ from app.notification_jobs import (
     send_operator_listing_reminder_cards,
 )
 from app.plm_download import BEIJING, download_plm_export, previous_beijing_date
+from app.plm_processing import process_plm_arrival_workbook
 
 
 SYNC_HOUR = 8
@@ -94,7 +95,7 @@ def thursday_notification_due(now: datetime, completed_date: str | None) -> bool
     return manager_notification_due(now, completed_date)
 
 
-def run_plm_sync(settings: Settings, date_text: str) -> str:
+def run_plm_sync(settings: Settings, date_text: str) -> dict[str, object]:
     path = download_plm_export(
         date_text,
         base_url=settings.plm_base_url,
@@ -103,8 +104,16 @@ def run_plm_sync(settings: Settings, date_text: str) -> str:
         bloc_name=settings.plm_bloc_name,
         cache_dir=settings.plm_cache_dir,
     )
-    return path.name
-
+    with SessionLocal() as db:
+        arrival = process_plm_arrival_workbook(
+            db,
+            path,
+            date_text,
+            source_file=path.name,
+            bloc_name=settings.plm_bloc_name,
+            workflow_automation_enabled=settings.workflow_automation_enabled,
+        )
+    return {"file": path.name, "arrival": arrival}
 
 def run_dingtalk_user_sync(settings: Settings) -> dict[str, object]:
     with SessionLocal() as db:
@@ -165,11 +174,11 @@ def main() -> None:
         if settings.plm_sync_enabled and plm_sync_due(now, completed_date) and time.monotonic() >= retry_after:
             date_text = previous_beijing_date(now)
             try:
-                file_name = run_plm_sync(settings, date_text)
+                report = run_plm_sync(settings, date_text)
                 completed_date = date_text
                 retry_after = 0.0
-                record_job_run(JOB_PLM_SYNC, date_text, {"file": file_name})
-                print(f"plm_sync_completed date={date_text} file={file_name} bloc={settings.plm_bloc_name}", flush=True)
+                record_job_run(JOB_PLM_SYNC, date_text, report)
+                print(f"plm_sync_completed date={date_text} report={report} bloc={settings.plm_bloc_name}", flush=True)
             except Exception as exc:
                 retry_after = time.monotonic() + RETRY_SECONDS
                 print(f"plm_sync_failed date={date_text} error={exc}", flush=True)

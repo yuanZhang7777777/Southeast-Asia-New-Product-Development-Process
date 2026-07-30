@@ -47,7 +47,13 @@ SOURCE_TYPE = "history_selection1"
 AUDIT_ACTION = "history.selection1_imported"
 REVERT_AUDIT_ACTION = "history.selection1_import_reverted"
 SHEET_PERIOD_PATTERN = re.compile(r"开发(\d{4})期")
-SPECIAL_SHEET_PERIODS = {"开发-财根团队汇总": "开发0727期-财根"}
+FINANCE_SPLIT_SHEET_PERIODS = {
+    "开发-财根团队6.24-6.30": "开发0624期-财根",
+    "开发-财根团队7.1-7.7": "开发0701期-财根",
+    "开发-财根团队7.8-7.14": "开发0708期-财根",
+    "开发-财根团队7.15-7.21": "开发0715期-财根",
+}
+SPECIAL_SHEET_PERIODS = {"开发-财根团队汇总": "开发0727期-财根", **FINANCE_SPLIT_SHEET_PERIODS}
 NEW_GENERATION_MIN = 414  # 用户拍板（2026-07-26）：0414/0421 与新世代同表头结构，一并纳入
 LEGACY_PERIODS = {"0815", "0820", "0827", "0903", "0908", "0910", "0917", "0924"}  # 当前工作簿已确认的去年旧期；未来新期不按 MMDD 阈值误排除。
 MIGRATION_PERIODS = {"0414", "0421", "0428", "0512", "0519", "0526", "0602", "0609", "0616", "0623", "0630", "0707", "0714", "0721"}
@@ -58,6 +64,7 @@ FIELD_ALIASES = {
     "developer_department": ("开发部门", "部门"),
     "developer_name": ("开发员",),
     "category_level1": ("一级类目",),
+    "category_level2": ("二级类目",),
     # 关键词组：旧世代别名（防个别期表头变体）
     "keyword": ("关键词", "开发关键词", "关键词组"),
     # 主SKU名称（33）：开发0903期实测表头
@@ -390,6 +397,7 @@ def parse_selection1_workbook(
                         **fields,
                         "snapshot": {
                             "archive_type": "historical_selection1",
+                            **({"source_schema": "selection1_standard_v20260729"} if sheet_name in FINANCE_SPLIT_SHEET_PERIODS else {}),
                             "business_period": period,
                             "site_raw": site_raw,
                             **({"site_resolution": site_resolution} if site_resolution else {}),
@@ -455,7 +463,7 @@ def parse_selection1_workbook(
 
 
 BACKFILL_EMPTY_FIELDS = (
-    "country", "site", "developer_department", "developer_name", "category_level1", "keyword",
+    "country", "site", "developer_department", "developer_name", "category_level1", "category_level2", "keyword",
     "image_url", "main_sku_name", "sub_sku_name", "product_type", "reason",
 )
 
@@ -782,6 +790,7 @@ def apply_selection1_rows(
             developer_department=row.get("developer_department"),
             developer_name=row.get("developer_name"),
             category_level1=row.get("category_level1"),
+            category_level2=row.get("category_level2"),
             keyword=row.get("keyword"),
             image_url=row.get("image_url"),
             main_sku_name=row.get("main_sku_name"),

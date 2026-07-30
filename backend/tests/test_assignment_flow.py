@@ -46,6 +46,36 @@ def test_confirm_assignment_expands_one_selected_row_to_main_sku_group() -> None
     assert len(tasks) == 2
     assert assigned_opportunity_ids == {selected_id, same_group_id}
     assert refreshed_other_batch.current_status == "pending_assignment"
+    assert {task.assignee_role for task in tasks} == {"operator"}
+    assert {task.flow_instance.owner_role for task in tasks} == {"operator"}
+
+
+def test_confirm_assignment_keeps_same_main_sku_group_within_same_site() -> None:
+    with SessionLocal() as db:
+        selected = add_opportunity(db, "MAIN-001", "SUB-101", "BATCH-1")
+        same_site = add_opportunity(db, "MAIN-001", "SUB-102", "BATCH-1")
+        other_site = add_opportunity(db, "MAIN-001", "SUB-103", "BATCH-1")
+        selected.site = same_site.site = "PH"
+        other_site.site = "TH"
+        db.commit()
+
+        tasks = services.confirm_assignment(
+            db,
+            schemas.AssignmentConfirmRequest(opportunity_ids=[selected.id], assignee_name="销售A"),
+        )
+        db.commit()
+
+        selected_id = selected.id
+        same_site_id = same_site.id
+        assigned_opportunity_ids = {
+            task.flow_instance.opportunity_id
+            for task in db.query(models.FlowTask).order_by(models.FlowTask.created_at).all()
+        }
+        refreshed_other_site = db.get(models.NewProductOpportunity, other_site.id)
+
+    assert len(tasks) == 2
+    assert assigned_opportunity_ids == {selected_id, same_site_id}
+    assert refreshed_other_site.current_status == "pending_assignment"
 
 
 def test_confirm_assignment_ignores_locked_siblings_when_group_is_partially_assigned() -> None:
