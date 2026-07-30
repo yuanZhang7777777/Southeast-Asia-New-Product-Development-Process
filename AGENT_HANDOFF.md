@@ -18,7 +18,8 @@ Do not recover decisions from old release notes or screenshot-only discussions w
 ## Immediate Operating Boundaries
 
 - The worktree is deliberately dirty and contains work from multiple agents. Start every implementation task with `git status --short`, inspect the relevant diff, and never run `git reset --hard`, `git checkout --`, or overwrite unrelated changes.
-- This worktree is currently on `codex-selection2-historical-readonly`. Recent reference commits: `024bc8d`, `93e11a4`, `b0978d2`, `2026063`, `0a8120f`.
+- The active code baseline is `main` at or after merge commit `59429cf`. For deployment, data migration, or rollback, cite the exact commit being used.
+- This root `AGENT_HANDOFF.md` is the only active handoff. Any `AGENT_HANDOFF-*` file found in older branches or worktrees is historical evidence only and must not override this file.
 - Production changes require a fresh explicit user approval, a production backup, a dry-run/read-back report, and the deployment runbook. Do not infer approval from an old handoff line.
 - During documentation-only work, do not touch either database, deployment, OSS, PLM, FineBI, or DingTalk.
 - Never commit credentials, cookies, tokens, `.env`, or personal passwords.
