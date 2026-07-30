@@ -23,14 +23,35 @@ class Settings(BaseSettings):
     dingtalk_client_secret: str = ""
     dingtalk_agent_id: str = ""
     dingtalk_robot_code: str = ""
-    dingtalk_new_product_todo_card_template_id: str = "e335a9d6-72f9-495f-aafa-58cc7023d99a.schema"
+    dingtalk_arrival_card_template_id: str = ""
     dingtalk_card_autosend_enabled: bool = False
     dingtalk_card_test_receiver_name: str = ""
+    dingtalk_test_recipient_user_id: str = ""
+    dingtalk_user_sync_enabled: bool = False
     platform_base_url: str = "http://127.0.0.1:5173"
     auth_required: bool = False
     auth_secret_key: str = DEFAULT_AUTH_SECRET_KEY
     auth_token_ttl_seconds: int = 86400
     write_back_to_online_sheets: bool = False
+    workflow_automation_enabled: bool = False
+    plm_sync_enabled: bool = False
+    plm_base_url: str = ""
+    plm_open_base_url: str = ""
+    plm_username: str = ""
+    plm_password: str = ""
+    plm_bloc_name: str = "\u96c6\u56e2\u516b\u90e8"
+    plm_cache_dir: str = "/data/plm"
+    erp_login_url: str = ""
+    erp_product_list_url: str = ""
+    erp_download_list_url: str = ""
+    erp_username: str = ""
+    erp_password: str = ""
+    finebi_base_url: str = ""
+    finebi_username: str = ""
+    finebi_password: str = ""
+    finebi_report_id: str = ""
+    finebi_payload_file: str = ""
+    finebi_auto_pull_enabled: bool = False
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
@@ -41,6 +62,10 @@ class Settings(BaseSettings):
         self.auth_secret_key = self.auth_secret_key.strip()
         if not is_local_app_env(self.app_env) and (not self.auth_secret_key or self.auth_secret_key in WEAK_AUTH_SECRET_KEYS):
             raise ValueError("Default AUTH_SECRET_KEY is only allowed for local/test environments.")
+        if self.plm_sync_enabled and not all(
+            [self.plm_base_url.strip(), self.plm_username.strip(), self.plm_password, self.plm_bloc_name.strip()]
+        ):
+            raise ValueError("PLM credentials and group are required when PLM sync is enabled.")
 
     @property
     def cors_origin_list(self) -> list[str]:

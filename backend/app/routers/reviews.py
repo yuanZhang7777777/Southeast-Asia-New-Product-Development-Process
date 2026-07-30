@@ -11,6 +11,39 @@ from app.workflow_status import REVIEW_RETURNED_FOR_SUPPLEMENT
 router = APIRouter(prefix="/reviews", tags=["reviews"], dependencies=[Depends(require_roles("manager"))])
 
 
+@router.post("/bulk", response_model=schemas.MessageResponse)
+def submit_bulk_review(
+    payload: schemas.BulkReviewCreate,
+    db: Session = Depends(get_db),
+    auth: AuthContext | None = Depends(require_roles("manager")),
+) -> schemas.MessageResponse:
+    try:
+        records = services.submit_bulk_reviews(
+            db,
+            payload,
+            actor_name=auth.user.name if auth else None,
+            actor_user_id=auth.user.id if auth else None,
+        )
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    db.flush()
+    if payload.action == "reject":
+        settings = get_settings()
+        sender = DingTalkCardSender(DingTalkCardConfig.from_settings(settings))
+        for record in records:
+            claim = services.latest_platform_submission(db, record.opportunity_id)
+            services.notify_operator_new_product_todo_card(
+                db,
+                claim.salesperson_name if claim else None,
+                f"returned-{record.id}",
+                settings,
+                sender,
+            )
+    db.commit()
+    return schemas.MessageResponse(message="bulk review submitted", id=str(len(records)))
+
+
 @router.post("", response_model=schemas.MessageResponse)
 def submit_review(
     payload: schemas.ReviewCreate,

@@ -49,7 +49,11 @@ def test_selection2_import_is_idempotent_and_keeps_multi_sales_feedback(tmp_path
     assert opportunity.source_type == "selection2_caigen_claim_feedback"
     assert opportunity.main_sku == "HXG15GD"
     assert opportunity.sub_sku == "HXG15GD"
-    assert opportunity.site is None
+    assert opportunity.site == "PH"
+    assert opportunity.country == "PH"
+    assert opportunity.category_level1 is None
+    assert opportunity.category_level2 is None
+    assert opportunity.snapshot["headers_by_column"]["H"] == ["进价"]
     assert [snapshot.import_batch_id for snapshot in snapshots] == [
         first.json()["import_batch_id"],
         second.json()["import_batch_id"],
@@ -59,6 +63,26 @@ def test_selection2_import_is_idempotent_and_keeps_multi_sales_feedback(tmp_path
         ("李桂敏", "reject", None, "市场销量不足"),
         ("赵钰婷", "claim", 1.5, None),
     ]
+
+
+def test_selection2_reupload_with_new_file_name_updates_in_place(tmp_path: Path) -> None:
+    first_path = tmp_path / "abc123-选品2.xlsx"
+    second_path = tmp_path / "def456-选品2.xlsx"
+    build_selection2_fixture(first_path)
+    build_selection2_fixture(second_path)
+
+    first = client.post("/opportunities/import/selection2", json={"source_file": str(first_path), "source_sheet": "5.26期"})
+    second = client.post("/opportunities/import/selection2", json={"source_file": str(second_path), "source_sheet": "5.26期"})
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert first.json()["created_count"] == 1
+    assert second.json()["created_count"] == 0
+    assert second.json()["updated_count"] == 1
+
+    with SessionLocal() as db:
+        opportunity = db.query(models.NewProductOpportunity).one()
+    assert opportunity.source_file == second_path.name
 
 
 def test_selection2_upload_import_uses_browser_file(tmp_path: Path) -> None:
@@ -84,6 +108,27 @@ def test_selection2_upload_import_uses_browser_file(tmp_path: Path) -> None:
     assert "选品2" in body["source_file"]
 
 
+def test_selection2_upload_import_tolerates_sheet_spacing(tmp_path: Path) -> None:
+    workbook_path = tmp_path / "selection2_upload.xlsx"
+    build_selection2_fixture(workbook_path)
+
+    with workbook_path.open("rb") as handle:
+        response = client.post(
+            "/opportunities/import/selection2/upload",
+            data={"source_sheet": "5.26 期"},
+            files={
+                "file": (
+                    "选品2：海外仓财根团队开发新品认领-反馈.xlsx",
+                    handle,
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                )
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json()["source_sheet"] == "5.26期"
+
+
 def test_selection2_import_extracts_embedded_product_image(tmp_path: Path) -> None:
     workbook_path = tmp_path / "selection2_image.xlsx"
     image_path = tmp_path / "product.png"
@@ -103,6 +148,75 @@ def test_selection2_import_extracts_embedded_product_image(tmp_path: Path) -> No
     assert opportunity.image_url.startswith("/uploaded-sources/product-images/")
     assert (UPLOAD_ROOT / opportunity.image_url.removeprefix("/uploaded-sources/")).exists()
     assert client.get(opportunity.image_url).status_code == 200
+
+
+def test_selection2_clean_import_has_no_prefill_claims(tmp_path: Path) -> None:
+    workbook_path = tmp_path / "selection2_clean.xlsx"
+    build_selection2_clean_fixture(workbook_path)
+
+    response = client.post(
+        "/opportunities/import/selection2",
+        json={"source_file": str(workbook_path), "source_sheet": "5.26期"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["created_count"] == 2
+    assert response.json()["prefill_claim_count"] == 0
+    with SessionLocal() as db:
+        assert db.query(models.NewProductOpportunity).count() == 2
+        assert db.query(models.SalesClaimForecast).count() == 0
+        assert db.query(models.FlowTask).count() == 0
+
+
+def test_selection2_standard_header_imports_spu_sku_as_ph_without_claim_task(tmp_path: Path) -> None:
+    workbook_path = tmp_path / "selection2_standard.xlsx"
+    workbook = Workbook()
+    worksheet = workbook.active
+    worksheet.title = "7.11期"
+    worksheet.append(["SPU", "SKU", "首单备货数量", "产品名称", "产品规格属性（材质、大小、颜色）", "图片", "进价", "Shopee稳定期定价"])
+    worksheet.append(["CG-MAIN", "CG-SUB-A", 10, "标准商品", "蓝色", "https://example.com/cg.jpg", 8.5, 199])
+    workbook.save(workbook_path)
+
+    response = client.post(
+        "/opportunities/import/selection2",
+        json={"source_file": str(workbook_path), "source_sheet": "7.11期"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["created_count"] == 1
+    assert response.json()["task_count"] == 0
+    with SessionLocal() as db:
+        opportunity = db.query(models.NewProductOpportunity).one()
+    assert opportunity.main_sku == "CG-MAIN"
+    assert opportunity.sub_sku == "CG-SUB-A"
+    assert opportunity.main_sku_name == "标准商品"
+    assert opportunity.sub_sku_name == "蓝色"
+    assert opportunity.site == "PH"
+    assert opportunity.country == "PH"
+    assert opportunity.category_level1 is None
+    assert opportunity.category_level2 is None
+
+
+def test_selection2_import_tolerates_datetime_cells(tmp_path: Path) -> None:
+    from datetime import datetime
+
+    from openpyxl import load_workbook
+
+    workbook_path = tmp_path / "selection2_datetime.xlsx"
+    build_selection2_fixture(workbook_path)
+    workbook = load_workbook(workbook_path)
+    workbook["5.26期"]["AK2"] = datetime(2026, 5, 19, 0, 0, 0)
+    workbook.save(workbook_path)
+
+    response = client.post(
+        "/opportunities/import/selection2",
+        json={"source_file": str(workbook_path), "source_sheet": "5.26期"},
+    )
+
+    assert response.status_code == 200
+    with SessionLocal() as db:
+        opportunity = db.query(models.NewProductOpportunity).one()
+    assert opportunity.snapshot["cells"]["AK"] == "2026-05-19 00:00:00"
 
 
 def build_selection2_fixture(path: Path, image_path: Path | None = None) -> None:
@@ -149,4 +263,41 @@ def build_selection2_fixture(path: Path, image_path: Path | None = None) -> None
     worksheet.append(row)
     if image_path:
         worksheet.add_image(Image(str(image_path)), "G2")
+    workbook.save(path)
+
+
+def build_selection2_clean_fixture(path: Path) -> None:
+    workbook = Workbook()
+    worksheet = workbook.active
+    worksheet.title = "5.26期"
+    headers = [None] * 48
+    for column_index, title in {
+        2: "SPU",
+        3: "SKU",
+        5: "产品名称",
+        6: "产品规格属性（材质、大小、颜色）",
+        7: "图片",
+        8: "进价",
+        22: "进货链接",
+        38: "开发表格认领情况--主销售员",
+        39: "是否认领",
+        40: "认领单销",
+        41: "销售员1",
+        42: "认领单销/不认领原因",
+    }.items():
+        headers[column_index - 1] = title
+    worksheet.append(headers)
+    for index in range(2):
+        row = [None] * 48
+        for column_index, value in {
+            2: f"CG-CLEAN-{index + 1}",
+            3: f"CG-CLEAN-{index + 1}-A",
+            5: f"财根干净测试商品{index + 1}",
+            6: "无历史认领",
+            7: f"https://example.com/clean-{index + 1}.jpg",
+            8: 10 + index,
+            22: f"https://detail.1688.com/offer/clean-{index + 1}.html",
+        }.items():
+            row[column_index - 1] = value
+        worksheet.append(row)
     workbook.save(path)

@@ -1,4 +1,13 @@
+from datetime import date, datetime, time
 from typing import Any
+
+
+def json_safe_value(value: Any) -> Any:
+    if isinstance(value, datetime):
+        return value.isoformat(sep=" ", timespec="seconds")
+    if isinstance(value, date | time):
+        return value.isoformat()
+    return value
 
 
 def normalize_header(value: Any) -> str:

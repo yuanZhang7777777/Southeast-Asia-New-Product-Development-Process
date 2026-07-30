@@ -1,3 +1,5 @@
+import hashlib
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -20,7 +22,16 @@ def preview(payload: schemas.AssignmentPreviewRequest, db: Session = Depends(get
     if payload.candidates:
         profile_query = profile_query.where(models.OperatorAssignmentProfile.operator_name.in_(payload.candidates))
     profiles = list(db.scalars(profile_query))
-    return schemas.AssignmentPreviewResponse(items=services.preview_assignments(opportunities, payload.candidates, profiles))
+    return schemas.AssignmentPreviewResponse(items=services.preview_assignments(opportunities, payload.candidates, profiles, db=db))
+
+
+@router.get("/board", response_model=schemas.AssignmentBoardResponse)
+def board(
+    batch: str | None = None,
+    assignee_name: str | None = None,
+    db: Session = Depends(get_db),
+) -> schemas.AssignmentBoardResponse:
+    return services.list_assignment_board(db, batch=batch, assignee_name=assignee_name)
 
 
 @router.post("/confirm", response_model=list[schemas.TaskRead])
@@ -72,7 +83,7 @@ def reassign(
     services.notify_operator_new_product_todo_card(
         db,
         payload.assignee_name,
-        f"reassign-{task.id}",
+        f"reassign-{task.id}-{hashlib.sha1(payload.assignee_name.encode('utf-8')).hexdigest()[:8]}",
         get_settings(),
         DingTalkCardSender(DingTalkCardConfig.from_settings(get_settings())),
     )

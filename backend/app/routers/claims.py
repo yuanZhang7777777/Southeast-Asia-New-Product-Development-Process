@@ -9,7 +9,6 @@ from app import models, schemas, services
 from app.auth import AuthContext, auth_required, read_token, require_roles, role_mappings_for_user, roles_from_mappings
 from app.config import get_settings
 from app.db import get_db
-from app.dingtalk_card_sender import DingTalkCardConfig, DingTalkCardSender
 from app.excel_images import PUBLIC_UPLOAD_PREFIX, UPLOADED_SOURCES_ROOT
 from app.oss_storage import read_oss_object_by_public_url, upload_claim_evidence_image
 
@@ -22,27 +21,20 @@ def submit_claim(
     db: Session = Depends(get_db),
     auth: AuthContext | None = Depends(require_roles("operator")),
 ) -> schemas.MessageResponse:
-    if auth and auth.operator_name and payload.salesperson_name != auth.operator_name:
+    acting_as_admin = bool(auth and "super_admin" in auth.role_keys)
+    if auth and not acting_as_admin and auth.operator_name and payload.salesperson_name != auth.operator_name:
         raise HTTPException(status_code=403, detail="salesperson_name does not match current operator")
     try:
         claim = services.submit_claim(
             db,
             payload,
-            assignee_name=auth.operator_name if auth else None,
-            assignee_user_id=auth.user.id if auth else None,
+            assignee_name=payload.salesperson_name if acting_as_admin else (auth.operator_name if auth else None),
+            assignee_user_id=None if acting_as_admin else (auth.user.id if auth else None),
         )
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    db.flush()
-    settings = get_settings()
-    services.notify_supervisor_new_product_todo_card(
-        db,
-        f"claim-{claim.id}-{int(claim.last_updated_at.timestamp() * 1_000_000)}",
-        settings,
-        DingTalkCardSender(DingTalkCardConfig.from_settings(settings)),
-    )
     db.commit()
     return schemas.MessageResponse(message="claim submitted", id=claim.id)
 
@@ -51,10 +43,15 @@ def submit_claim(
 async def upload_evidence_image(
     opportunity_id: str = Form("unknown"),
     file: UploadFile = File(...),
-    auth: AuthContext | None = Depends(require_roles("operator")),
+    auth: AuthContext | None = Depends(require_roles("operator", "manager")),
     db: Session = Depends(get_db),
 ) -> dict[str, object]:
-    if auth and not services.can_upload_claim_evidence(db, opportunity_id, auth.operator_name, auth.user.id):
+    manager_access = bool(auth and auth.role_keys.intersection({"manager", "super_admin"}))
+    if (
+        auth
+        and not manager_access
+        and not services.can_upload_claim_evidence(db, opportunity_id, auth.operator_name, auth.user.id)
+    ):
         raise HTTPException(status_code=403, detail="claim evidence does not belong to current operator")
     data = await file.read()
     if not data:

@@ -28,6 +28,7 @@ logs/
 backups/
 *.db
 .codex_tmp/
+.codex-local/
 backend/.uploaded_sources/
 outputs/dingtalk_user_sync_report.json
 outputs/cloud_server_access_record.md
@@ -40,6 +41,7 @@ backend/*.db.bak-*
 .codex_recovery/
 .specify/
 .superpowers/
+.worktrees/
 
 # Local business source files stay in the workspace for analysis, not in Git.
 *.xlsx

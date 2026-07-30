@@ -16,6 +16,11 @@ depends_on: str | None = None
 
 
 def upgrade() -> None:
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    if "user_password" in inspector.get_table_names():
+        return
+
     op.create_table(
         "user_password",
         sa.Column("id", sa.String(length=36), nullable=False),
@@ -30,4 +35,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_table("user_password")
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    if "user_password" in inspector.get_table_names():
+        op.drop_table("user_password")

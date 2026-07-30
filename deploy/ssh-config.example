@@ -1,3 +1,12 @@
+Host hz-new-product-dev
+    HostName 139.224.2.166
+    Port 2323
+    User root
+    IdentityFile ~/.ssh/id_ed25519
+    ServerAliveInterval 30
+    ServerAliveCountMax 3
+
+# Production: only use during an explicitly approved release window.
 Host hz-new-product-preprod
     HostName 101.132.26.138
     Port 2323

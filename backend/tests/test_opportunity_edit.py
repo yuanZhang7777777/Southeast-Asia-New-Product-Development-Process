@@ -86,3 +86,87 @@ def test_sku_edit_requires_reason() -> None:
 
     assert response.status_code == 400
     assert "reason" in response.json()["detail"]
+
+
+def test_manager_can_edit_status_and_imported_parameters_without_rewriting_source_snapshot() -> None:
+    original_snapshot = {
+        "allowed_columns": ["A", "H", "J", "AJ", "AM"],
+        "cells": {"A": "PH", "H": "MAIN", "J": "SUB", "AJ": 408, "AM": 0.08},
+        "fields_by_column": {"A": "PH", "H": "MAIN", "J": "SUB", "AJ": 408, "AM": 0.08},
+        "headers_by_column": {"AJ": ["稳定期定价 （PHP）"], "AM": ["稳定期利润率"]},
+        "fields_by_header": {"稳定期定价（PHP）": 408, "稳定期利润率": 0.08},
+        "pricing_snapshot": {"稳定期定价": 408, "稳定期利润率": 0.08},
+    }
+    with SessionLocal() as db:
+        opportunity = models.NewProductOpportunity(
+            source_type="selection1_developer_claim_feedback",
+            main_sku="MAIN",
+            sub_sku="SUB",
+            developer_department="产品开发一部",
+            current_status="pending_assignment",
+            snapshot=original_snapshot,
+        )
+        db.add(opportunity)
+        db.flush()
+        db.add(models.SourceRecordSnapshot(opportunity_id=opportunity.id, column_range="A:AM", payload=original_snapshot))
+        db.commit()
+        opportunity_id = opportunity.id
+
+    response = client.patch(
+        f"/opportunities/{opportunity_id}",
+        json={
+            "developer_department": "产品开发八部",
+            "current_status": "open_claim_pool",
+            "source_cells": {"AJ": 428, "AM": 0.0823262796879019},
+            "edit_reason": "修正导入参数",
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["developer_department"] == "产品开发八部"
+    assert body["current_status"] == "open_claim_pool"
+    assert body["snapshot"]["cells"]["AJ"] == 428
+    assert body["snapshot"]["fields_by_header"]["稳定期利润率"] == 0.0823262796879019
+    assert body["snapshot"]["pricing_snapshot"]["稳定期定价"] == 428
+
+    with SessionLocal() as db:
+        source_snapshot = db.query(models.SourceRecordSnapshot).one()
+        audit = db.query(models.AuditLog).filter_by(action="opportunity.updated").one()
+
+    assert source_snapshot.payload["cells"]["AJ"] == 408
+    assert audit.detail["before"]["current_status"] == "pending_assignment"
+    assert audit.detail["after"]["source_cells"]["AJ"] == 428
+
+
+def test_manager_cannot_edit_unknown_source_column_or_disabled_status() -> None:
+    with SessionLocal() as db:
+        opportunity = models.NewProductOpportunity(
+            source_type="selection1_developer_claim_feedback",
+            main_sku="MAIN",
+            sub_sku="SUB",
+            snapshot={"allowed_columns": ["AJ"], "cells": {"AJ": 408}},
+        )
+        db.add(opportunity)
+        db.commit()
+        opportunity_id = opportunity.id
+
+    unknown_column = client.patch(
+        f"/opportunities/{opportunity_id}",
+        json={"source_cells": {"ZZ": 1}, "edit_reason": "非法列"},
+    )
+    disabled_status = client.patch(
+        f"/opportunities/{opportunity_id}",
+        json={"current_status": "disabled", "edit_reason": "越权停用"},
+    )
+    unsupported_review_status = client.patch(
+        f"/opportunities/{opportunity_id}",
+        json={"current_status": "claim_submitted", "edit_reason": "无认领记录"},
+    )
+
+    assert unknown_column.status_code == 400
+    assert "ZZ" in unknown_column.json()["detail"]
+    assert disabled_status.status_code == 400
+    assert "status" in disabled_status.json()["detail"]
+    assert unsupported_review_status.status_code == 400
+    assert "claim submission" in unsupported_review_status.json()["detail"]

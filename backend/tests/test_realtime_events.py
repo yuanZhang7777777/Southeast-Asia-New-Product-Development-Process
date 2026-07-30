@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from app import models, services  # noqa: E402
 from app.config import get_settings  # noqa: E402
-from app.db import Base, SessionLocal, engine  # noqa: E402
+from app.db import Base, SessionLocal, engine, get_db  # noqa: E402
 from app.main import app  # noqa: E402
 from app.routers.events import current_event_revision, sse  # noqa: E402
 
@@ -42,6 +42,12 @@ def test_event_stream_requires_token_when_auth_is_enabled() -> None:
     response = client.get("/events/stream")
 
     assert response.status_code == 401
+
+
+def test_event_stream_does_not_hold_a_request_database_session() -> None:
+    route = next(route for route in app.routes if route.path == "/events/stream")
+
+    assert get_db not in [dependency.call for dependency in route.dependant.dependencies]
 
 
 def test_sse_payload_is_eventsource_compatible() -> None:

@@ -33,6 +33,8 @@ class AuthContext:
         for role in self.roles:
             if role.role == "operator":
                 return role.name
+        if "super_admin" in self.role_keys:
+            return self.user.name
         return None
 
 

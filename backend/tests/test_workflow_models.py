@@ -7,6 +7,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app import models, schemas  # noqa: E402
 from app.db import Base, SessionLocal, engine  # noqa: E402
+from alembic.config import Config  # noqa: E402
+from alembic.script import ScriptDirectory  # noqa: E402
+from app import workflow_status  # noqa: E402
 
 
 def setup_function() -> None:
@@ -108,3 +111,32 @@ def test_batch_summary_schemas_read_model_metadata() -> None:
 
     assert import_summary.created_count == 2
     assert export_summary.row_count == 3
+
+
+def test_listing_observation_tables_replace_legacy_four_week_summary() -> None:
+    assert "listing_record" in Base.metadata.tables
+    assert "item_observation_period" in Base.metadata.tables
+    assert "listing_sku_binding" in Base.metadata.tables
+    assert "four_week_summary" not in Base.metadata.tables
+
+    listing_constraints = {constraint.name for constraint in Base.metadata.tables["listing_record"].constraints}
+    listing_indexes = {index.name for index in Base.metadata.tables["listing_record"].indexes}
+    period_constraints = {constraint.name for constraint in Base.metadata.tables["item_observation_period"].constraints}
+    binding_constraints = {constraint.name for constraint in Base.metadata.tables["listing_sku_binding"].constraints}
+    assert "uq_listing_record_item" not in listing_constraints
+    assert "uq_listing_record_shop_item_active" in listing_indexes
+    assert "uq_listing_sku_binding_sku" in binding_constraints
+    assert "uq_item_observation_period_week" in period_constraints
+    assert "uq_item_observation_period_start" in period_constraints
+
+
+def test_alembic_has_single_current_head() -> None:
+    config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
+    config.set_main_option("script_location", str(Path(__file__).resolve().parents[1] / "alembic"))
+
+    assert ScriptDirectory.from_config(config).get_current_head() == "f1a2b3c4d567"
+
+
+def test_stocking_claim_statuses_are_explicit() -> None:
+    assert workflow_status.CLAIM_WAITING_STOCKING_REQUEST == "waiting_stocking_request"
+    assert workflow_status.CLAIM_STOCKING_PAUSED == "stocking_paused"

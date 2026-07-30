@@ -10,7 +10,8 @@ from sqlalchemy.orm import Session
 
 from app import models, schemas, services
 from app.excel_images import images_by_row, save_product_image
-from app.field_mapping import normalize_header, number_value, text_value
+from app.field_mapping import json_safe_value, normalize_header, number_value, text_value
+from app.workbook_sheets import resolve_sheet_name
 from app.workflow_status import OPPORTUNITY_ASSIGNED, OPPORTUNITY_PENDING_ASSIGNMENT, TASK_PENDING
 
 
@@ -19,6 +20,13 @@ DEFAULT_SHEET = "5.26期"
 MAX_SOURCE_COLUMN = column_index_from_string("AV")
 SNAPSHOT_COLUMNS = tuple(get_column_letter(index) for index in range(1, MAX_SOURCE_COLUMN + 1))
 CLAIM_SOURCE_COLUMNS = ("AL:AN", "AO:AP", "AQ:AR", "AS:AT", "AU:AV")
+MAIN_FIELD_ALIASES = {
+    "main_sku": ["SPU", "主SKU"],
+    "sub_sku": ["SKU", "子SKU"],
+    "main_sku_name": ["产品名称", "主SKU名称"],
+    "sub_sku_name": ["产品规格属性（材质、大小、颜色）", "产品规格属性", "SKU属性", "子SKU名称"],
+    "image_url": ["图片", "产品图片"],
+}
 
 
 def import_selection2_workbook(db: Session, payload: schemas.Selection2ImportRequest) -> schemas.Selection2ImportResponse:
@@ -33,18 +41,17 @@ def import_selection2_workbook(db: Session, payload: schemas.Selection2ImportReq
     db.flush()
 
     workbook = load_workbook(source_path, read_only=False, data_only=True)
-    if payload.source_sheet not in workbook.sheetnames:
-        available = ", ".join(workbook.sheetnames)
-        raise ValueError(f"sheet not found: {payload.source_sheet}; available sheets: {available}")
+    source_sheet = resolve_sheet_name(workbook, payload.source_sheet)
+    import_batch.source_sheet = source_sheet
 
-    worksheet = workbook[payload.source_sheet]
+    worksheet = workbook[source_sheet]
     try:
         worksheet.reset_dimensions()
     except AttributeError:
         pass
     source_max_column = max(worksheet.max_column or 0, MAX_SOURCE_COLUMN)
-    product_images = images_by_row(worksheet, "G")
     headers_by_column = source_headers_by_column(worksheet, source_max_column)
+    product_images = images_by_row(worksheet, source_column_for_alias(headers_by_column, MAIN_FIELD_ALIASES["image_url"], "G"))
 
     created_count = 0
     updated_count = 0
@@ -63,7 +70,7 @@ def import_selection2_workbook(db: Session, payload: schemas.Selection2ImportReq
         attach_product_image(parsed, product_images.get(source_row), source_row)
         processed_count += 1
 
-        opportunity, created = upsert_opportunity(db, parsed, source_path.name, payload.source_sheet, source_row, import_batch.id)
+        opportunity, created = upsert_opportunity(db, parsed, source_path.name, source_sheet, source_row, import_batch.id)
         created_count += int(created)
         updated_count += int(not created)
         prefill_claim_count += replace_source_claims(db, opportunity.id, parsed)
@@ -81,7 +88,7 @@ def import_selection2_workbook(db: Session, payload: schemas.Selection2ImportReq
         None,
         {
             "source_file": source_path.name,
-            "source_sheet": payload.source_sheet,
+            "source_sheet": source_sheet,
             "imported_count": created_count + updated_count,
             "created_count": created_count,
             "updated_count": updated_count,
@@ -92,7 +99,8 @@ def import_selection2_workbook(db: Session, payload: schemas.Selection2ImportReq
     return schemas.Selection2ImportResponse(
         import_batch_id=import_batch.id,
         source_file=source_path.name,
-        source_sheet=payload.source_sheet,
+        source_sheet=source_sheet,
+        business_period=source_sheet,
         imported_count=created_count + updated_count,
         created_count=created_count,
         updated_count=updated_count,
@@ -128,29 +136,36 @@ def resolve_source_file(source_file: str | None) -> Path:
 
 
 def parse_selection2_row(row: tuple[Any, ...], headers_by_column: dict[str, list[str]] | None = None) -> dict[str, Any] | None:
-    raw_values = {get_column_letter(index): cell_value(row, get_column_letter(index)) for index in range(1, len(row) + 1)}
-    values = {column: cell_value(row, column) for column in SNAPSHOT_COLUMNS}
-    sub_sku = text_value(values["C"])
+    raw_values = {get_column_letter(index): json_safe_value(cell_value(row, get_column_letter(index))) for index in range(1, len(row) + 1)}
+    values = {column: json_safe_value(cell_value(row, column)) for column in SNAPSHOT_COLUMNS}
+    headers_by_column = headers_by_column or {}
+    sub_sku = text_value(source_value(raw_values, headers_by_column, MAIN_FIELD_ALIASES["sub_sku"], "C", values))
     if not sub_sku:
         return None
-    main_sku = text_value(values["B"]) or sub_sku
+    main_sku = text_value(source_value(raw_values, headers_by_column, MAIN_FIELD_ALIASES["main_sku"], "B", values)) or sub_sku
+    claim_prefill = parse_claims(values, headers_by_column)
     snapshot = {
         "source_type": SOURCE_TYPE,
         "allowed_columns": list(raw_values),
         "cells": values,
+        "headers_by_column": headers_by_column,
         "fields_by_column": fields_by_column(raw_values),
-        "fields_by_header": fields_by_header(headers_by_column or {}, raw_values),
-        "claim_prefill": parse_claims(values),
+        "fields_by_header": fields_by_header(headers_by_column, raw_values),
+        "claim_prefill": claim_prefill,
     }
     return {
         "main": {
             "main_sku": main_sku,
             "sub_sku": sub_sku,
-            "main_sku_name": text_value(values["E"]),
-            "sub_sku_name": text_value(values["F"]),
-            "image_url": text_value(values["G"]),
+            "main_sku_name": text_value(source_value(raw_values, headers_by_column, MAIN_FIELD_ALIASES["main_sku_name"], "E", values)),
+            "sub_sku_name": text_value(source_value(raw_values, headers_by_column, MAIN_FIELD_ALIASES["sub_sku_name"], "F", values)),
+            "image_url": text_value(source_value(raw_values, headers_by_column, MAIN_FIELD_ALIASES["image_url"], "G", values)),
+            "country": "PH",
+            "site": "PH",
+            "category_level1": None,
+            "category_level2": None,
         },
-        "claim_prefill": snapshot["claim_prefill"],
+        "claim_prefill": claim_prefill,
         "snapshot": snapshot,
     }
 
@@ -161,9 +176,8 @@ def upsert_opportunity(
     existing = db.scalar(
         select(models.NewProductOpportunity).where(
             models.NewProductOpportunity.source_type == SOURCE_TYPE,
-            models.NewProductOpportunity.source_file == source_file,
             models.NewProductOpportunity.source_sheet == source_sheet,
-            models.NewProductOpportunity.source_row == source_row,
+            models.NewProductOpportunity.sub_sku == parsed["main"]["sub_sku"],
         )
     )
     data = {
@@ -239,7 +253,9 @@ def fields_by_column(values: dict[str, Any]) -> dict[str, Any]:
     return {column: value for column, value in values.items() if value not in (None, "")}
 
 
-def parse_claims(values: dict[str, Any]) -> list[dict[str, Any]]:
+def parse_claims(values: dict[str, Any], headers_by_column: dict[str, list[str]]) -> list[dict[str, Any]]:
+    if not has_claim_headers(headers_by_column):
+        return []
     claims: list[dict[str, Any]] = []
     main_salesperson = text_value(values["AL"])
     if main_salesperson:
@@ -297,6 +313,8 @@ def replace_source_claims(db: Session, opportunity_id: str, parsed: dict[str, An
 
 
 def ensure_import_claim_task(db: Session, opportunity: models.NewProductOpportunity, parsed: dict[str, Any]) -> bool:
+    if not parsed["claim_prefill"]:
+        return False
     task = db.scalar(
         select(models.FlowTask)
         .join(models.FlowInstance)
@@ -314,7 +332,7 @@ def ensure_import_claim_task(db: Session, opportunity: models.NewProductOpportun
         opportunity_id=opportunity.id,
         current_node="sales_claim",
         current_status=OPPORTUNITY_ASSIGNED if assignee_name else "open_claim_pool",
-        owner_role="sales",
+        owner_role="operator",
     )
     db.add(flow)
     db.flush()
@@ -324,7 +342,7 @@ def ensure_import_claim_task(db: Session, opportunity: models.NewProductOpportun
             node_code="sales_claim",
             task_type="sales_claim",
             assignee_name=assignee_name,
-            assignee_role="sales",
+            assignee_role="operator",
         )
     )
     if assignee_name:
@@ -339,6 +357,43 @@ def normalize_claim_result(value: Any) -> str | None:
     if text in {"否", "不认领", "reject", "REJECT", "no", "NO"}:
         return "reject"
     return None
+
+
+def has_claim_headers(headers_by_column: dict[str, list[str]]) -> bool:
+    claim_columns = {"AL", "AM", "AN", "AO", "AP", "AQ", "AR", "AS", "AT", "AU", "AV"}
+    claim_words = {"主销售员", "是否认领", "认领单销", "销售员1", "销售员2", "销售员3"}
+    for column, headers in headers_by_column.items():
+        if column not in claim_columns:
+            continue
+        normalized_headers = {normalize_header(header) for header in headers}
+        if normalized_headers & {normalize_header(word) for word in claim_words}:
+            return True
+    return False
+
+
+def source_column_for_alias(headers_by_column: dict[str, list[str]], aliases: list[str], fallback_column: str) -> str:
+    alias_keys = {normalize_header(alias) for alias in aliases}
+    for column, headers in headers_by_column.items():
+        if any(normalize_header(header) in alias_keys for header in headers):
+            return column
+    return fallback_column
+
+
+def source_value(
+    raw_values: dict[str, Any],
+    headers_by_column: dict[str, list[str]],
+    aliases: list[str],
+    fallback_column: str,
+    fallback_values: dict[str, Any] | None = None,
+) -> Any:
+    alias_keys = {normalize_header(alias) for alias in aliases}
+    for column, headers in headers_by_column.items():
+        value = raw_values.get(column)
+        if value in (None, ""):
+            continue
+        if any(normalize_header(header) in alias_keys for header in headers):
+            return value
+    return (fallback_values or raw_values).get(fallback_column)
 
 
 def cell_value(row: tuple[Any, ...], column: str) -> Any:

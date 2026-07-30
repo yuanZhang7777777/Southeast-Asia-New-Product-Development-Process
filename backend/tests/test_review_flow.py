@@ -5,6 +5,7 @@ from pathlib import Path
 os.environ["DATABASE_URL"] = f"sqlite:///{Path(__file__).with_name('test_workflow.db')}"
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
 from app import models, schemas, services  # noqa: E402
@@ -39,6 +40,89 @@ def test_review_approved_claim_marks_ready_and_completes_review_task() -> None:
         pending_review_tasks = pending_tasks(db, opportunity_id, "manager_review")
     assert opportunity.current_status == "ready_for_stocking"
     assert pending_review_tasks == []
+
+
+def test_opportunity_summary_includes_latest_claim_daily_sales() -> None:
+    opportunity_id = prepare_submission("claim", claim_daily_sales=2)
+
+    listed = next(item for item in client.get("/opportunities").json() if item["id"] == opportunity_id)
+
+    assert listed["latest_claim_daily_sales"] == 2
+
+
+def test_operator_can_update_same_claim_before_review_without_duplicate_review_task() -> None:
+    opportunity_id = prepare_submission("claim", claim_daily_sales=2)
+    with SessionLocal() as db:
+        original = db.query(models.SalesClaimForecast).filter_by(opportunity_id=opportunity_id).one()
+        original_id = original.id
+        first_submitted_at = original.first_submitted_at
+        original_updated_at = original.last_updated_at
+
+        updated = services.submit_claim(
+            db,
+            schemas.ClaimCreate(
+                opportunity_id=opportunity_id,
+                salesperson_name="销售A",
+                claim_result="claim",
+                claim_daily_sales=5,
+            ),
+            assignee_name="销售A",
+        )
+        db.commit()
+        pending_review_tasks = pending_tasks(db, opportunity_id, "manager_review")
+        updated_values = {
+            "id": updated.id,
+            "first_submitted_at": updated.first_submitted_at,
+            "last_updated_at": updated.last_updated_at,
+            "claim_daily_sales": updated.claim_daily_sales,
+        }
+
+    assert updated_values["id"] == original_id
+    assert updated_values["first_submitted_at"] == first_submitted_at
+    assert updated_values["last_updated_at"] >= original_updated_at
+    assert updated_values["claim_daily_sales"] == 5
+    assert len(pending_review_tasks) == 1
+
+
+def test_other_operator_cannot_update_submitted_claim() -> None:
+    opportunity_id = prepare_submission("claim", claim_daily_sales=2)
+
+    with SessionLocal() as db, pytest.raises(PermissionError, match="does not belong"):
+        services.submit_claim(
+            db,
+            schemas.ClaimCreate(
+                opportunity_id=opportunity_id,
+                salesperson_name="销售B",
+                claim_result="claim",
+                claim_daily_sales=5,
+            ),
+            assignee_name="销售B",
+        )
+
+
+def test_operator_cannot_update_claim_after_manager_review() -> None:
+    opportunity_id = prepare_submission("claim", claim_daily_sales=2)
+    response = client.post(
+        "/reviews",
+        json={
+            "opportunity_id": opportunity_id,
+            "reviewer_name": "练玉君",
+            "review_status": "approved",
+        },
+    )
+    assert response.status_code == 200
+
+    with SessionLocal() as db, pytest.raises(PermissionError, match="does not belong"):
+        services.submit_claim(
+            db,
+            schemas.ClaimCreate(
+                opportunity_id=opportunity_id,
+                salesperson_name="销售A",
+                claim_result="claim",
+                claim_daily_sales=5,
+            ),
+            assignee_name="销售A",
+        )
 
 
 def test_review_confirmed_not_claim_is_terminal_and_not_exportable() -> None:
@@ -116,7 +200,7 @@ def test_review_returned_for_supplement_requires_reason() -> None:
     assert "review_comment" in response.json()["detail"]
 
 
-def test_review_claim_submission_can_only_be_approved() -> None:
+def test_review_claim_submission_can_be_returned_for_supplement() -> None:
     opportunity_id = prepare_submission("claim", claim_daily_sales=1)
 
     response = client.post(
@@ -125,12 +209,107 @@ def test_review_claim_submission_can_only_be_approved() -> None:
             "opportunity_id": opportunity_id,
             "reviewer_name": "练玉君",
             "review_status": "returned_for_supplement",
-            "review_comment": "认领提交不走退回",
+            "review_comment": "认领单销依据不足",
+        },
+    )
+
+    assert response.status_code == 200
+    with SessionLocal() as db:
+        opportunity = db.get(models.NewProductOpportunity, opportunity_id)
+        returned_tasks = pending_tasks(db, opportunity_id, "sales_claim")
+    assert opportunity.current_status == "returned_for_supplement"
+    assert [(task.assignee_name, task.status) for task in returned_tasks] == [("销售A", "pending")]
+
+
+def test_bulk_review_approves_same_type_claim_submissions() -> None:
+    opportunity_ids = [prepare_submission("claim", claim_daily_sales=1), prepare_submission("claim", claim_daily_sales=2)]
+    with SessionLocal() as db:
+        db.add(
+            models.SalesClaimForecast(
+                opportunity_id=opportunity_ids[0],
+                salesperson_name="销售B",
+                claim_result="claim",
+                claim_daily_sales=3,
+                source_column="platform",
+            )
+        )
+        db.commit()
+
+    response = client.post(
+        "/reviews/bulk",
+        json={"opportunity_ids": opportunity_ids, "reviewer_name": "练玉君", "action": "approve"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["id"] == "2"
+    with SessionLocal() as db:
+        statuses = [db.get(models.NewProductOpportunity, opportunity_id).current_status for opportunity_id in opportunity_ids]
+        claim_ids = {claim.id for claim in db.query(models.SalesClaimForecast).filter(models.SalesClaimForecast.opportunity_id.in_(opportunity_ids))}
+        review_claim_ids = {review.claim_record_id for review in db.query(models.ReviewRecord)}
+    assert statuses == ["ready_for_stocking", "ready_for_stocking"]
+    assert review_claim_ids == claim_ids
+
+
+def test_bulk_review_confirms_same_type_not_claim_submissions() -> None:
+    opportunity_ids = [
+        prepare_submission("reject", reject_reason="市场小"),
+        prepare_submission("reject", reject_reason="价格低"),
+    ]
+
+    response = client.post(
+        "/reviews/bulk",
+        json={"opportunity_ids": opportunity_ids, "reviewer_name": "练玉君", "action": "approve"},
+    )
+
+    assert response.status_code == 200
+    with SessionLocal() as db:
+        statuses = [db.get(models.NewProductOpportunity, opportunity_id).current_status for opportunity_id in opportunity_ids]
+        review_claim_ids = [review.claim_record_id for review in db.query(models.ReviewRecord)]
+    assert statuses == ["已确认不认领", "已确认不认领"]
+    assert None not in review_claim_ids
+
+
+def test_bulk_review_rejects_mixed_submission_types_without_partial_updates() -> None:
+    claim_id = prepare_submission("claim", claim_daily_sales=1)
+    not_claim_id = prepare_submission("reject", reject_reason="市场小")
+
+    response = client.post(
+        "/reviews/bulk",
+        json={
+            "opportunity_ids": [claim_id, not_claim_id],
+            "reviewer_name": "练玉君",
+            "action": "reject",
+            "review_comment": "统一退回补充",
         },
     )
 
     assert response.status_code == 400
-    assert "not-claim" in response.json()["detail"]
+    assert "same submission type" in response.json()["detail"]
+    with SessionLocal() as db:
+        assert db.get(models.NewProductOpportunity, claim_id).current_status == "claim_submitted"
+        assert db.get(models.NewProductOpportunity, not_claim_id).current_status == "claim_rejected"
+        assert db.query(models.ReviewRecord).count() == 0
+
+
+def test_bulk_review_rejects_same_type_with_shared_reason() -> None:
+    opportunity_ids = [prepare_submission("claim", claim_daily_sales=1), prepare_submission("claim", claim_daily_sales=2)]
+
+    response = client.post(
+        "/reviews/bulk",
+        json={
+            "opportunity_ids": opportunity_ids,
+            "reviewer_name": "练玉君",
+            "action": "reject",
+            "review_comment": "补充单销依据",
+        },
+    )
+
+    assert response.status_code == 200
+    with SessionLocal() as db:
+        statuses = [db.get(models.NewProductOpportunity, opportunity_id).current_status for opportunity_id in opportunity_ids]
+        comments = [record.review_comment for record in db.query(models.ReviewRecord).order_by(models.ReviewRecord.created_at)]
+    assert statuses == ["returned_for_supplement", "returned_for_supplement"]
+    assert comments == ["补充单销依据", "补充单销依据"]
 
 
 def test_review_cannot_confirm_claim_as_not_claim() -> None:

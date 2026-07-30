@@ -35,3 +35,23 @@ def test_production_environment_accepts_postgresql_database_url() -> None:
     )
 
     assert settings.database_url.startswith("postgresql+psycopg://")
+
+
+def test_enabled_plm_sync_requires_credentials() -> None:
+    with pytest.raises(ValueError, match="PLM credentials"):
+        Settings(plm_sync_enabled=True)
+
+
+def test_workflow_automation_enabled_defaults_to_dry_run_and_can_be_enabled() -> None:
+    assert Settings().workflow_automation_enabled is False
+    assert Settings(workflow_automation_enabled=True).workflow_automation_enabled is True
+
+
+def test_erp_product_list_settings_default_to_empty() -> None:
+    settings = Settings()
+
+    assert settings.erp_login_url == ""
+    assert settings.erp_product_list_url == ""
+    assert settings.erp_download_list_url == ""
+    assert settings.erp_username == ""
+    assert settings.erp_password == ""

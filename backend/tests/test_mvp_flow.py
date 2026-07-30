@@ -11,7 +11,7 @@ from openpyxl import Workbook, load_workbook  # noqa: E402
 
 from app.db import Base, engine  # noqa: E402
 from app.main import app  # noqa: E402
-from app import models  # noqa: E402
+from app import models, services  # noqa: E402
 from app.db import SessionLocal  # noqa: E402
 
 
@@ -28,6 +28,32 @@ def test_health() -> None:
 
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
+
+
+def test_selection1_source_salesperson_is_traceability_only() -> None:
+    selection1 = models.NewProductOpportunity(
+        source_type="selection1_developer_claim_feedback",
+        source_file="selection1.xlsx",
+        source_sheet="Sheet1",
+        source_row=3,
+        main_sku="MAIN-1",
+        sub_sku="SUB-1",
+        current_status="pending_assignment",
+        snapshot={"claim_prefill": {"salesperson_name": "源表销售"}, "cells": {"CD": "源表销售"}},
+    )
+    selection2 = models.NewProductOpportunity(
+        source_type="selection2_caigen_claim_feedback",
+        source_file="selection2.xlsx",
+        source_sheet="Sheet1",
+        source_row=3,
+        main_sku="MAIN-2",
+        sub_sku="SUB-2",
+        current_status="pending_assignment",
+        snapshot={"claim_prefill": {"salesperson_name": "财根运营"}},
+    )
+
+    assert services.claim_prefill_salesperson(selection1) is None
+    assert services.claim_prefill_salesperson(selection2) == "财根运营"
 
 
 def test_opportunities_default_limit_covers_assignment_batches() -> None:
@@ -63,6 +89,7 @@ def test_opportunities_can_filter_full_pool_by_period() -> None:
                     source_type="selection1_developer_claim_feedback",
                     source_file="选品1.xlsx",
                     source_sheet="开发0623期",
+                    batch="2026年第29期",
                     source_row=1,
                     main_sku="MAIN-W27",
                     sub_sku="SUB-W27",
@@ -71,6 +98,7 @@ def test_opportunities_can_filter_full_pool_by_period() -> None:
                     source_type="selection1_developer_claim_feedback",
                     source_file="选品1.xlsx",
                     source_sheet="开发0630期",
+                    batch="2026年第30期",
                     source_row=2,
                     main_sku="MAIN-W28",
                     sub_sku="SUB-W28",
@@ -79,7 +107,7 @@ def test_opportunities_can_filter_full_pool_by_period() -> None:
         )
         db.commit()
 
-    response = client.get("/opportunities?source_sheet=开发0623期")
+    response = client.get("/opportunities?business_period=2026年第29期")
 
     assert response.status_code == 200
     assert [item["main_sku"] for item in response.json()] == ["MAIN-W27"]
@@ -91,6 +119,7 @@ def test_opportunities_export_full_source_rows_by_period() -> None:
             source_type="selection1_developer_claim_feedback",
             source_file="selection1.xlsx",
             source_sheet="开发0623期",
+            batch="2026年第29期",
             source_row=1,
             import_batch_id="batch-0623",
             main_sku="MAIN-W27",
@@ -101,6 +130,7 @@ def test_opportunities_export_full_source_rows_by_period() -> None:
             source_type="selection1_developer_claim_feedback",
             source_file="selection1.xlsx",
             source_sheet="开发0630期",
+            batch="2026年第30期",
             source_row=2,
             import_batch_id="batch-0630",
             main_sku="MAIN-W28",
@@ -133,7 +163,7 @@ def test_opportunities_export_full_source_rows_by_period() -> None:
         )
         db.commit()
 
-    response = client.get("/opportunities/export?source_sheet=开发0623期")
+    response = client.get("/opportunities/export?business_period=2026年第29期")
 
     assert response.status_code == 200
     workbook = load_workbook(BytesIO(response.content), data_only=True)
@@ -233,17 +263,18 @@ def test_mvp_flow_and_notification_dedupe() -> None:
 
     stocking_response = client.get("/stocking/requests")
     assert stocking_response.status_code == 200
-    assert stocking_response.json() == []
+    stocking_requests = stocking_response.json()
+    assert len(stocking_requests) == 1
+    assert stocking_requests[0]["claim_record_id"] == claim_response.json()["id"]
+    assert stocking_requests[0]["quantity"] == 60
+    assert stocking_requests[0]["status"] == "draft"
 
     available_response = client.get("/stocking/available-list")
     assert available_response.status_code == 200
-    available_items = available_response.json()
-    assert available_items[0]["claim_daily_sales"] == 2
-    assert available_items[0]["quantity"] == 60
+    assert available_response.json() == []
 
     export_response = client.get("/stocking/available-list/export")
-    assert export_response.status_code == 200
-    assert export_response.headers["content-type"] == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    assert export_response.status_code == 405
 
     first_notice = client.post(
         "/notifications/test",
@@ -272,7 +303,7 @@ def test_selection1_import_is_idempotent_and_exportable(tmp_path: Path) -> None:
     assert second_import.status_code == 200
     assert first_import.json()["imported_count"] == 1
     assert first_import.json()["market_research_count"] == 2
-    assert first_import.json()["prefill_claim_count"] == 1
+    assert first_import.json()["prefill_claim_count"] == 0
     assert first_import.json()["task_count"] == 0
     assert second_import.json()["created_count"] == 0
     assert second_import.json()["updated_count"] == 1
@@ -291,10 +322,11 @@ def test_selection1_import_is_idempotent_and_exportable(tmp_path: Path) -> None:
         source_claims = db.query(models.SalesClaimForecast).filter_by(source_column="CC:CH").all()
         snapshots = db.query(models.SourceRecordSnapshot).all()
     assert len(market_items) == 2
-    assert len(source_claims) == 1
-    assert snapshots[0].column_range == "A:L,Z:AN,AO:AV,CC:CH"
-    assert "M" not in snapshots[0].payload["cells"]
-    assert "AW" not in snapshots[0].payload["cells"]
+    assert len(source_claims) == 0
+    assert snapshots[0].column_range == "A:BX,CC:CH"
+    assert "M" in snapshots[0].payload["cells"]
+    assert "AW" in snapshots[0].payload["cells"]
+    assert "BX" in snapshots[0].payload["cells"]
     assert "CB" not in snapshots[0].payload["cells"]
 
     assignment_response = client.post(
@@ -325,17 +357,33 @@ def test_selection1_import_is_idempotent_and_exportable(tmp_path: Path) -> None:
         },
     )
     assert review_response.status_code == 200
-    assert client.get("/stocking/requests").json() == []
+    stocking_requests = client.get("/stocking/requests").json()
+    assert len(stocking_requests) == 1
+    assert stocking_requests[0]["claim_record_id"] == claim_response.json()["id"]
+    assert stocking_requests[0]["quantity"] == 90
+
+    with SessionLocal() as db:
+        claim = db.get(models.SalesClaimForecast, claim_response.json()["id"])
+        request = db.query(models.StockingRequest).filter_by(claim_record_id=claim.id).one()
+        request.status = "submitted"
+        claim.downstream_status = "waiting_export"
+        db.add(models.RoleMapping(name="主管A", role="manager", dingtalk_user_id="dt-manager", enabled=True))
+        db.commit()
+    login = client.post("/auth/dingtalk/login", json={"dingtalk_user_id": "dt-manager", "name": "主管A"})
 
     export_path = tmp_path / "available.xlsx"
-    export_response = client.get("/stocking/available-list/export")
+    export_response = client.post(
+        "/stocking/available-list/export",
+        headers={"Authorization": f"Bearer {login.json()['access_token']}"},
+        json={"request_ids": [stocking_requests[0]["id"]]},
+    )
     export_path.write_bytes(export_response.content)
     exported = load_workbook(export_path, data_only=True)
     sheet = exported[exported.sheetnames[0]]
     headers = [cell.value for cell in sheet[1]]
     assert headers == [
         "操作状态",
-        "时间",
+        "申请日期",
         "备货类型",
         "选品数据源",
         "销售员",
