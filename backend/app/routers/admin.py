@@ -318,6 +318,14 @@ def sync_dingtalk_user_ids(
 
 def _assignable_operators(db: Session) -> list[schemas.AssignableOperatorRead]:
     in_pool = set(db.scalars(select(models.OperatorAssignmentProfile.operator_name)))
+    admin_names = set(
+        db.scalars(
+            select(models.RoleMapping.name).where(
+                models.RoleMapping.enabled.is_(True),
+                models.RoleMapping.role.in_(("manager", "super_admin")),
+            )
+        )
+    )
     rows = db.execute(
         select(models.User.id, models.User.name)
         .join(models.RoleMapping, models.RoleMapping.user_id == models.User.id)
@@ -329,7 +337,11 @@ def _assignable_operators(db: Session) -> list[schemas.AssignableOperatorRead]:
         )
         .order_by(models.User.name)
     ).all()
-    return [schemas.AssignableOperatorRead(id=row.id, name=row.name) for row in rows if row.name not in in_pool]
+    return [
+        schemas.AssignableOperatorRead(id=row.id, name=row.name)
+        for row in rows
+        if row.name not in in_pool and row.name not in admin_names
+    ]
 
 
 def _apply_operator_profile(item: models.OperatorAssignmentProfile, values: dict[str, object]) -> None:

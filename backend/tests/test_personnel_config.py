@@ -399,6 +399,31 @@ def test_assignable_operators_excludes_notification_disabled_operator_accounts()
     assert [item["name"] for item in response.json()] == ["真实运营"]
 
 
+def test_assignable_operators_excludes_manager_accounts_even_if_operator_role_exists() -> None:
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    with SessionLocal() as db:
+        real_user = models.User(name="真实运营", enabled=True)
+        admin_user = models.User(name="管理员兼运营", enabled=True)
+        db.add_all([real_user, admin_user])
+        db.flush()
+        db.add_all(
+            [
+                models.RoleMapping(user_id=real_user.id, name="真实运营", role="operator", enabled=True, notification_enabled=True),
+                models.RoleMapping(user_id=admin_user.id, name="管理员兼运营", role="operator", enabled=True, notification_enabled=True),
+                models.RoleMapping(user_id=admin_user.id, name="管理员兼运营", role="manager", enabled=True, notification_enabled=False),
+            ]
+        )
+        db.commit()
+
+    response = TestClient(app).get("/admin/assignable-operators")
+
+    assert response.status_code == 200
+    assert [item["name"] for item in response.json()] == ["真实运营"]
+
+
 def build_personnel_fixture(path: Path) -> None:
     workbook = Workbook()
     worksheet = workbook.active

@@ -309,6 +309,35 @@ def _activate_plm_discovery(
     if not site or not main_sku or not sub_sku:
         return {"status": "assignment_missing_required_fields"}
     country = _country_label(item.country)
+    if services.is_enabled_assignment_operator_for_site(db, salesperson_name, item.country):
+        try:
+            opportunity, claim = services.open_plm_arrival_for_operator(
+                db,
+                batch,
+                item,
+                salesperson_name,
+                claim_source="plm_arrival_auto_site_owner",
+                note="PLM新品到货按当前站点运营自动进入二次调研",
+            )
+        except ValueError as exc:
+            assignment_reason = str(exc)
+        else:
+            return {
+                "status": "matched_discovered",
+                "batch_id": batch.id,
+                "item_id": item.id,
+                "arrival_date": batch.arrival_date,
+                "runtime_claim_id": claim.id,
+                "opportunity_id": opportunity.id,
+                "salesperson_name": salesperson_name,
+                "country": country,
+                "site": site,
+                "main_sku": main_sku,
+                "sub_sku": sub_sku,
+                "reason": "PLM销售员是当前站点启用运营，自动进入二次调研",
+            }
+    else:
+        assignment_reason = "PLM销售员不是当前站点启用运营，等待主管/超管指派"
     assignment = {
         "status": "pending_assignment",
         "batch_id": batch.id,
@@ -326,7 +355,7 @@ def _activate_plm_discovery(
         "warehouse": item.warehouse,
         "latest_storage_time": item.latest_storage_time.isoformat() if item.latest_storage_time else None,
         "first_listing_time": item.first_listing_time.isoformat() if item.first_listing_time else None,
-        "reason": "PLM新品到货未能精确命中当前系统负责人，等待主管/超管指派",
+        "reason": assignment_reason,
     }
     item.raw_payload = {
         **(item.raw_payload or {}),

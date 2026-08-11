@@ -10,7 +10,7 @@ import pytest
 os.environ["DATABASE_URL"] = f"sqlite:///{Path(__file__).with_name('test_workflow.db')}"
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app import models  # noqa: E402
+from app import models, services  # noqa: E402
 from app.config import Settings  # noqa: E402
 from app.db import Base, SessionLocal, engine  # noqa: E402
 from app.dingtalk_card_sender import DingTalkCardConfig, DingTalkCardSender, masked_dingtalk_user_id  # noqa: E402
@@ -50,6 +50,44 @@ class FakeSender:
     def send_new_product_todo(self, card):
         self.todo_cards.append(card)
         return {"ok": True}
+
+
+def test_operator_notification_mapping_excludes_manager_accounts() -> None:
+    with SessionLocal() as db:
+        user = models.User(name="管理员兼运营", enabled=True)
+        db.add(user)
+        db.flush()
+        db.add_all(
+            [
+                models.RoleMapping(
+                    user_id=user.id,
+                    name="管理员兼运营",
+                    role="operator",
+                    dingtalk_user_id="dt-admin-operator",
+                    enabled=True,
+                    notification_enabled=True,
+                ),
+                models.RoleMapping(
+                    user_id=user.id,
+                    name="管理员兼运营",
+                    role="manager",
+                    dingtalk_user_id="dt-admin-manager",
+                    enabled=True,
+                    notification_enabled=False,
+                ),
+            ]
+        )
+        db.commit()
+
+        operator_mapping = services.dingtalk_mapping_for_name(db, "管理员兼运营", ("operator",))
+        test_mapping = services.dingtalk_mapping_for_name(
+            db,
+            "管理员兼运营",
+            ("operator", "supervisor", "manager", "super_admin"),
+        )
+
+    assert operator_mapping is None
+    assert test_mapping is not None
 
 
 def _link_plm_item_to_pending_secondary(

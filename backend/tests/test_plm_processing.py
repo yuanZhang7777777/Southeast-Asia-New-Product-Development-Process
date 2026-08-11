@@ -249,6 +249,66 @@ def test_plm_processing_queues_missing_system_sku_for_manager_assignment(tmp_pat
         assert db.query(models.FlowTask).count() == 0
 
 
+def test_plm_processing_auto_opens_missing_sku_when_plm_salesperson_owns_site(tmp_path: Path) -> None:
+    workbook_path = tmp_path / "plm-discovery-site-owner.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.append(
+        [
+            "商品名称",
+            "国家",
+            "子SKU",
+            "主SKU",
+            "销售员",
+            "集团",
+            "海外仓",
+            "最后一次入库时间",
+            "首次上架时间",
+            "海外仓可发",
+            "真仓库存",
+        ]
+    )
+    sheet.append(["site owner sku", PH, "OWN-SUB", "OWN-MAIN", SALES_A, GROUP_EIGHT, "PH仓", "2026-07-12 10:00:00", "2026-07-12 00:00:00", 2, 2])
+    workbook.save(workbook_path)
+
+    with SessionLocal() as db:
+        user = models.User(name=SALES_A, enabled=True)
+        db.add(user)
+        db.flush()
+        db.add_all(
+            [
+                models.RoleMapping(user_id=user.id, name=SALES_A, role="operator", enabled=True, notification_enabled=True),
+                models.OperatorAssignmentProfile(operator_name=SALES_A, key_site="PH", enabled=True),
+            ]
+        )
+        db.commit()
+
+        result = process_plm_arrival_workbook(
+            db,
+            workbook_path,
+            "2026-07-12",
+            source_file="plm-discovery-site-owner.xlsx",
+            bloc_name=GROUP_EIGHT,
+            workflow_automation_enabled=True,
+        )
+
+        item = db.query(models.PlmArrivalItem).one()
+        opportunity = db.query(models.NewProductOpportunity).filter_by(source_type="plm_arrival_discovery").one()
+        claim = db.query(models.SalesClaimForecast).one()
+        arrival = db.query(models.ArrivalRecord).one()
+
+        assert result["matched_count"] == 1
+        assert result["arrival_record_count"] == 1
+        assert item.match_status == "matched_discovered"
+        assert item.matched_claim_record_id == claim.id
+        assert opportunity.batch == "PLM新增到货"
+        assert opportunity.main_sku == "OWN-MAIN"
+        assert claim.salesperson_name == SALES_A
+        assert claim.downstream_status == "waiting_secondary_research"
+        assert arrival.salesperson_name == SALES_A
+        assert db.query(models.FlowTask).count() == 0
+
+
 def test_plm_processing_exact_match_ignores_non_platform_claim(tmp_path: Path) -> None:
     workbook_path = tmp_path / "plm.xlsx"
     build_workbook(workbook_path)

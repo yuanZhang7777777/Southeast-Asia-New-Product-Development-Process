@@ -5,8 +5,8 @@ import { ChevronLeft, ChevronRight, ExternalLink, ImagePlus, Plus, Send, X } fro
 import {
   API_BASE,
   api,
-  AssignableOperator,
   getAuthToken,
+  OperatorAssignmentProfile,
   PlmArrivalAssignment,
   SecondaryResearchGroup,
   SecondaryResearchItem,
@@ -30,6 +30,7 @@ import { formatBusinessNumber } from "./businessFormat";
 import { createKeyedSaveQueue, imageFiles } from "./imageUploads";
 import { isSelection2Item, selection2HeaderFields, Selection2SectionKey } from "./historicalSnapshot";
 import { cachedValue, setCachedValue } from "./pageDataCache";
+import { normalizeSiteText } from "./opportunityGroups";
 
 type SourceModuleKey = "market" | "pricing" | "development" | "cost";
 type DrawerModuleKey = SourceModuleKey | "claims";
@@ -112,7 +113,7 @@ export function SecondaryResearchView(props: {
   const [manualSecondaryErrors, setManualSecondaryErrors] = useState<ManualSecondaryErrors>({});
   const manualSecondaryDialog = useRef<HTMLDivElement | null>(null);
   const [plmAssignments, setPlmAssignments] = useState<PlmArrivalAssignment[]>([]);
-  const [assignableOperators, setAssignableOperators] = useState<AssignableOperator[]>([]);
+  const [assignmentOperatorProfiles, setAssignmentOperatorProfiles] = useState<OperatorAssignmentProfile[]>([]);
   const [assignmentOwners, setAssignmentOwners] = useState<Record<string, string>>({});
   const [assignmentCloseReasons, setAssignmentCloseReasons] = useState<Record<string, string>>({});
   const periods = useMemo(
@@ -126,6 +127,15 @@ export function SecondaryResearchView(props: {
     ])).sort(),
     [allGroups, plmAssignments]
   );
+  function plmAssignmentOperatorsForRow(row: PlmArrivalAssignment) {
+    const site = normalizeSiteText(row.country);
+    return assignmentOperatorProfiles
+      .filter((operator) => operator.enabled && normalizeSiteText(operator.key_site) === site)
+      .sort((left, right) => {
+        const order = (left.display_order ?? 0) - (right.display_order ?? 0);
+        return order || left.operator_name.localeCompare(right.operator_name, "zh-CN");
+      });
+  }
   const researchScenario = scenario === "submitted" ? "submitted" : "pending";
   const groups = useMemo(() => filterSecondaryResearchGroups(allGroups, {
     scenario: researchScenario, query, country: countryFilter, businessPeriod: periodFilter === "__all__" ? "" : periodFilter,
@@ -187,11 +197,11 @@ export function SecondaryResearchView(props: {
     try {
       const [assignments, operators] = await Promise.all([
         api.plmArrivalAssignments(),
-        api.assignableOperators(),
+        api.operatorProfiles(),
       ]);
       setCachedValue(cacheKey, assignments);
       setPlmAssignments(assignments);
-      setAssignableOperators(operators);
+      setAssignmentOperatorProfiles(operators.filter((operator) => operator.enabled));
     } catch (error) {
       if (!cached) props.onStatus(error instanceof Error ? error.message : "PLM到货待分配加载失败");
     } finally {
@@ -535,7 +545,8 @@ export function SecondaryResearchView(props: {
   );
 
   async function assignPlmArrival(row: PlmArrivalAssignment) {
-    const owner = assignmentOwners[row.plm_arrival_item_id] || assignableOperators[0]?.name || "";
+    const candidates = plmAssignmentOperatorsForRow(row);
+    const owner = assignmentOwners[row.plm_arrival_item_id] || candidates[0]?.operator_name || "";
     if (!owner) {
       props.onStatus("请选择要承接二调的运营");
       return;
@@ -603,7 +614,7 @@ export function SecondaryResearchView(props: {
                   onChange={(event) => setAssignmentOwners((current) => ({ ...current, [row.plm_arrival_item_id]: event.target.value }))}
                 >
                   <option value="">选择承接运营</option>
-                  {assignableOperators.map((operator) => <option value={operator.name} key={operator.id}>{operator.name}</option>)}
+                  {plmAssignmentOperatorsForRow(row).map((operator) => <option value={operator.operator_name} key={operator.id}>{operator.operator_name}</option>)}
                 </select>
                 <button
                   className="btn small primary"

@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import math
 from copy import deepcopy
-from collections import defaultdict
+from collections import Counter, defaultdict
 from io import BytesIO
 from datetime import date, datetime, timedelta, timezone
 from types import SimpleNamespace
@@ -1663,7 +1663,8 @@ def list_plm_arrival_assignments(db: Session) -> list[dict]:
         )
         .order_by(models.PlmArrivalBatch.arrival_date.desc(), models.PlmArrivalItem.source_row.asc())
     ).all()
-    return [_plm_assignment_row(db, item, batch) for item, batch in rows]
+    match_counts = _current_opportunity_counts_for_plm_items(db, [item for item, _batch in rows])
+    return [_plm_assignment_row_from_match_count(item, batch, match_counts.get(item.id, 0)) for item, batch in rows]
 
 
 def assign_plm_arrival_to_secondary_research(
@@ -1677,38 +1678,17 @@ def assign_plm_arrival_to_secondary_research(
     owner = _clean_text(salesperson_name)
     if not owner:
         raise ValueError("salesperson_name is required")
-    if owner not in _enabled_operator_names(db):
-        raise ValueError("salesperson_name must be an enabled operator")
+    if not is_enabled_assignment_operator_for_site(db, owner, item.country):
+        raise ValueError("salesperson_name must be an enabled operator for this site")
 
-    opportunities = _current_opportunities_for_plm_item(db, item)
-    if len(opportunities) > 1:
-        raise ValueError("PLM arrival matches multiple current products; resolve product ownership first")
-    opportunity = opportunities[0] if opportunities else _create_plm_discovery_opportunity(db, item, batch)
-
-    claim = db.scalar(
-        select(models.SalesClaimForecast).where(
-            models.SalesClaimForecast.opportunity_id == opportunity.id,
-            models.SalesClaimForecast.salesperson_name == owner,
-            models.SalesClaimForecast.claim_result == CLAIM_RESULT_CLAIM,
-        )
+    opportunity, claim = open_plm_arrival_for_operator(
+        db,
+        batch,
+        item,
+        owner,
+        claim_source="plm_arrival_assignment",
+        note="PLM到货待分配由主管指派",
     )
-    if claim and claim.secondary_research_submitted_at is not None:
-        raise ValueError("selected operator has already submitted secondary research for this product")
-    if claim is None:
-        claim = models.SalesClaimForecast(
-            id=models.new_id(),
-            opportunity_id=opportunity.id,
-            salesperson_name=owner,
-            claim_result=CLAIM_RESULT_CLAIM,
-            source_column="plm_arrival_discovery",
-            claim_source="plm_arrival_assignment",
-            note="PLM到货待分配由主管指派",
-        )
-        db.add(claim)
-        db.flush()
-
-    open_secondary_research(db, claim.id, item.latest_storage_time)
-    _record_plm_assignment_arrival(db, batch, item, opportunity, claim)
     item.matched_claim_record_id = claim.id
     item.match_status = "assigned"
     item.raw_payload = {
@@ -1795,16 +1775,88 @@ def _plm_arrival_assignment_item(
 
 
 def _enabled_operator_names(db: Session) -> set[str]:
-    return {
-        item
+    admin_names = {
+        _clean_text(item)
         for item in db.scalars(
             select(models.RoleMapping.name).where(
                 models.RoleMapping.enabled.is_(True),
+                models.RoleMapping.role.in_(("manager", "super_admin")),
+            )
+        )
+        if _clean_text(item)
+    }
+    operator_names = {
+        _clean_text(item)
+        for item in db.scalars(
+            select(models.RoleMapping.name).where(
+                models.RoleMapping.enabled.is_(True),
+                models.RoleMapping.notification_enabled.is_(True),
                 models.RoleMapping.role == "operator",
             )
         )
         if _clean_text(item)
     }
+    return operator_names - admin_names
+
+
+def is_enabled_assignment_operator_for_site(db: Session, operator_name: str | None, site_or_country: str | None) -> bool:
+    name = _clean_text(operator_name)
+    site = normalize_site_code(site_or_country)
+    if not name or not site or name not in _enabled_operator_names(db):
+        return False
+    profiles = list(
+        db.scalars(
+            select(models.OperatorAssignmentProfile).where(
+                models.OperatorAssignmentProfile.enabled.is_(True),
+                models.OperatorAssignmentProfile.operator_name == name,
+            )
+        )
+    )
+    return any((normalize_site_code(profile.key_site) or "") == site for profile in profiles)
+
+
+def open_plm_arrival_for_operator(
+    db: Session,
+    batch: models.PlmArrivalBatch,
+    item: models.PlmArrivalItem,
+    owner: str,
+    *,
+    claim_source: str,
+    note: str,
+) -> tuple[models.NewProductOpportunity, models.SalesClaimForecast]:
+    if not is_enabled_assignment_operator_for_site(db, owner, item.country):
+        raise ValueError("salesperson_name must be an enabled operator for this site")
+
+    opportunities = _current_opportunities_for_plm_item(db, item)
+    if len(opportunities) > 1:
+        raise ValueError("PLM arrival matches multiple current products; resolve product ownership first")
+    opportunity = opportunities[0] if opportunities else _create_plm_discovery_opportunity(db, item, batch)
+
+    claim = db.scalar(
+        select(models.SalesClaimForecast).where(
+            models.SalesClaimForecast.opportunity_id == opportunity.id,
+            models.SalesClaimForecast.salesperson_name == owner,
+            models.SalesClaimForecast.claim_result == CLAIM_RESULT_CLAIM,
+        )
+    )
+    if claim and claim.secondary_research_submitted_at is not None:
+        raise ValueError("selected operator has already submitted secondary research for this product")
+    if claim is None:
+        claim = models.SalesClaimForecast(
+            id=models.new_id(),
+            opportunity_id=opportunity.id,
+            salesperson_name=owner,
+            claim_result=CLAIM_RESULT_CLAIM,
+            source_column="plm_arrival_discovery",
+            claim_source=claim_source,
+            note=note,
+        )
+        db.add(claim)
+        db.flush()
+
+    open_secondary_research(db, claim.id, item.latest_storage_time)
+    _record_plm_assignment_arrival(db, batch, item, opportunity, claim)
+    return opportunity, claim
 
 
 def _current_opportunities_for_plm_item(db: Session, item: models.PlmArrivalItem) -> list[models.NewProductOpportunity]:
@@ -1829,6 +1881,48 @@ def _current_opportunities_for_plm_item(db: Session, item: models.PlmArrivalItem
         and _sku_key(row.sub_sku) == sub_sku
         and (normalize_site_code(row.site or row.country) or "") == site
     ]
+
+
+def _plm_item_match_key(item: models.PlmArrivalItem) -> tuple[str, str, str] | None:
+    site = normalize_site_code(item.country)
+    main_sku = _sku_key(item.main_sku)
+    sub_sku = _sku_key(item.sub_sku)
+    if not site or not main_sku or not sub_sku:
+        return None
+    return site, main_sku, sub_sku
+
+
+def _current_opportunity_counts_for_plm_items(
+    db: Session,
+    items: list[models.PlmArrivalItem],
+) -> dict[str, int]:
+    requested_keys = {key for item in items if (key := _plm_item_match_key(item))}
+    if not requested_keys:
+        return {}
+    rows = db.scalars(
+        select(models.NewProductOpportunity).where(
+            models.NewProductOpportunity.current_status != OPPORTUNITY_DISABLED,
+            models.NewProductOpportunity.current_status != "historical_archive",
+            models.NewProductOpportunity.source_type != "plm_arrival_discovery",
+            _visible_business_period_filter(models.NewProductOpportunity.batch),
+        )
+    ).all()
+    counts: Counter[tuple[str, str, str]] = Counter()
+    for row in rows:
+        if is_read_only_historical_opportunity(row):
+            continue
+        key = (
+            normalize_site_code(row.site or row.country) or "",
+            _sku_key(row.main_sku),
+            _sku_key(row.sub_sku),
+        )
+        if key in requested_keys:
+            counts[key] += 1
+    return {
+        item.id: counts.get(key, 0)
+        for item in items
+        if (key := _plm_item_match_key(item))
+    }
 
 
 def _create_plm_discovery_opportunity(
@@ -1936,15 +2030,23 @@ def _plm_assignment_row(
     batch: models.PlmArrivalBatch,
 ) -> dict:
     current_matches = _current_opportunities_for_plm_item(db, item)
+    return _plm_assignment_row_from_match_count(item, batch, len(current_matches))
+
+
+def _plm_assignment_row_from_match_count(
+    item: models.PlmArrivalItem,
+    batch: models.PlmArrivalBatch,
+    current_match_count: int,
+) -> dict:
     payload = (item.raw_payload or {}).get("_plm_assignment") or {}
     block_reason = (
         "当前系统存在多个同国家+主SKU+子SKU商品，需先处理商品归属"
-        if len(current_matches) > 1
+        if current_match_count > 1
         else None
     )
     if block_reason:
         hint = "暂不能指派，先在商品看板处理重复商品或归属"
-    elif len(current_matches) == 1:
+    elif current_match_count == 1:
         hint = "当前系统已有商品；指派后进入所选运营的二次调研和到货通知候选"
     else:
         hint = "当前系统没有可见商品；指派后创建PLM新增到货商品并进入所选运营二次调研"
@@ -1963,7 +2065,7 @@ def _plm_assignment_row(
         "latest_storage_time": item.latest_storage_time,
         "first_listing_time": item.first_listing_time,
         "match_status": item.match_status,
-        "existing_opportunity_count": len(current_matches),
+        "existing_opportunity_count": current_match_count,
         "assigned_salesperson_name": payload.get("assigned_salesperson_name"),
         "claim_record_id": item.matched_claim_record_id,
         "opportunity_id": payload.get("opportunity_id"),
@@ -5695,6 +5797,14 @@ def dingtalk_mapping_for_name(
     receiver_name: str,
     roles: tuple[str, ...],
 ) -> models.RoleMapping | None:
+    if set(roles) == {"operator"} and db.scalar(
+        select(models.RoleMapping.id).where(
+            models.RoleMapping.enabled.is_(True),
+            models.RoleMapping.name == receiver_name,
+            models.RoleMapping.role.in_(("manager", "super_admin")),
+        )
+    ):
+        return None
     return db.scalar(
         select(models.RoleMapping)
         .where(

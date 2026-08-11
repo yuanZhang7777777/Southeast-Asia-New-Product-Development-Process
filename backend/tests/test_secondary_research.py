@@ -9,6 +9,7 @@ os.environ["DATABASE_URL"] = f"sqlite:///{Path(__file__).with_name('test_seconda
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from fastapi.testclient import TestClient  # noqa: E402
+from sqlalchemy import event  # noqa: E402
 
 from app import models, schemas, services  # noqa: E402
 from app.auth import AuthContext  # noqa: E402
@@ -597,6 +598,113 @@ def test_plm_arrival_assignment_lists_multi_product_block_reason() -> None:
     assert "multiple current products" in assigned.json()["detail"]
 
 
+def test_plm_arrival_assignment_list_batches_current_product_lookup() -> None:
+    with SessionLocal() as db:
+        batch = models.PlmArrivalBatch(
+            arrival_date="2026-08-07",
+            source_file="plm-2026-08-07.xlsx",
+            source_hash="hash-plm-list-batch",
+            bloc_name="集团八部",
+            row_count=30,
+        )
+        db.add(batch)
+        db.flush()
+        db.add_all(
+            [
+                models.PlmArrivalItem(
+                    batch_id=batch.id,
+                    source_sheet="汇总表格",
+                    source_row=row,
+                    arrival_type="new_arrival",
+                    product_name=f"待分配商品{row}",
+                    salesperson_name="PLM原销售",
+                    country="菲律宾",
+                    main_sku=f"PLM-BATCH-{row}",
+                    sub_sku=f"PLM-BATCH-{row}-A1",
+                    match_status="pending_assignment",
+                    raw_payload={},
+                )
+                for row in range(1, 31)
+            ]
+        )
+        db.add(
+            models.NewProductOpportunity(
+                id="op-plm-batch-1",
+                source_type="selection1_developer_claim_feedback",
+                batch="开发0804期",
+                country="菲律宾",
+                site="PH",
+                main_sku="PLM-BATCH-1",
+                sub_sku="PLM-BATCH-1-A1",
+                current_status="waiting_secondary_research",
+            )
+        )
+        db.commit()
+
+        opportunity_selects = 0
+
+        def count_opportunity_selects(_conn, _cursor, statement, _parameters, _context, _executemany):
+            nonlocal opportunity_selects
+            if statement.lstrip().upper().startswith("SELECT") and "new_product_opportunity" in statement:
+                opportunity_selects += 1
+
+        event.listen(engine, "before_cursor_execute", count_opportunity_selects)
+        try:
+            rows = services.list_plm_arrival_assignments(db)
+        finally:
+            event.remove(engine, "before_cursor_execute", count_opportunity_selects)
+
+    assert len(rows) == 30
+    assert rows[0]["existing_opportunity_count"] == 1
+    assert opportunity_selects <= 1
+
+
+def test_plm_arrival_assignment_rejects_manager_even_if_operator_role_exists() -> None:
+    with SessionLocal() as db:
+        user = models.User(name="管理员兼运营", enabled=True)
+        db.add(user)
+        db.flush()
+        db.add_all(
+            [
+                models.RoleMapping(user_id=user.id, name="管理员兼运营", role="operator", enabled=True, notification_enabled=True),
+                models.RoleMapping(user_id=user.id, name="管理员兼运营", role="manager", enabled=True, notification_enabled=False),
+            ]
+        )
+        batch = models.PlmArrivalBatch(
+            arrival_date="2026-08-07",
+            source_file="plm-2026-08-07.xlsx",
+            source_hash="hash-plm-admin-owner",
+            bloc_name="集团八部",
+            row_count=1,
+        )
+        db.add(batch)
+        db.flush()
+        item = models.PlmArrivalItem(
+            batch_id=batch.id,
+            source_sheet="汇总表格",
+            source_row=18,
+            arrival_type="new_arrival",
+            product_name="不能指派管理员",
+            salesperson_name="PLM原销售",
+            country="菲律宾",
+            main_sku="PLM-ADMIN",
+            sub_sku="PLM-ADMIN-A1",
+            match_status="pending_assignment",
+            raw_payload={},
+        )
+        db.add(item)
+        db.commit()
+        item_id = item.id
+
+    assigned = client.post(
+        f"/secondary-research/plm-arrival-assignments/{item_id}/assign",
+        json={"salesperson_name": "管理员兼运营"},
+    )
+
+    assert assigned.status_code == 400
+    assert "enabled operator" in assigned.json()["detail"]
+
+
 def test_saving_draft_keeps_status_and_rejects_editing_another_operator() -> None:
     opportunity, claim = make_claim("SUB-A", "销售A", downstream_status="waiting_secondary_research")
     with SessionLocal() as db:
@@ -982,14 +1090,17 @@ def add_operator(db, name: str) -> models.User:
     user = models.User(name=name, enabled=True)
     db.add(user)
     db.flush()
-    db.add(
-        models.RoleMapping(
-            user_id=user.id,
-            name=name,
-            role="operator",
-            enabled=True,
-            notification_enabled=True,
-        )
+    db.add_all(
+        [
+            models.RoleMapping(
+                user_id=user.id,
+                name=name,
+                role="operator",
+                enabled=True,
+                notification_enabled=True,
+            ),
+            models.OperatorAssignmentProfile(operator_name=name, key_site="PH", enabled=True),
+        ]
     )
     return user
 
