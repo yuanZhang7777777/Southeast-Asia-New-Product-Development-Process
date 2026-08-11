@@ -27,16 +27,16 @@ const mapping = (id: string, name: string, role: string) => ({
   enabled: true
 });
 
-test("四个分区固定为用户管理、导入批次、FineBI 拉取、系统开关", () => {
+test("超管后台不提供 FineBI 手工拉取分区", () => {
   assert.deepEqual(
     ADMIN_SECTIONS.map((item) => [item.key, item.label]),
     [
       ["users", "用户管理"],
       ["batches", "导入批次"],
-      ["finebi", "FineBI 拉取"],
       ["switches", "系统开关"]
     ]
   );
+  assert.doesNotMatch(adminViewSource, /拉取并入库/);
 });
 
 test("角色下拉提供运营、主管和超级管理员", () => {
@@ -118,7 +118,7 @@ test("批次分页页数向上取整且至少 1 页", () => {
 
 test("超管后台入口仅 super_admin 可见且渲染受 isSuperAdmin 双重保护", () => {
   assert.match(appSource, /\{isSuperAdmin && \(\s*<button className=\{activeView === "admin" \? "flow-step active" : "flow-step"\} onClick=\{\(\) => setActiveView\("admin"\)\}>\s*<ShieldCheck size=\{16\} \/>\s*超管后台/);
-  assert.match(appSource, /\{activeView === "admin" && isSuperAdmin && <AdminConsoleView onStatus=\{setStatusMessage\} \/>\}/);
+  assert.match(appSource, /\{activeView === "admin" && isSuperAdmin && <AdminConsoleView onOperatorConfigChanged=\{refreshOperatorConfig\} onStatus=\{setStatusMessage\} \/>\}/);
   assert.match(appSource, /admin: \{ title: "超管后台"/);
 });
 
@@ -143,6 +143,13 @@ test("分配台只管理分配池，账号新增与删除仍在超管后台", ()
   assert.match(appSource, /assignableOperators/);
   assert.doesNotMatch(appSource, /placeholder="运营"/);
   assert.doesNotMatch(appSource, /新增人员配置/);
+});
+
+test("账号和分配池变更后会刷新人员配置候选", () => {
+  assert.match(appSource, /refreshOperatorConfig/);
+  assert.match(appSource, /onOperatorConfigChanged=\{refreshOperatorConfig\}/);
+  assert.match(adminViewSource, /onOperatorConfigChanged/);
+  assert.match(appSource, /await refreshOperatorConfig\(\);/);
 });
 
 test("批次停用/恢复带原因输入与二次确认按钮", () => {

@@ -12,6 +12,7 @@ import {
 } from "../src/productBoard.ts";
 
 const productBoardViewSource = readFileSync(new URL("../src/ProductBoardView.tsx", import.meta.url), "utf8");
+const appSource = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
 
 const baseGroup = {
   key: "2026-W29|PH|MAIN-1",
@@ -113,4 +114,67 @@ test("product board labels the new stocking states and keeps ordinary waiting li
   assert.equal(productBoardStatusLabel("stocking_paused"), "暂不推进");
   assert.equal(productBoardStatusLabel("waiting_listing"), "待刊登");
   assert.equal(productBoardStatusLabel("listing_observation"), "刊登观察中");
+});
+
+test("product board shows historical archive rows as claim results instead of internal status", () => {
+  const rows = buildProductBoardRows([
+    {
+      ...baseGroup,
+      child_skus: [
+        { opportunity_id: "opp-claimed", sub_sku: "SUB-CLAIMED", sub_sku_name: "Claimed", visible_status: "historical_archive" },
+        { opportunity_id: "opp-rejected", sub_sku: "SUB-REJECTED", sub_sku_name: "Rejected", visible_status: "historical_archive" },
+        { opportunity_id: "opp-empty", sub_sku: "SUB-EMPTY", sub_sku_name: "Empty", visible_status: "historical_archive" }
+      ],
+      responsibilities: [
+        {
+          claim_record_id: "claim-claimed",
+          opportunity_id: "opp-claimed",
+          salesperson_name: "Owner A",
+          sub_sku: "SUB-CLAIMED",
+          claim_daily_sales: 1,
+          visible_status: "historical_archive",
+          arrival_detected_at: null
+        },
+        {
+          claim_record_id: "claim-rejected",
+          opportunity_id: "opp-rejected",
+          salesperson_name: "Owner B",
+          sub_sku: "SUB-REJECTED",
+          claim_daily_sales: null,
+          visible_status: "historical_archive",
+          arrival_detected_at: null
+        }
+      ]
+    }
+  ]);
+
+  assert.deepEqual(rows[0].statuses, ["historical_claimed", "historical_not_claimed", "historical_unclaimed"]);
+  assert.equal(productBoardStatusLabel("historical_claimed"), "认领");
+  assert.equal(productBoardStatusLabel("historical_not_claimed"), "不认领");
+  assert.equal(productBoardStatusLabel("historical_unclaimed"), "未认领");
+});
+
+test("product board sends filters to backend instead of loading all rows once", () => {
+  assert.match(productBoardViewSource, /const requestFilters = useMemo/);
+  assert.match(productBoardViewSource, /api\s*\.productBoard\(\{\s*\.\.\.requestFilters,\s*limit:\s*PRODUCT_BOARD_SERVER_STEP\s*\}\)/);
+});
+
+test("product board does not expose dangerous server-side load-more", () => {
+  assert.doesNotMatch(productBoardViewSource, /serverLimit/);
+  assert.doesNotMatch(productBoardViewSource, /继续从服务器加载/);
+  assert.match(productBoardViewSource, /productBoardPeriods/);
+});
+
+test("product board period dropdown uses the dedicated full-period API only", () => {
+  const buildOptionsStart = productBoardViewSource.indexOf("function buildOptions");
+  const buildOptionsBody = productBoardViewSource.slice(buildOptionsStart);
+
+  assert.match(buildOptionsBody, /businessPeriods:\s*unique\(businessPeriods\)/);
+  assert.doesNotMatch(buildOptionsBody, /row\.business_period/);
+});
+
+test("product board detail opens by fetching missing opportunity detail by id", () => {
+  assert.match(appSource, /async function openOpportunityDetailById\(opportunityId: string\)/);
+  assert.match(appSource, /const item = await api\.opportunity\(opportunityId\)/);
+  assert.match(appSource, /onOpenDetail=\{\(opportunityId\) => void openOpportunityDetailById\(opportunityId\)\}/);
 });

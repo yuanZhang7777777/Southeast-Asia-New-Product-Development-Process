@@ -24,12 +24,13 @@ def setup_function() -> None:
     Base.metadata.create_all(bind=engine)
 
 
-def test_activation_uses_each_mapped_historical_claimant_not_the_plm_salesperson() -> None:
+def test_activation_requires_the_plm_salesperson_to_match_the_system_owner() -> None:
     with SessionLocal() as db:
         _add_enabled_operator(db, "历史销售甲")
         _add_enabled_operator(db, "历史销售乙")
         first_claim, second_claim = _add_historical_evidence(db)
         batch, item = _add_plm_batch_item(db)
+        item.salesperson_name = "历史销售甲"
         db.commit()
 
         result = activate_historical_arrival(db, item, apply=True)
@@ -37,22 +38,22 @@ def test_activation_uses_each_mapped_historical_claimant_not_the_plm_salesperson
 
         active_claims = db.query(models.SalesClaimForecast).filter_by(source_column="platform").all()
         assert result["status"] == "activated"
-        assert result["historical_claim_ids"] == [first_claim.id, second_claim.id]
-        assert {claim.salesperson_name for claim in active_claims} == {"历史销售甲", "历史销售乙"}
+        assert result["historical_claim_ids"] == [first_claim.id]
+        assert {claim.salesperson_name for claim in active_claims} == {"历史销售甲"}
         assert {claim.claim_source for claim in active_claims} == {"historical_arrival_activation"}
         assert {
             json.loads(claim.note or "{}") ["plm_arrival_salesperson"]
             for claim in active_claims
-        } == {"PLM销售"}
-        assert db.query(models.ArrivalRecord).count() == 2
-        assert db.get(models.NewProductOpportunity, first_claim.opportunity_id).current_status == "claim_submitted"
-        assert db.get(models.NewProductOpportunity, second_claim.opportunity_id).current_status == "claim_submitted"
+        } == {"历史销售甲"}
+        assert db.query(models.ArrivalRecord).count() == 1
+        assert db.get(models.NewProductOpportunity, first_claim.opportunity_id).current_status == "waiting_secondary_research"
+        assert db.get(models.NewProductOpportunity, second_claim.opportunity_id).current_status == "historical_archive"
 
         repeated = activate_historical_arrival(db, item, apply=True)
         db.commit()
         assert repeated["status"] == "already_activated"
-        assert db.query(models.SalesClaimForecast).filter_by(source_column="platform").count() == 2
-        assert db.query(models.ArrivalRecord).count() == 2
+        assert db.query(models.SalesClaimForecast).filter_by(source_column="platform").count() == 1
+        assert db.query(models.ArrivalRecord).count() == 1
 
 
 def test_activation_does_not_repeat_an_existing_arrival_record() -> None:
@@ -79,7 +80,7 @@ def test_activation_does_not_repeat_an_existing_arrival_record() -> None:
             source_sheet="到货",
             source_row=2,
             arrival_type="new_arrival",
-            salesperson_name="PLM销售",
+            salesperson_name="历史销售甲",
             country="PH",
             warehouse="PH仓",
             main_sku="MAIN-1",
@@ -115,7 +116,6 @@ def test_activation_allows_a_different_bound_child_sku() -> None:
         _add_enabled_operator(db, "历史销售甲")
         _add_historical_evidence(db)
         _, item = _add_plm_batch_item(db)
-        item.salesperson_name = "PLM_OPERATOR"
         listing = models.ListingRecord(
             source_group_key="history:MAIN-1",
             source_claim_ids=[],
@@ -124,7 +124,7 @@ def test_activation_allows_a_different_bound_child_sku() -> None:
             country="PH",
             site="PH",
             main_sku="MAIN-1",
-            salesperson_name="PLM_OPERATOR",
+            salesperson_name="历史销售甲",
             shop="Shopee-PH",
             item="ITEM-OTHER",
             listing_strategy="history",
@@ -162,7 +162,7 @@ def test_activation_skips_exact_child_sku_with_an_active_item() -> None:
             country="PH",
             site="PH",
             main_sku="MAIN-1",
-            salesperson_name="PLM销售",
+            salesperson_name="历史销售甲",
             shop="Shopee-PH",
             item="ITEM-1",
             listing_strategy="历史",
@@ -216,7 +216,7 @@ def test_activation_does_not_cross_country_match_the_same_sub_sku() -> None:
         assert db.query(models.ArrivalRecord).count() == 0
 
 
-def test_activation_requires_a_unique_main_sku_when_plm_main_sku_does_not_match() -> None:
+def test_activation_does_not_match_when_the_plm_main_sku_differs() -> None:
     with SessionLocal() as db:
         _add_enabled_operator(db, "历史销售甲")
         first = _historical_opportunity(db, "history_selection1", "开发0623期", 1, "MAIN-A")
@@ -248,7 +248,7 @@ def test_activation_requires_a_unique_main_sku_when_plm_main_sku_does_not_match(
         result = activate_historical_arrival(db, item, apply=True)
         db.commit()
 
-    assert result["status"] == "main_sku_ambiguous"
+    assert result["status"] == "no_historical_claim"
     with SessionLocal() as db:
         assert db.query(models.ArrivalRecord).count() == 0
 
@@ -341,7 +341,7 @@ def _add_plm_batch_item(db) -> tuple[models.PlmArrivalBatch, models.PlmArrivalIt
         source_sheet="到货",
         source_row=2,
         arrival_type="new_arrival",
-        salesperson_name="PLM销售",
+        salesperson_name="历史销售甲",
         country="PH",
         warehouse="PH仓",
         main_sku="MAIN-1",

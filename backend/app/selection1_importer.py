@@ -24,14 +24,15 @@ MAIN_COLUMNS = {
     "B": "developer_department",
     "C": "developer_name",
     "D": "category_level1",
-    "E": "keyword",
-    "F": "image_url",
-    "G": "main_sku_name",
-    "H": "main_sku",
-    "I": "sub_sku_name",
-    "J": "sub_sku",
-    "K": "product_type",
-    "L": "reason",
+    "E": "category_level2",
+    "F": "keyword",
+    "G": "image_url",
+    "H": "main_sku_name",
+    "I": "main_sku",
+    "J": "sub_sku_name",
+    "K": "sub_sku",
+    "L": "product_type",
+    "M": "reason",
 }
 
 MAIN_FIELD_ALIASES = {
@@ -142,7 +143,7 @@ def import_selection1_workbook(db: Session, payload: schemas.Selection1ImportReq
     source_max_column = max(worksheet.max_column or 0, MAX_SOURCE_COLUMN)
     header_rows, data_start_row = selection1_header_layout(worksheet, source_max_column)
     headers_by_column = source_headers_by_column(worksheet, source_max_column, header_rows=header_rows)
-    product_images = images_by_row(worksheet, source_column_for_alias(headers_by_column, ["产品图片"], "F"))
+    product_images = images_by_row(worksheet, source_column_for_alias(headers_by_column, ["产品图片"], "G"))
 
     created_count = 0
     updated_count = 0

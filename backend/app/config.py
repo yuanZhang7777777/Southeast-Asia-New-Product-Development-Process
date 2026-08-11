@@ -51,7 +51,9 @@ class Settings(BaseSettings):
     finebi_password: str = ""
     finebi_report_id: str = ""
     finebi_payload_file: str = ""
+    finebi_cache_dir: str = "/data/finebi"
     finebi_auto_pull_enabled: bool = False
+    finebi_scheduler_enabled: bool = False
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 

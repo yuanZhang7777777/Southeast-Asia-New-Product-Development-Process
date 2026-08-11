@@ -5,21 +5,20 @@ from typing import Any
 
 from openpyxl import load_workbook
 from openpyxl.utils import column_index_from_string, get_column_letter
-from sqlalchemy import delete, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app import models, schemas, services
 from app.excel_images import images_by_row, save_product_image
-from app.field_mapping import json_safe_value, normalize_header, number_value, text_value
+from app.field_mapping import json_safe_value, normalize_header, text_value
+from app.historical_selection2_import import business_period_from_sheet
 from app.workbook_sheets import resolve_sheet_name
-from app.workflow_status import OPPORTUNITY_ASSIGNED, OPPORTUNITY_PENDING_ASSIGNMENT, TASK_PENDING
 
 
 SOURCE_TYPE = "selection2_caigen_claim_feedback"
 DEFAULT_SHEET = "5.26期"
-MAX_SOURCE_COLUMN = column_index_from_string("AV")
+MAX_SOURCE_COLUMN = column_index_from_string("AP")
 SNAPSHOT_COLUMNS = tuple(get_column_letter(index) for index in range(1, MAX_SOURCE_COLUMN + 1))
-CLAIM_SOURCE_COLUMNS = ("AL:AN", "AO:AP", "AQ:AR", "AS:AT", "AU:AV")
 MAIN_FIELD_ALIASES = {
     "main_sku": ["SPU", "主SKU"],
     "sub_sku": ["SKU", "子SKU"],
@@ -49,18 +48,18 @@ def import_selection2_workbook(db: Session, payload: schemas.Selection2ImportReq
         worksheet.reset_dimensions()
     except AttributeError:
         pass
-    source_max_column = max(worksheet.max_column or 0, MAX_SOURCE_COLUMN)
-    headers_by_column = source_headers_by_column(worksheet, source_max_column)
+    headers_by_column = source_headers_by_column(worksheet, MAX_SOURCE_COLUMN)
     product_images = images_by_row(worksheet, source_column_for_alias(headers_by_column, MAIN_FIELD_ALIASES["image_url"], "G"))
 
     created_count = 0
     updated_count = 0
     skipped_count = 0
-    prefill_claim_count = 0
-    task_count = 0
     processed_count = 0
 
-    for source_row, row in enumerate(worksheet.iter_rows(min_row=2, max_col=source_max_column, values_only=True), start=2):
+    for source_row, row in enumerate(
+        worksheet.iter_rows(min_row=2, max_col=MAX_SOURCE_COLUMN, values_only=True),
+        start=2,
+    ):
         if payload.max_rows is not None and processed_count >= payload.max_rows:
             break
         parsed = parse_selection2_row(row, headers_by_column)
@@ -73,9 +72,6 @@ def import_selection2_workbook(db: Session, payload: schemas.Selection2ImportReq
         opportunity, created = upsert_opportunity(db, parsed, source_path.name, source_sheet, source_row, import_batch.id)
         created_count += int(created)
         updated_count += int(not created)
-        prefill_claim_count += replace_source_claims(db, opportunity.id, parsed)
-        if ensure_import_claim_task(db, opportunity, parsed):
-            task_count += 1
 
     import_batch.created_count = created_count
     import_batch.updated_count = updated_count
@@ -106,8 +102,8 @@ def import_selection2_workbook(db: Session, payload: schemas.Selection2ImportReq
         updated_count=updated_count,
         skipped_count=skipped_count,
         market_research_count=0,
-        prefill_claim_count=prefill_claim_count,
-        task_count=task_count,
+        prefill_claim_count=0,
+        task_count=0,
     )
 
 
@@ -143,7 +139,6 @@ def parse_selection2_row(row: tuple[Any, ...], headers_by_column: dict[str, list
     if not sub_sku:
         return None
     main_sku = text_value(source_value(raw_values, headers_by_column, MAIN_FIELD_ALIASES["main_sku"], "B", values)) or sub_sku
-    claim_prefill = parse_claims(values, headers_by_column)
     snapshot = {
         "source_type": SOURCE_TYPE,
         "allowed_columns": list(raw_values),
@@ -151,7 +146,6 @@ def parse_selection2_row(row: tuple[Any, ...], headers_by_column: dict[str, list
         "headers_by_column": headers_by_column,
         "fields_by_column": fields_by_column(raw_values),
         "fields_by_header": fields_by_header(headers_by_column, raw_values),
-        "claim_prefill": claim_prefill,
     }
     return {
         "main": {
@@ -165,7 +159,6 @@ def parse_selection2_row(row: tuple[Any, ...], headers_by_column: dict[str, list
             "category_level1": None,
             "category_level2": None,
         },
-        "claim_prefill": claim_prefill,
         "snapshot": snapshot,
     }
 
@@ -173,10 +166,13 @@ def parse_selection2_row(row: tuple[Any, ...], headers_by_column: dict[str, list
 def upsert_opportunity(
     db: Session, parsed: dict[str, Any], source_file: str, source_sheet: str, source_row: int, import_batch_id: str
 ) -> tuple[models.NewProductOpportunity, bool]:
+    business_period = business_period_from_sheet(source_sheet) or source_sheet
     existing = db.scalar(
         select(models.NewProductOpportunity).where(
             models.NewProductOpportunity.source_type == SOURCE_TYPE,
-            models.NewProductOpportunity.source_sheet == source_sheet,
+            models.NewProductOpportunity.batch == business_period,
+            models.NewProductOpportunity.site == "PH",
+            models.NewProductOpportunity.main_sku == parsed["main"]["main_sku"],
             models.NewProductOpportunity.sub_sku == parsed["main"]["sub_sku"],
         )
     )
@@ -187,7 +183,7 @@ def upsert_opportunity(
         "source_sheet": source_sheet,
         "source_row": source_row,
         "import_batch_id": import_batch_id,
-        "batch": source_sheet,
+        "batch": business_period,
         "snapshot": parsed["snapshot"],
     }
     if existing:
@@ -197,7 +193,7 @@ def upsert_opportunity(
         add_source_snapshot(db, existing, import_batch_id)
         return existing, False
 
-    opportunity = models.NewProductOpportunity(**data)
+    opportunity = models.NewProductOpportunity(**data, claim_pool_open=True)
     db.add(opportunity)
     db.flush()
     add_source_snapshot(db, opportunity, import_batch_id)
@@ -219,7 +215,7 @@ def add_source_snapshot(db: Session, opportunity: models.NewProductOpportunity, 
             source_file=opportunity.source_file,
             source_sheet=opportunity.source_sheet,
             source_row=opportunity.source_row,
-            column_range="A:AV",
+            column_range="A:AP",
             payload=opportunity.snapshot,
         )
     )
@@ -251,124 +247,6 @@ def fields_by_header(headers_by_column: dict[str, list[str]], values: dict[str, 
 
 def fields_by_column(values: dict[str, Any]) -> dict[str, Any]:
     return {column: value for column, value in values.items() if value not in (None, "")}
-
-
-def parse_claims(values: dict[str, Any], headers_by_column: dict[str, list[str]]) -> list[dict[str, Any]]:
-    if not has_claim_headers(headers_by_column):
-        return []
-    claims: list[dict[str, Any]] = []
-    main_salesperson = text_value(values["AL"])
-    if main_salesperson:
-        claim_result = normalize_claim_result(values["AM"])
-        claims.append(
-            {
-                "salesperson_name": main_salesperson,
-                "claim_result": claim_result,
-                "claim_daily_sales": number_value(values["AN"]) if claim_result == "claim" else None,
-                "reject_reason": None,
-                "source_column": "AL:AN",
-            }
-        )
-    for name_column, value_column, source_column in [("AO", "AP", "AO:AP"), ("AQ", "AR", "AQ:AR"), ("AS", "AT", "AS:AT"), ("AU", "AV", "AU:AV")]:
-        salesperson = text_value(values[name_column])
-        raw_value = values[value_column]
-        if not salesperson or raw_value in (None, ""):
-            continue
-        daily_sales = number_value(raw_value)
-        if daily_sales and daily_sales > 0:
-            claims.append(
-                {
-                    "salesperson_name": salesperson,
-                    "claim_result": "claim",
-                    "claim_daily_sales": daily_sales,
-                    "reject_reason": None,
-                    "source_column": source_column,
-                }
-            )
-        else:
-            claims.append(
-                {
-                    "salesperson_name": salesperson,
-                    "claim_result": "reject",
-                    "claim_daily_sales": None,
-                    "reject_reason": text_value(raw_value),
-                    "source_column": source_column,
-                }
-            )
-    return claims
-
-
-def replace_source_claims(db: Session, opportunity_id: str, parsed: dict[str, Any]) -> int:
-    db.execute(
-        delete(models.SalesClaimForecast).where(
-            models.SalesClaimForecast.opportunity_id == opportunity_id,
-            models.SalesClaimForecast.source_column.in_(CLAIM_SOURCE_COLUMNS),
-        )
-    )
-    count = 0
-    for claim in parsed["claim_prefill"]:
-        db.add(models.SalesClaimForecast(opportunity_id=opportunity_id, platform="Shopee", **claim))
-        count += 1
-    return count
-
-
-def ensure_import_claim_task(db: Session, opportunity: models.NewProductOpportunity, parsed: dict[str, Any]) -> bool:
-    if not parsed["claim_prefill"]:
-        return False
-    task = db.scalar(
-        select(models.FlowTask)
-        .join(models.FlowInstance)
-        .where(models.FlowInstance.opportunity_id == opportunity.id, models.FlowTask.task_type == "sales_claim")
-        .order_by(models.FlowTask.created_at.desc())
-    )
-    assignee_name = parsed["claim_prefill"][0]["salesperson_name"] if parsed["claim_prefill"] else None
-    if task:
-        if task.status == TASK_PENDING and assignee_name and not task.assignee_name:
-            task.assignee_name = assignee_name
-        if opportunity.current_status == OPPORTUNITY_PENDING_ASSIGNMENT and assignee_name:
-            opportunity.current_status = OPPORTUNITY_ASSIGNED
-        return False
-    flow = models.FlowInstance(
-        opportunity_id=opportunity.id,
-        current_node="sales_claim",
-        current_status=OPPORTUNITY_ASSIGNED if assignee_name else "open_claim_pool",
-        owner_role="operator",
-    )
-    db.add(flow)
-    db.flush()
-    db.add(
-        models.FlowTask(
-            flow_instance_id=flow.id,
-            node_code="sales_claim",
-            task_type="sales_claim",
-            assignee_name=assignee_name,
-            assignee_role="operator",
-        )
-    )
-    if assignee_name:
-        opportunity.current_status = OPPORTUNITY_ASSIGNED
-    return True
-
-
-def normalize_claim_result(value: Any) -> str | None:
-    text = text_value(value)
-    if text in {"是", "认领", "claim", "CLAIM", "yes", "YES"}:
-        return "claim"
-    if text in {"否", "不认领", "reject", "REJECT", "no", "NO"}:
-        return "reject"
-    return None
-
-
-def has_claim_headers(headers_by_column: dict[str, list[str]]) -> bool:
-    claim_columns = {"AL", "AM", "AN", "AO", "AP", "AQ", "AR", "AS", "AT", "AU", "AV"}
-    claim_words = {"主销售员", "是否认领", "认领单销", "销售员1", "销售员2", "销售员3"}
-    for column, headers in headers_by_column.items():
-        if column not in claim_columns:
-            continue
-        normalized_headers = {normalize_header(header) for header in headers}
-        if normalized_headers & {normalize_header(word) for word in claim_words}:
-            return True
-    return False
 
 
 def source_column_for_alias(headers_by_column: dict[str, list[str]], aliases: list[str], fallback_column: str) -> str:

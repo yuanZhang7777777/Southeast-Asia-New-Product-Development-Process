@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from app import schemas, services
+from app import models, schemas, services
 from app.auth import AuthContext, require_roles
 from app.config import get_settings
 from app.db import get_db
@@ -32,7 +32,7 @@ def submit_bulk_review(
         settings = get_settings()
         sender = DingTalkCardSender(DingTalkCardConfig.from_settings(settings))
         for record in records:
-            claim = services.latest_platform_submission(db, record.opportunity_id)
+            claim = db.get(models.SalesClaimForecast, record.claim_record_id) if record.claim_record_id else None
             services.notify_operator_new_product_todo_card(
                 db,
                 claim.salesperson_name if claim else None,
@@ -61,7 +61,7 @@ def submit_review(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     db.flush()
     if record.review_status == REVIEW_RETURNED_FOR_SUPPLEMENT:
-        claim = services.latest_platform_submission(db, record.opportunity_id)
+        claim = db.get(models.SalesClaimForecast, record.claim_record_id) if record.claim_record_id else None
         settings = get_settings()
         services.notify_operator_new_product_todo_card(
             db,

@@ -21,18 +21,27 @@ def list_arrival_records(db: Session = Depends(get_db)) -> list[models.ArrivalRe
 
 @router.post("/records", response_model=schemas.ArrivalRecordRead)
 def create_arrival_record(payload: schemas.ArrivalRecordCreate, db: Session = Depends(get_db)) -> models.ArrivalRecord:
+    target = db.get(models.NewProductOpportunity, payload.opportunity_id)
+    if target is None:
+        raise HTTPException(status_code=404, detail="opportunity not found")
+    if services.is_read_only_historical_opportunity(target):
+        raise HTTPException(status_code=403, detail="historical source products are read-only")
     data = payload.model_dump()
     if payload.claim_record_id:
         try:
             claim, opportunity = services.secondary_research_claim(db, payload.claim_record_id)
         except LookupError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
         if opportunity.id != payload.opportunity_id:
             raise HTTPException(status_code=400, detail="claim record does not belong to opportunity")
         data["salesperson_name"] = claim.salesperson_name
         data["country"] = opportunity.country
         try:
             services.open_secondary_research(db, claim.id, payload.arrived_at)
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
     item = models.ArrivalRecord(**data)

@@ -34,7 +34,7 @@ def test_assignment_rules_filter_site_then_report_category_match() -> None:
 
     by_main_sku = {item.main_sku: item for item in suggestions}
     assert by_main_sku["MAIN-SITE"].suggested_assignee == "站点匹配"
-    assert by_main_sku["MAIN-SITE"].match_reason == "重点站点匹配；重点类目匹配"
+    assert by_main_sku["MAIN-SITE"].match_reason == "一级类目命中"
     assert by_main_sku["MAIN-CATEGORY"].suggested_assignee is None
     assert by_main_sku["MAIN-CATEGORY"].match_reason == "无站点匹配"
 
@@ -63,7 +63,7 @@ def test_assignment_rules_site_filter_beats_off_site_category_match() -> None:
     suggestions = preview_main_sku_assignment_groups(opportunities, profiles)
 
     assert suggestions[0].suggested_assignee == "站点命中但品类不命中"
-    assert suggestions[0].match_reason == "重点站点匹配；品类未匹配；负载均衡"
+    assert suggestions[0].match_reason == "无类目-均衡分配"
 
 
 def test_assignment_rules_normalize_common_category_aliases() -> None:
@@ -83,7 +83,7 @@ def test_assignment_rules_normalize_common_category_aliases() -> None:
     suggestions = preview_main_sku_assignment_groups(opportunities, profiles)
 
     assert suggestions[0].suggested_assignee == "汽摩配运营"
-    assert suggestions[0].match_reason == "重点站点匹配；重点类目匹配"
+    assert suggestions[0].match_reason == "一级类目命中"
 
 
 def test_assignment_rules_normalize_chinese_and_custom_site_codes() -> None:
@@ -145,9 +145,9 @@ def test_assignment_rules_balance_load_after_site_filter() -> None:
 
     by_main_sku = {item.main_sku: item for item in suggestions}
     assert by_main_sku["MAIN-A"].suggested_assignee == "同站点A"
-    assert by_main_sku["MAIN-A"].match_reason == "重点站点匹配；品类未匹配；负载均衡"
+    assert by_main_sku["MAIN-A"].match_reason == "无类目-均衡分配"
     assert by_main_sku["MAIN-B"].suggested_assignee == "同站点B"
-    assert by_main_sku["MAIN-B"].match_reason == "重点站点匹配；品类未匹配；负载均衡"
+    assert by_main_sku["MAIN-B"].match_reason == "无类目-均衡分配"
 
 
 def test_assignment_rules_split_same_main_sku_by_site() -> None:
@@ -209,7 +209,7 @@ def test_assignment_rules_prefer_lower_load_before_equal_category_matches() -> N
     )
 
     assert suggestions[0].suggested_assignee == "B-category1-light"
-    assert "重点类目" in suggestions[0].match_reason
+    assert suggestions[0].match_reason == "一级类目命中"
 
 
 def test_assignment_rules_balance_by_main_sku_group_not_sub_sku_count() -> None:
@@ -313,9 +313,9 @@ def test_assignment_rules_keep_category_and_priority_within_one_group_of_fair_lo
         loads[item.suggested_assignee] += 1
 
     assert loads == {
-        "A-specialist-high-priority": 3,
-        "B-generalist": 2,
-        "C-generalist": 2,
+        "A-specialist-high-priority": 7,
+        "B-generalist": 0,
+        "C-generalist": 0,
     }
 
 

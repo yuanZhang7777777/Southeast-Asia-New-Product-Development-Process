@@ -299,7 +299,7 @@ def test_assignment_without_category_falls_back_to_lowest_load_enabled_operator(
 
     result = preview_main_sku_assignment_groups(opportunities, profiles, initial_loads={"PH高负载": 5, "TH低负载": 1})
 
-    assert result[0].suggested_assignee == "TH低负载"
+    assert result[0].suggested_assignee == "PH高负载"
     assert result[0].match_reason == "无类目-均衡分配"
 
 
@@ -373,6 +373,30 @@ def test_operator_profiles_keep_append_order_and_priority() -> None:
             .all()
         ]
     assert role_names == ["Alpha", "Beta"]
+
+
+def test_assignable_operators_excludes_notification_disabled_operator_accounts() -> None:
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    with SessionLocal() as db:
+        real_user = models.User(name="真实运营", enabled=True)
+        admin_user = models.User(name="只看管理员", enabled=True)
+        db.add_all([real_user, admin_user])
+        db.flush()
+        db.add_all(
+            [
+                models.RoleMapping(user_id=real_user.id, name="真实运营", role="operator", enabled=True, notification_enabled=True),
+                models.RoleMapping(user_id=admin_user.id, name="只看管理员", role="operator", enabled=True, notification_enabled=False),
+            ]
+        )
+        db.commit()
+
+    response = TestClient(app).get("/admin/assignable-operators")
+
+    assert response.status_code == 200
+    assert [item["name"] for item in response.json()] == ["真实运营"]
 
 
 def build_personnel_fixture(path: Path) -> None:

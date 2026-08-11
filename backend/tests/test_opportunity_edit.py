@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 from app import models  # noqa: E402
 from app.db import Base, SessionLocal, engine  # noqa: E402
 from app.main import app  # noqa: E402
+from app.services import opportunity_field_columns  # noqa: E402
 
 
 client = TestClient(app)
@@ -170,3 +171,60 @@ def test_manager_cannot_edit_unknown_source_column_or_disabled_status() -> None:
     assert "status" in disabled_status.json()["detail"]
     assert unsupported_review_status.status_code == 400
     assert "claim submission" in unsupported_review_status.json()["detail"]
+
+
+def test_selection2_edit_syncs_its_own_spu_sku_and_name_columns() -> None:
+    with SessionLocal() as db:
+        opportunity = models.NewProductOpportunity(
+            source_type="selection2_caigen_claim_feedback",
+            main_sku="CG-MAIN",
+            sub_sku="CG-SUB",
+            main_sku_name="旧商品名",
+            snapshot={
+                "allowed_columns": ["A", "B", "D", "G"],
+                "cells": {"A": "CG-MAIN", "B": "CG-SUB", "D": "旧商品名", "G": 20},
+                "fields_by_column": {"A": "CG-MAIN", "B": "CG-SUB", "D": "旧商品名", "G": 20},
+                "headers_by_column": {
+                    "A": ["SPU"],
+                    "B": ["SKU"],
+                    "D": ["产品名称"],
+                    "G": ["进价"],
+                },
+            },
+        )
+        db.add(opportunity)
+        db.commit()
+        opportunity_id = opportunity.id
+
+    response = client.patch(
+        f"/opportunities/{opportunity_id}",
+        json={"main_sku_name": "新商品名", "source_cells": {"G": 21}, "edit_reason": "修正选品2参数"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["snapshot"]["cells"] == {
+        "A": "CG-MAIN",
+        "B": "CG-SUB",
+        "D": "新商品名",
+        "G": 21,
+    }
+
+
+def test_selection1_field_columns_follow_729_standard_header() -> None:
+    opportunity = models.NewProductOpportunity(source_type="selection1_developer_claim_feedback")
+
+    assert opportunity_field_columns(opportunity) == {
+        "site": "A",
+        "developer_department": "B",
+        "developer_name": "C",
+        "category_level1": "D",
+        "category_level2": "E",
+        "keyword": "F",
+        "image_url": "G",
+        "main_sku_name": "H",
+        "main_sku": "I",
+        "sub_sku_name": "J",
+        "sub_sku": "K",
+        "product_type": "L",
+        "reason": "M",
+    }

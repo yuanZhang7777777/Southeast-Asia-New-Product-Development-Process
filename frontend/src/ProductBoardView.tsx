@@ -11,6 +11,7 @@ import {
   limitProductBoardRows,
   PRODUCT_BOARD_RENDER_STEP,
   ProductBoardFilters,
+  productBoardChildStatuses,
   ProductBoardRow,
   productBoardStatusLabel,
   productBoardStatusMeta,
@@ -18,6 +19,7 @@ import {
 } from "./productBoard";
 
 type RoleKey = "operator" | "manager";
+const PRODUCT_BOARD_SERVER_STEP = 300;
 
 export function ProductBoardView({
   role,
@@ -36,6 +38,11 @@ export function ProductBoardView({
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [filters, setFilters] = useState<ProductBoardFilters>({});
   const [rowLimit, setRowLimit] = useState(PRODUCT_BOARD_RENDER_STEP);
+  const [businessPeriods, setBusinessPeriods] = useState<string[]>([]);
+  const requestFilters = useMemo(
+    () => (role === "operator" ? { ...filters, owner: operatorName.trim() } : filters),
+    [filters, operatorName, role]
+  );
 
   useEffect(() => {
     if (role === "operator" && !operatorName.trim()) {
@@ -48,7 +55,7 @@ export function ProductBoardView({
     setLoading(true);
     setError("");
     api
-      .productBoard()
+      .productBoard({ ...requestFilters, limit: PRODUCT_BOARD_SERVER_STEP })
       .then((items) => {
         if (!cancelled) setGroups(items);
       })
@@ -61,13 +68,27 @@ export function ProductBoardView({
     return () => {
       cancelled = true;
     };
-  }, [role, operatorName]);
+  }, [operatorName, requestFilters, role]);
+
+  useEffect(() => {
+    let cancelled = false;
+    api.productBoardPeriods()
+      .then((items) => {
+        if (!cancelled) setBusinessPeriods(items);
+      })
+      .catch(() => {
+        if (!cancelled) setBusinessPeriods([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const rows = useMemo(() => buildProductBoardRows(groups), [groups]);
-  const effectiveFilters = role === "operator" ? { ...filters, owner: operatorName.trim() } : filters;
+  const effectiveFilters = requestFilters;
   const visibleRows = useMemo(() => filterProductBoardRows(rows, effectiveFilters), [rows, effectiveFilters]);
   const renderedRows = useMemo(() => limitProductBoardRows(visibleRows, rowLimit), [visibleRows, rowLimit]);
-  const options = useMemo(() => buildOptions(rows), [rows]);
+  const options = useMemo(() => buildOptions(rows, businessPeriods), [businessPeriods, rows]);
 
   useEffect(() => {
     setRowLimit(PRODUCT_BOARD_RENDER_STEP);
@@ -183,7 +204,9 @@ export function ProductBoardView({
         </table>
         {visibleRows.length > renderedRows.length && (
           <div className="product-board-load-more">
-            <button className="btn" type="button" onClick={() => setRowLimit((current) => current + PRODUCT_BOARD_RENDER_STEP)}>
+            <button className="btn" type="button" onClick={() => {
+              setRowLimit((current) => current + PRODUCT_BOARD_RENDER_STEP);
+            }}>
               加载更多（{renderedRows.length} / {visibleRows.length}）
             </button>
           </div>
@@ -212,7 +235,7 @@ function ChildSkuTable({ row, onOpenDetail }: { row: ProductBoardRow; onOpenDeta
           const claimDailySales = unique(
             responsibilities.map((item) => item.claim_daily_sales).filter((value): value is number => value != null).map(formatBusinessNumber)
           ).join("、") || "-";
-          const statuses = responsibilities.length ? responsibilities.map((item) => item.visible_status) : [child.visible_status];
+          const statuses = productBoardChildStatuses(child, responsibilities);
           return (
             <tr key={child.opportunity_id}>
               <td>
@@ -261,9 +284,9 @@ function StatusPill({ status }: { status: string }) {
   return <span className={`pill ${meta.klass}`}>{meta.label}</span>;
 }
 
-function buildOptions(rows: ProductBoardRow[]) {
+function buildOptions(rows: ProductBoardRow[], businessPeriods: string[]) {
   return {
-    businessPeriods: unique(rows.map((row) => row.business_period).filter(Boolean) as string[]),
+    businessPeriods: unique(businessPeriods),
     owners: unique(rows.flatMap((row) => row.owners)),
     statuses: unique(rows.flatMap((row) => row.statuses)),
     sites: unique(rows.map((row) => row.site || row.country).filter(Boolean) as string[])

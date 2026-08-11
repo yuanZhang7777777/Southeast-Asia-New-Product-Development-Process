@@ -7,12 +7,13 @@ from collections import defaultdict
 from io import BytesIO
 from datetime import date, datetime, timedelta, timezone
 from types import SimpleNamespace
+from urllib.parse import urlencode, urlsplit, urlunsplit
 
 from openpyxl import Workbook
 from openpyxl.drawing.image import Image as ExcelImage
 from openpyxl.styles import Font, PatternFill
 from openpyxl.utils import get_column_letter
-from sqlalchemy import func, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -33,6 +34,7 @@ from app.workflow_status import (
     CLAIM_WAITING_LISTING,
     CLAIM_WAITING_SECONDARY_RESEARCH,
     CLAIM_WAITING_STOCKING_REQUEST,
+    CLAIM_HISTORICAL_SECONDARY_SUBMITTED,
     CLAIM_STOCKING_PAUSED,
     OPPORTUNITY_ASSIGNED,
     OPPORTUNITY_CLAIM_REJECTED,
@@ -195,6 +197,7 @@ TRACEABILITY_PLATFORM_HEADERS = [
     "导出文件名",
     "导出范围",
 ]
+TRACEABILITY_REVIEW_EXPORT_HEADERS = ["站点", "主SKU", "子SKU", "销售员", "认领结果", "认领单销", "不认领理由", "主管复核状态（中文）", "主管复核意见"]
 
 CENTRAL_FIELD_ALIASES = {
     "站点": ["站点", "国家"],
@@ -307,22 +310,70 @@ EDITABLE_OPPORTUNITY_STATUSES = {
     OPPORTUNITY_READY_FOR_STOCKING,
     OPPORTUNITY_CONFIRMED_NOT_CLAIM,
 }
+READ_ONLY_HISTORICAL_SOURCE_TYPES = frozenset({"history_selection2", "history_selection34"})
+HIDDEN_BUSINESS_PERIODS = frozenset(
+    {
+        "5.26期",
+        "8.4期",
+        "latest7.27_cleaned",
+        "历史全期",
+        "历史归档",
+        "历史选品3/4全Sheet",
+        "后半段UAT-20260724",
+        "PLM到货新增SKU20260727-0802",
+        "PLM到货新增SKU20260803",
+        "开发0727期-财根",
+    }
+)
+PRODUCT_BOARD_HIDDEN_SOURCE_TYPES = frozenset({"history_selection34"})
+
+
+def is_read_only_historical_opportunity(opportunity: models.NewProductOpportunity) -> bool:
+    return opportunity.source_type in READ_ONLY_HISTORICAL_SOURCE_TYPES
+
+
+def is_visible_business_period(period: str | None) -> bool:
+    value = (period or "").strip()
+    return bool(value) and value not in HIDDEN_BUSINESS_PERIODS
+
+
+def _visible_business_period_filter(column):
+    return or_(column.is_(None), column.notin_(HIDDEN_BUSINESS_PERIODS))
+
+
+def _active_import_batch_filter():
+    return or_(models.NewProductOpportunity.import_batch_id.is_(None), models.ImportBatch.status != "disabled")
+
+
+def _product_board_source_filter():
+    return or_(
+        models.NewProductOpportunity.source_type.is_(None),
+        models.NewProductOpportunity.source_type.notin_(PRODUCT_BOARD_HIDDEN_SOURCE_TYPES),
+    )
 
 OPPORTUNITY_FIELD_COLUMNS = {
     "site": "A",
     "developer_department": "B",
     "developer_name": "C",
     "category_level1": "D",
-    "keyword": "E",
-    "image_url": "F",
-    "main_sku_name": "G",
-    "main_sku": "H",
-    "sub_sku_name": "I",
-    "sub_sku": "J",
-    "product_type": "K",
-    "reason": "L",
+    "category_level2": "E",
+    "keyword": "F",
+    "image_url": "G",
+    "main_sku_name": "H",
+    "main_sku": "I",
+    "sub_sku_name": "J",
+    "sub_sku": "K",
+    "product_type": "L",
+    "reason": "M",
 }
 OPPORTUNITY_COLUMN_FIELDS = {column: field for field, column in OPPORTUNITY_FIELD_COLUMNS.items()}
+SELECTION2_OPPORTUNITY_FIELD_COLUMNS = {
+    "main_sku": "A",
+    "sub_sku": "B",
+    "main_sku_name": "D",
+    "sub_sku_name": "E",
+    "image_url": "F",
+}
 
 
 def update_opportunity(
@@ -338,6 +389,8 @@ def update_opportunity(
     opportunity = db.get(models.NewProductOpportunity, opportunity_id)
     if opportunity is None:
         raise LookupError("opportunity not found")
+    if is_read_only_historical_opportunity(opportunity):
+        raise PermissionError("historical source products are read-only")
 
     before: dict[str, object] = {}
     after: dict[str, object] = {}
@@ -359,15 +412,26 @@ def update_opportunity(
         after[field] = value
         setattr(opportunity, field, value)
 
+    field_columns = opportunity_field_columns(opportunity)
+    column_fields = {column: field for field, column in field_columns.items()}
     source_updates = values.get("source_cells") or {}
-    changed_source_before, changed_source_after = _update_opportunity_source_cells(opportunity, source_updates)
+    changed_source_before, changed_source_after = _update_opportunity_source_cells(
+        opportunity,
+        source_updates,
+        column_fields=column_fields,
+    )
     if changed_source_before:
         before["source_cells"] = changed_source_before
         after["source_cells"] = changed_source_after
 
-    synced_fields = {OPPORTUNITY_FIELD_COLUMNS[field]: after[field] for field in OPPORTUNITY_FIELD_COLUMNS if field in after}
+    synced_fields = {field_columns[field]: after[field] for field in field_columns if field in after}
     if synced_fields:
-        _update_opportunity_source_cells(opportunity, synced_fields, validate_columns=False)
+        _update_opportunity_source_cells(
+            opportunity,
+            synced_fields,
+            validate_columns=False,
+            column_fields=column_fields,
+        )
 
     if before:
         audit(
@@ -380,6 +444,47 @@ def update_opportunity(
             actor_user_id,
         )
     return opportunity
+
+
+def opportunity_field_columns(opportunity: models.NewProductOpportunity) -> dict[str, str]:
+    if opportunity.source_type in {"selection2_caigen_claim_feedback", "history_selection2"}:
+        return SELECTION2_OPPORTUNITY_FIELD_COLUMNS
+    return OPPORTUNITY_FIELD_COLUMNS
+
+
+def operator_has_opportunity_access(
+    db: Session,
+    opportunity_id: str,
+    operator_name: str | None,
+    user_id: str | None,
+) -> bool:
+    owner_filters = []
+    if operator_name:
+        owner_filters.append(models.FlowTask.assignee_name == operator_name)
+    if user_id:
+        owner_filters.append(models.FlowTask.assignee_user_id == user_id)
+    if owner_filters:
+        task = db.scalar(
+            select(models.FlowTask.id)
+            .join(models.FlowInstance)
+            .where(
+                models.FlowInstance.opportunity_id == opportunity_id,
+                models.FlowTask.task_type == "sales_claim",
+                or_(*owner_filters),
+            )
+        )
+        if task:
+            return True
+    if operator_name:
+        claim = db.scalar(
+            select(models.SalesClaimForecast.id).where(
+                models.SalesClaimForecast.opportunity_id == opportunity_id,
+                models.SalesClaimForecast.salesperson_name == operator_name,
+            )
+        )
+        if claim:
+            return True
+    return False
 
 
 def _validate_edited_opportunity_status(db: Session, opportunity: models.NewProductOpportunity, status: str) -> None:
@@ -419,6 +524,7 @@ def _update_opportunity_source_cells(
     opportunity: models.NewProductOpportunity,
     updates: dict[str, object],
     validate_columns: bool = True,
+    column_fields: dict[str, str] | None = None,
 ) -> tuple[dict[str, object], dict[str, object]]:
     if not updates:
         return {}, {}
@@ -464,7 +570,7 @@ def _update_opportunity_source_cells(
                 normalized_key = normalize_header(key)
                 if normalized_key in normalized_header or normalized_header in normalized_key:
                     pricing_snapshot[key] = value
-        model_field = OPPORTUNITY_COLUMN_FIELDS.get(column)
+        model_field = (column_fields or OPPORTUNITY_COLUMN_FIELDS).get(column)
         if model_field:
             if model_field in {"main_sku", "sub_sku"} and not value:
                 raise ValueError(f"{model_field} is required")
@@ -656,11 +762,14 @@ def list_assignment_board(
         select(models.FlowTask, models.NewProductOpportunity)
         .join(models.FlowInstance, models.FlowTask.flow_instance_id == models.FlowInstance.id)
         .join(models.NewProductOpportunity, models.FlowInstance.opportunity_id == models.NewProductOpportunity.id)
+        .outerjoin(models.ImportBatch, models.ImportBatch.id == models.NewProductOpportunity.import_batch_id)
         .where(
             models.FlowTask.task_type == "sales_claim",
             # 开放池任务（无受派人）不是"分配结果"，且不能被改派绕过认领状态机。
             models.FlowTask.assignee_name.is_not(None),
             models.NewProductOpportunity.current_status != OPPORTUNITY_DISABLED,
+            _visible_business_period_filter(models.NewProductOpportunity.batch),
+            _active_import_batch_filter(),
         )
         .order_by(models.FlowTask.created_at.desc())
     ).all()
@@ -719,9 +828,16 @@ def confirm_assignment(
     selected = list(
         db.scalars(select(models.NewProductOpportunity).where(models.NewProductOpportunity.id.in_(payload.opportunity_ids)))
     )
-    locked = [item for item in selected if item.current_status != OPPORTUNITY_PENDING_ASSIGNMENT]
-    if locked:
-        raise ValueError("assignment only supports pending_assignment opportunities")
+    actionable = [
+        item
+        for item in selected
+        if item.current_status == OPPORTUNITY_PENDING_ASSIGNMENT and not is_read_only_historical_opportunity(item)
+    ]
+    if not actionable:
+        if any(is_read_only_historical_opportunity(item) for item in selected):
+            raise ValueError("historical source products are read-only and cannot be assigned")
+        raise ValueError("选中的商品已经不是待分配状态，请刷新分配台后再试")
+    selected = actionable
     opportunities = _expand_assignment_groups(db, selected)
     tasks: list[models.FlowTask] = []
     for opportunity in opportunities:
@@ -779,6 +895,87 @@ def _expand_assignment_groups(db: Session, selected: list[models.NewProductOppor
     return list(opportunities_by_id.values())
 
 
+def join_selection2_claim_pool(
+    db: Session,
+    opportunity_ids: list[str],
+    assignee_name: str,
+    assignee_user_id: str | None = None,
+) -> list[models.FlowTask]:
+    if not _clean_text(assignee_name):
+        raise ValueError("assignee_name is required")
+    selected = list(
+        db.scalars(select(models.NewProductOpportunity).where(models.NewProductOpportunity.id.in_(opportunity_ids)))
+    )
+    if len({item.id for item in selected}) != len(set(opportunity_ids)):
+        raise LookupError("opportunity not found")
+
+    tasks: list[models.FlowTask] = []
+    for opportunity in selected:
+        if not is_caigen_self_claim_opportunity(opportunity):
+            raise PermissionError("selection2 claim pool is closed or unavailable")
+        existing = _claim_task_for_operator(
+            db,
+            opportunity.id,
+            assignee_name=assignee_name,
+            assignee_user_id=assignee_user_id,
+        )
+        if existing:
+            tasks.append(existing)
+            continue
+
+        flow = models.FlowInstance(
+            opportunity_id=opportunity.id,
+            current_node="self_claim",
+            current_status=OPPORTUNITY_OPEN_CLAIM_POOL,
+            owner_user_id=assignee_user_id,
+            owner_role="operator",
+        )
+        db.add(flow)
+        db.flush()
+        task = models.FlowTask(
+            flow_instance_id=flow.id,
+            node_code="self_claim",
+            task_type="sales_claim",
+            assignee_user_id=assignee_user_id,
+            assignee_name=assignee_name,
+            assignee_role="operator",
+        )
+        db.add(task)
+        db.flush()
+        tasks.append(task)
+        audit(
+            db,
+            "claim_pool.joined",
+            "flow_task",
+            task.id,
+            {"opportunity_id": opportunity.id, "assignee_name": assignee_name},
+            assignee_name,
+            assignee_user_id,
+        )
+    return tasks
+
+
+def _claim_task_for_operator(
+    db: Session,
+    opportunity_id: str,
+    assignee_name: str,
+    assignee_user_id: str | None,
+) -> models.FlowTask | None:
+    owners = [models.FlowTask.assignee_name == assignee_name]
+    if assignee_user_id:
+        owners.append(models.FlowTask.assignee_user_id == assignee_user_id)
+    return db.scalar(
+        select(models.FlowTask)
+        .join(models.FlowInstance)
+        .where(
+            models.FlowInstance.opportunity_id == opportunity_id,
+            models.FlowTask.task_type == "sales_claim",
+            or_(*owners),
+        )
+        .order_by(models.FlowTask.created_at.asc())
+    )
+
+
 def submit_claim(
     db: Session,
     payload: schemas.ClaimCreate,
@@ -797,17 +994,35 @@ def submit_claim(
     opportunity = db.get(models.NewProductOpportunity, payload.opportunity_id)
     if opportunity is None:
         raise ValueError("opportunity not found")
-    if claim_source == "caigen_self_claim" and not is_caigen_self_claim_opportunity(opportunity):
-        raise PermissionError("caigen self claim is only allowed for caigen opportunity pool")
-    task = (
-        _find_claim_task(db, payload.opportunity_id, payload.task_id, assignee_name, assignee_user_id)
-        if claim_source != "caigen_self_claim"
-        else None
-    )
+    if claim_source == "caigen_self_claim" and (
+        opportunity.source_type != "selection2_caigen_claim_feedback"
+        or opportunity.current_status == OPPORTUNITY_DISABLED
+    ):
+        raise PermissionError("caigen self claim is only allowed for active selection2 opportunities")
+    task = _find_claim_task(db, payload.opportunity_id, payload.task_id, assignee_name, assignee_user_id)
+    if claim_source == "caigen_self_claim" and task is None:
+        raise PermissionError("caigen self claim requires an owned claim task")
     if claim_source != "caigen_self_claim" and assignee_name and task is None:
         raise PermissionError("claim task does not belong to current operator")
     claim = None
-    if claim_source != "caigen_self_claim":
+    if task:
+        if task.node_code == "returned_claim":
+            claim = db.scalar(
+                select(models.SalesClaimForecast)
+                .where(
+                    models.SalesClaimForecast.opportunity_id == payload.opportunity_id,
+                    models.SalesClaimForecast.salesperson_name == payload.salesperson_name,
+                    models.SalesClaimForecast.source_column == "platform",
+                )
+                .order_by(models.SalesClaimForecast.last_updated_at.desc(), models.SalesClaimForecast.created_at.desc())
+            )
+        else:
+            claim = db.scalar(
+                select(models.SalesClaimForecast)
+                .where(models.SalesClaimForecast.task_id == task.id)
+                .order_by(models.SalesClaimForecast.created_at.desc())
+            )
+    elif claim_source != "caigen_self_claim":
         claim = db.scalar(
             select(models.SalesClaimForecast)
             .where(
@@ -848,12 +1063,11 @@ def submit_claim(
 
 
 def is_caigen_self_claim_opportunity(opportunity: models.NewProductOpportunity) -> bool:
-    return opportunity.source_type == "selection2_caigen_claim_feedback" and opportunity.current_status in {
-        OPPORTUNITY_PENDING_ASSIGNMENT,
-        OPPORTUNITY_OPEN_CLAIM_POOL,
-        OPPORTUNITY_CLAIM_SUBMITTED,
-        OPPORTUNITY_CLAIM_REJECTED,
-    }
+    return (
+        opportunity.source_type == "selection2_caigen_claim_feedback"
+        and opportunity.claim_pool_open
+        and opportunity.current_status != OPPORTUNITY_DISABLED
+    )
 
 
 def can_upload_claim_evidence(
@@ -914,10 +1128,14 @@ def _find_claim_task(
     if opportunity is None or opportunity.current_status not in {OPPORTUNITY_CLAIM_SUBMITTED, OPPORTUNITY_CLAIM_REJECTED}:
         return None
     completed = db.scalar(query.where(models.FlowTask.status == TASK_COMPLETED))
-    claim = latest_platform_submission(db, opportunity_id)
-    if completed is None or claim is None or claim.task_id != completed.id:
+    claim = db.scalar(
+        select(models.SalesClaimForecast)
+        .where(models.SalesClaimForecast.task_id == completed.id)
+        .order_by(models.SalesClaimForecast.last_updated_at.desc())
+    ) if completed else None
+    if completed is None or claim is None:
         return None
-    review = latest_review(db, opportunity_id)
+    review = latest_review_for_claim(db, opportunity_id, claim)
     if review and _same_or_later(review.created_at, completed.completed_at):
         return None
     return completed
@@ -934,6 +1152,29 @@ def _clean_text(value: str | None) -> str | None:
         return None
     text = value.strip()
     return text or None
+
+
+def _sku_key(value: object) -> str:
+    return "".join(str(value or "").split()).upper()
+
+
+def _int_or_none(value: object) -> int | None:
+    try:
+        if value is None:
+            return None
+        return int(float(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def _country_label(value: str | None) -> str | None:
+    code = normalize_site_code(value)
+    return {
+        "PH": "菲律宾",
+        "TH": "泰国",
+        "VN": "越南",
+        "MY": "马来西亚",
+    }.get(code or "", _clean_text(value))
 
 
 def create_review_task(db: Session, opportunity_id: str, actor_name: str | None = None) -> None:
@@ -987,40 +1228,34 @@ def submit_review(
         if payload.claim_record_id
         else latest_platform_submission(db, payload.opportunity_id)
     )
-    reviewed_claims = [claim] if claim else []
-    if not payload.claim_record_id and payload.review_status == REVIEW_APPROVED:
-        reviewed_claims = list(
-            db.scalars(
-                select(models.SalesClaimForecast)
-                .where(
-                    models.SalesClaimForecast.opportunity_id == payload.opportunity_id,
-                    models.SalesClaimForecast.source_column == "platform",
-                    models.SalesClaimForecast.claim_result == CLAIM_RESULT_CLAIM,
-                )
-                .order_by(models.SalesClaimForecast.created_at.asc())
-            )
-        )
-        claim = reviewed_claims[0] if reviewed_claims else None
+    pending_claims = pending_platform_submissions(db, payload.opportunity_id)
+    if payload.claim_record_id:
+        reviewed_claims = [claim] if claim and claim.id in {item.id for item in pending_claims} else []
+    elif payload.review_status == REVIEW_APPROVED:
+        reviewed_claims = [item for item in pending_claims if item.claim_result == CLAIM_RESULT_CLAIM]
+    else:
+        reviewed_claims = pending_claims[-1:] if pending_claims else []
+    claim = reviewed_claims[0] if reviewed_claims else claim
     if claim and claim.opportunity_id != payload.opportunity_id:
         raise ValueError("claim record does not belong to opportunity")
     if payload.review_status == REVIEW_APPROVED and (
         not opportunity
-        or opportunity.current_status != OPPORTUNITY_CLAIM_SUBMITTED
         or not claim
+        or not reviewed_claims
         or claim.claim_result != CLAIM_RESULT_CLAIM
     ):
         raise ValueError("only claim submissions can be approved")
     if payload.review_status == REVIEW_CONFIRMED_NOT_CLAIM and (
         not opportunity
-        or opportunity.current_status != OPPORTUNITY_CLAIM_REJECTED
         or not claim
+        or not reviewed_claims
         or claim.claim_result != CLAIM_RESULT_REJECT
     ):
         raise ValueError("only not-claim submissions can be confirmed")
     if payload.review_status == REVIEW_RETURNED_FOR_SUPPLEMENT and (
         not opportunity
-        or opportunity.current_status not in {OPPORTUNITY_CLAIM_SUBMITTED, OPPORTUNITY_CLAIM_REJECTED}
         or not claim
+        or not reviewed_claims
         or claim.claim_result not in {CLAIM_RESULT_CLAIM, CLAIM_RESULT_REJECT}
     ):
         raise ValueError("only claim or not-claim submissions can be returned for supplement")
@@ -1037,8 +1272,13 @@ def submit_review(
         for reviewed_claim in reviewed_claims
     ]
     db.add_all(records)
+    db.flush()
+    if payload.review_status == REVIEW_RETURNED_FOR_SUPPLEMENT:
+        create_returned_claim_task(db, payload.opportunity_id, reviewer_name, claim)
+        db.flush()
+    remaining_claims = pending_platform_submissions(db, payload.opportunity_id)
     if opportunity:
-        opportunity.current_status = REVIEW_TO_OPPORTUNITY_STATUS[payload.review_status]
+        opportunity.current_status = opportunity_status_after_review(db, payload.opportunity_id, remaining_claims)
     task = db.scalar(
         select(models.FlowTask)
         .join(models.FlowInstance)
@@ -1049,11 +1289,9 @@ def submit_review(
         )
         .order_by(models.FlowTask.created_at.desc())
     )
-    if task:
+    if task and not remaining_claims:
         task.status = TASK_COMPLETED
         task.completed_at = datetime.now(timezone.utc)
-    if payload.review_status == REVIEW_RETURNED_FOR_SUPPLEMENT:
-        create_returned_claim_task(db, payload.opportunity_id, reviewer_name)
     if payload.review_status == REVIEW_APPROVED:
         for reviewed_claim in reviewed_claims:
             create_stocking_draft_for_claim(db, reviewed_claim.id, reviewer_name)
@@ -1110,7 +1348,12 @@ def submit_bulk_reviews(
     ]
 
 
-def create_returned_claim_task(db: Session, opportunity_id: str, actor_name: str | None = None) -> None:
+def create_returned_claim_task(
+    db: Session,
+    opportunity_id: str,
+    actor_name: str | None = None,
+    claim: models.SalesClaimForecast | None = None,
+) -> None:
     flow = db.scalar(
         select(models.FlowInstance)
         .where(models.FlowInstance.opportunity_id == opportunity_id)
@@ -1120,7 +1363,7 @@ def create_returned_claim_task(db: Session, opportunity_id: str, actor_name: str
         flow = models.FlowInstance(opportunity_id=opportunity_id)
         db.add(flow)
         db.flush()
-    claim = latest_platform_submission(db, opportunity_id)
+    claim = claim or latest_platform_submission(db, opportunity_id)
     original_task = db.get(models.FlowTask, claim.task_id) if claim and claim.task_id else None
     flow.current_node = "sales_claim"
     flow.current_status = OPPORTUNITY_RETURNED_FOR_SUPPLEMENT
@@ -1128,7 +1371,7 @@ def create_returned_claim_task(db: Session, opportunity_id: str, actor_name: str
     flow.owner_role = "operator"
     task = models.FlowTask(
         flow_instance_id=flow.id,
-        node_code="sales_claim",
+        node_code="returned_claim",
         task_type="sales_claim",
         assignee_user_id=original_task.assignee_user_id if original_task else None,
         assignee_name=claim.salesperson_name if claim else None,
@@ -1156,6 +1399,54 @@ def latest_platform_submission(
     return db.scalar(query)
 
 
+def pending_platform_submissions(
+    db: Session,
+    opportunity_id: str,
+) -> list[models.SalesClaimForecast]:
+    claims = list(
+        db.scalars(
+            select(models.SalesClaimForecast)
+            .where(
+                models.SalesClaimForecast.opportunity_id == opportunity_id,
+                models.SalesClaimForecast.source_column == "platform",
+            )
+            .order_by(models.SalesClaimForecast.last_updated_at.asc(), models.SalesClaimForecast.created_at.asc())
+        )
+    )
+    return [claim for claim in claims if latest_review_for_claim(db, opportunity_id, claim) is None]
+
+
+def opportunity_status_after_review(
+    db: Session,
+    opportunity_id: str,
+    pending_claims: list[models.SalesClaimForecast],
+) -> str:
+    if pending_claims:
+        return (
+            OPPORTUNITY_CLAIM_SUBMITTED
+            if pending_claims[-1].claim_result == CLAIM_RESULT_CLAIM
+            else OPPORTUNITY_CLAIM_REJECTED
+        )
+    returned_task = db.scalar(
+        select(models.FlowTask)
+        .join(models.FlowInstance)
+        .where(
+            models.FlowInstance.opportunity_id == opportunity_id,
+            models.FlowTask.node_code == "returned_claim",
+            models.FlowTask.status == TASK_PENDING,
+        )
+    )
+    if returned_task:
+        return OPPORTUNITY_RETURNED_FOR_SUPPLEMENT
+    approved = db.scalar(
+        select(models.ReviewRecord.id).where(
+            models.ReviewRecord.opportunity_id == opportunity_id,
+            models.ReviewRecord.review_status == REVIEW_APPROVED,
+        )
+    )
+    return OPPORTUNITY_READY_FOR_STOCKING if approved else REVIEW_TO_OPPORTUNITY_STATUS[REVIEW_CONFIRMED_NOT_CLAIM]
+
+
 def open_secondary_research(
     db: Session,
     claim_record_id: str,
@@ -1164,10 +1455,16 @@ def open_secondary_research(
     claim = db.get(models.SalesClaimForecast, claim_record_id)
     if claim is None:
         raise LookupError("claim record not found")
+    opportunity = db.get(models.NewProductOpportunity, claim.opportunity_id)
+    if opportunity is None:
+        raise LookupError("opportunity not found")
+    if is_read_only_historical_opportunity(opportunity):
+        raise PermissionError("historical source products cannot enter secondary research")
     if claim.claim_result != CLAIM_RESULT_CLAIM:
         raise ValueError("only claimed products can enter secondary research")
     claim.downstream_status = CLAIM_WAITING_SECONDARY_RESEARCH
     claim.arrival_detected_at = arrived_at or datetime.now(timezone.utc)
+    opportunity.current_status = CLAIM_WAITING_SECONDARY_RESEARCH
     audit(
         db,
         "secondary_research.opened",
@@ -1185,32 +1482,24 @@ def list_secondary_research_groups(
     business_period: str | None = None,
     downstream_status: str | None = None,
 ) -> list[dict]:
-    filters = [models.SalesClaimForecast.downstream_status.is_not(None)]
+    filters = [
+        models.SalesClaimForecast.downstream_status.is_not(None),
+        _visible_business_period_filter(models.NewProductOpportunity.batch),
+        _active_import_batch_filter(),
+    ]
     if salesperson_name:
         filters.append(models.SalesClaimForecast.salesperson_name == salesperson_name)
     if business_period and business_period != "__all__":
         filters.append(models.NewProductOpportunity.batch == business_period)
     if downstream_status:
         filters.append(models.SalesClaimForecast.downstream_status == downstream_status)
-    if business_period is None:
-        latest_period = db.scalar(
-            select(models.NewProductOpportunity.batch)
-            .join(
-                models.SalesClaimForecast,
-                models.SalesClaimForecast.opportunity_id == models.NewProductOpportunity.id,
-            )
-            .where(*filters, models.NewProductOpportunity.batch.is_not(None))
-            .order_by(models.NewProductOpportunity.batch.desc())
-            .limit(1)
-        )
-        if latest_period:
-            filters.append(models.NewProductOpportunity.batch == latest_period)
     rows = db.execute(
         select(models.SalesClaimForecast, models.NewProductOpportunity)
         .join(
             models.NewProductOpportunity,
             models.NewProductOpportunity.id == models.SalesClaimForecast.opportunity_id,
         )
+        .outerjoin(models.ImportBatch, models.ImportBatch.id == models.NewProductOpportunity.import_batch_id)
         .where(*filters)
         .order_by(
             models.NewProductOpportunity.batch.desc(),
@@ -1256,6 +1545,421 @@ def list_secondary_research_groups(
     return list(groups.values())
 
 
+def create_manual_secondary_research(
+    db: Session,
+    payload: schemas.ManualSecondaryResearchCreate,
+    salesperson_name: str,
+    actor_name: str | None = None,
+    actor_user_id: str | None = None,
+) -> dict:
+    main_sku = _clean_text(payload.main_sku)
+    sub_sku = _clean_text(payload.sub_sku)
+    owner = _clean_text(salesperson_name)
+    site_code = normalize_site_code(payload.site or payload.country)
+    country = _country_label(payload.country or payload.site)
+    site = site_code or _clean_text(payload.site) or _clean_text(payload.country)
+    if not main_sku or not sub_sku or not owner or not site_code:
+        raise ValueError("country, main_sku, sub_sku and salesperson_name are required")
+
+    opportunity = next(
+        (
+            item for item in db.scalars(
+                select(models.NewProductOpportunity).where(
+                    models.NewProductOpportunity.main_sku == main_sku,
+                    models.NewProductOpportunity.sub_sku == sub_sku,
+                    models.NewProductOpportunity.current_status != OPPORTUNITY_DISABLED,
+                )
+            )
+            if normalize_site_code(item.site or item.country) == site_code
+        ),
+        None,
+    )
+    if opportunity is not None:
+        existing_claim = db.scalar(
+            select(models.SalesClaimForecast).where(
+                models.SalesClaimForecast.opportunity_id == opportunity.id,
+                models.SalesClaimForecast.salesperson_name == owner,
+                models.SalesClaimForecast.claim_result == CLAIM_RESULT_CLAIM,
+            )
+        )
+        if existing_claim is not None:
+            if existing_claim.downstream_status == CLAIM_WAITING_SECONDARY_RESEARCH:
+                return secondary_research_item(existing_claim, opportunity, secondary_research_peers(db, existing_claim))
+            raise ValueError("该 SKU 已存在于后续阶段，不能重复新增二次调研")
+    else:
+        snapshot = {
+            "manual_secondary": {
+                "country": country,
+                "site": site,
+                "main_sku": main_sku,
+                "sub_sku": sub_sku,
+                "salesperson_name": owner,
+                "business_period": _clean_text(payload.business_period) or "手工二调",
+                "secondary_competitor_url": _clean_text(payload.secondary_competitor_url),
+            }
+        }
+        opportunity = models.NewProductOpportunity(
+            id=models.new_id(),
+            source_type="manual_secondary",
+            source_file="手工新增二次调研",
+            source_sheet="manual_secondary",
+            batch=snapshot["manual_secondary"]["business_period"],
+            country=country,
+            site=site,
+            developer_name=owner,
+            main_sku_name=_clean_text(payload.main_sku_name),
+            main_sku=main_sku,
+            sub_sku_name=_clean_text(payload.sub_sku_name),
+            sub_sku=sub_sku,
+            current_status=CLAIM_WAITING_SECONDARY_RESEARCH,
+            snapshot=snapshot,
+        )
+        db.add(opportunity)
+        db.add(
+            models.SourceRecordSnapshot(
+                id=models.new_id(),
+                opportunity_id=opportunity.id,
+                source_file="手工新增二次调研",
+                source_sheet="manual_secondary",
+                payload=snapshot,
+            )
+        )
+
+    claim = models.SalesClaimForecast(
+        id=models.new_id(),
+        opportunity_id=opportunity.id,
+        salesperson_name=owner,
+        claim_result=CLAIM_RESULT_CLAIM,
+        source_column="manual_secondary",
+        claim_source="manual_secondary",
+        downstream_status=CLAIM_WAITING_SECONDARY_RESEARCH,
+        secondary_competitor_url=_clean_text(payload.secondary_competitor_url),
+    )
+    db.add(claim)
+    audit(
+        db,
+        "secondary_research.manual_created",
+        "sales_claim_forecast",
+        claim.id,
+        {"opportunity_id": opportunity.id, "main_sku": main_sku, "sub_sku": sub_sku, "site": site},
+        actor_name or owner,
+        actor_user_id,
+    )
+    db.flush()
+    return secondary_research_item(claim, opportunity, secondary_research_peers(db, claim))
+
+
+PLM_ARRIVAL_ASSIGNMENT_PENDING_STATUSES = frozenset({"pending_assignment", "existing_system_sku"})
+
+
+def list_plm_arrival_assignments(db: Session) -> list[dict]:
+    rows = db.execute(
+        select(models.PlmArrivalItem, models.PlmArrivalBatch)
+        .join(models.PlmArrivalBatch, models.PlmArrivalBatch.id == models.PlmArrivalItem.batch_id)
+        .where(
+            models.PlmArrivalItem.arrival_type == "new_arrival",
+            models.PlmArrivalItem.match_status.in_(PLM_ARRIVAL_ASSIGNMENT_PENDING_STATUSES),
+            models.PlmArrivalItem.matched_claim_record_id.is_(None),
+        )
+        .order_by(models.PlmArrivalBatch.arrival_date.desc(), models.PlmArrivalItem.source_row.asc())
+    ).all()
+    return [_plm_assignment_row(db, item, batch) for item, batch in rows]
+
+
+def assign_plm_arrival_to_secondary_research(
+    db: Session,
+    plm_arrival_item_id: str,
+    salesperson_name: str,
+    actor_name: str | None = None,
+    actor_user_id: str | None = None,
+) -> dict:
+    item, batch = _plm_arrival_assignment_item(db, plm_arrival_item_id, lock=True)
+    owner = _clean_text(salesperson_name)
+    if not owner:
+        raise ValueError("salesperson_name is required")
+    if owner not in _enabled_operator_names(db):
+        raise ValueError("salesperson_name must be an enabled operator")
+
+    opportunities = _current_opportunities_for_plm_item(db, item)
+    if len(opportunities) > 1:
+        raise ValueError("PLM arrival matches multiple current products; resolve product ownership first")
+    opportunity = opportunities[0] if opportunities else _create_plm_discovery_opportunity(db, item, batch)
+
+    claim = db.scalar(
+        select(models.SalesClaimForecast).where(
+            models.SalesClaimForecast.opportunity_id == opportunity.id,
+            models.SalesClaimForecast.salesperson_name == owner,
+            models.SalesClaimForecast.claim_result == CLAIM_RESULT_CLAIM,
+        )
+    )
+    if claim and claim.secondary_research_submitted_at is not None:
+        raise ValueError("selected operator has already submitted secondary research for this product")
+    if claim is None:
+        claim = models.SalesClaimForecast(
+            id=models.new_id(),
+            opportunity_id=opportunity.id,
+            salesperson_name=owner,
+            claim_result=CLAIM_RESULT_CLAIM,
+            source_column="plm_arrival_discovery",
+            claim_source="plm_arrival_assignment",
+            note="PLM到货待分配由主管指派",
+        )
+        db.add(claim)
+        db.flush()
+
+    open_secondary_research(db, claim.id, item.latest_storage_time)
+    _record_plm_assignment_arrival(db, batch, item, opportunity, claim)
+    item.matched_claim_record_id = claim.id
+    item.match_status = "assigned"
+    item.raw_payload = {
+        **(item.raw_payload or {}),
+        "_plm_assignment": {
+            **((item.raw_payload or {}).get("_plm_assignment") or {}),
+            "status": "assigned",
+            "assigned_salesperson_name": owner,
+            "plm_salesperson_name": item.salesperson_name,
+            "opportunity_id": opportunity.id,
+            "claim_record_id": claim.id,
+            "assigned_at": datetime.now(timezone.utc).isoformat(),
+            "assigned_by": actor_name,
+        },
+    }
+    audit(
+        db,
+        "plm_arrival_assignment.assigned",
+        "plm_arrival_item",
+        item.id,
+        {"salesperson_name": owner, "opportunity_id": opportunity.id, "claim_record_id": claim.id},
+        actor_name,
+        actor_user_id,
+    )
+    db.flush()
+    return _plm_assignment_row(db, item, batch)
+
+
+def close_plm_arrival_assignment(
+    db: Session,
+    plm_arrival_item_id: str,
+    reason: str,
+    actor_name: str | None = None,
+    actor_user_id: str | None = None,
+) -> dict:
+    item, batch = _plm_arrival_assignment_item(db, plm_arrival_item_id, lock=True)
+    close_reason = _clean_text(reason)
+    if not close_reason:
+        raise ValueError("reason is required")
+    item.match_status = "assignment_closed"
+    item.raw_payload = {
+        **(item.raw_payload or {}),
+        "_plm_assignment": {
+            **((item.raw_payload or {}).get("_plm_assignment") or {}),
+            "status": "assignment_closed",
+            "close_reason": close_reason,
+            "closed_at": datetime.now(timezone.utc).isoformat(),
+            "closed_by": actor_name,
+        },
+    }
+    audit(
+        db,
+        "plm_arrival_assignment.closed",
+        "plm_arrival_item",
+        item.id,
+        {"reason": close_reason},
+        actor_name,
+        actor_user_id,
+    )
+    db.flush()
+    return _plm_assignment_row(db, item, batch)
+
+
+def _plm_arrival_assignment_item(
+    db: Session,
+    plm_arrival_item_id: str,
+    *,
+    lock: bool = False,
+) -> tuple[models.PlmArrivalItem, models.PlmArrivalBatch]:
+    query = (
+        select(models.PlmArrivalItem, models.PlmArrivalBatch)
+        .join(models.PlmArrivalBatch, models.PlmArrivalBatch.id == models.PlmArrivalItem.batch_id)
+        .where(models.PlmArrivalItem.id == plm_arrival_item_id)
+    )
+    if lock:
+        query = query.with_for_update()
+    row = db.execute(query).first()
+    if row is None:
+        raise LookupError("PLM arrival item not found")
+    item, batch = row
+    if item.arrival_type != "new_arrival" or item.match_status not in PLM_ARRIVAL_ASSIGNMENT_PENDING_STATUSES:
+        raise ValueError("PLM arrival item is not pending assignment")
+    return item, batch
+
+
+def _enabled_operator_names(db: Session) -> set[str]:
+    return {
+        item
+        for item in db.scalars(
+            select(models.RoleMapping.name).where(
+                models.RoleMapping.enabled.is_(True),
+                models.RoleMapping.role == "operator",
+            )
+        )
+        if _clean_text(item)
+    }
+
+
+def _current_opportunities_for_plm_item(db: Session, item: models.PlmArrivalItem) -> list[models.NewProductOpportunity]:
+    site = normalize_site_code(item.country)
+    main_sku = _sku_key(item.main_sku)
+    sub_sku = _sku_key(item.sub_sku)
+    if not site or not main_sku or not sub_sku:
+        return []
+    rows = db.scalars(
+        select(models.NewProductOpportunity).where(
+            models.NewProductOpportunity.current_status != OPPORTUNITY_DISABLED,
+            models.NewProductOpportunity.current_status != "historical_archive",
+            models.NewProductOpportunity.source_type != "plm_arrival_discovery",
+            _visible_business_period_filter(models.NewProductOpportunity.batch),
+        )
+    ).all()
+    return [
+        row
+        for row in rows
+        if not is_read_only_historical_opportunity(row)
+        and _sku_key(row.main_sku) == main_sku
+        and _sku_key(row.sub_sku) == sub_sku
+        and (normalize_site_code(row.site or row.country) or "") == site
+    ]
+
+
+def _create_plm_discovery_opportunity(
+    db: Session,
+    item: models.PlmArrivalItem,
+    batch: models.PlmArrivalBatch,
+) -> models.NewProductOpportunity:
+    site = normalize_site_code(item.country)
+    main_sku = _clean_text(item.main_sku)
+    sub_sku = _clean_text(item.sub_sku)
+    if not site or not main_sku or not sub_sku:
+        raise ValueError("PLM arrival item is missing country, main_sku or sub_sku")
+    country = _country_label(item.country)
+    snapshot = _plm_discovery_snapshot(item, batch)
+    opportunity = models.NewProductOpportunity(
+        id=models.new_id(),
+        source_type="plm_arrival_discovery",
+        source_file=batch.source_file or "PLM到货",
+        source_sheet=item.source_sheet or batch.arrival_date,
+        source_row=item.source_row,
+        batch="PLM新增到货",
+        country=country,
+        site=site,
+        developer_name=None,
+        main_sku_name=item.product_name,
+        main_sku=main_sku,
+        sub_sku_name=item.product_name,
+        sub_sku=sub_sku,
+        current_status=OPPORTUNITY_CLAIM_SUBMITTED,
+        snapshot=snapshot,
+    )
+    db.add(opportunity)
+    db.flush()
+    db.add(
+        models.SourceRecordSnapshot(
+            id=models.new_id(),
+            opportunity_id=opportunity.id,
+            source_file=opportunity.source_file,
+            source_sheet=opportunity.source_sheet,
+            source_row=opportunity.source_row,
+            column_range="plm_arrival_discovery",
+            payload=snapshot,
+        )
+    )
+    return opportunity
+
+
+def _plm_discovery_snapshot(item: models.PlmArrivalItem, batch: models.PlmArrivalBatch) -> dict:
+    site = normalize_site_code(item.country)
+    return {
+        "plm_arrival_discovery": {
+            "batch_id": batch.id,
+            "item_id": item.id,
+            "arrival_date": batch.arrival_date,
+            "source_file": batch.source_file,
+            "source_sheet": item.source_sheet,
+            "source_row": item.source_row,
+            "salesperson_name": item.salesperson_name,
+            "country": _country_label(item.country),
+            "site": site,
+            "main_sku": _clean_text(item.main_sku),
+            "sub_sku": _clean_text(item.sub_sku),
+            "product_name": item.product_name,
+            "warehouse": item.warehouse,
+            "latest_storage_time": item.latest_storage_time.isoformat() if item.latest_storage_time else None,
+            "first_listing_time": item.first_listing_time.isoformat() if item.first_listing_time else None,
+        }
+    }
+
+
+def _record_plm_assignment_arrival(
+    db: Session,
+    batch: models.PlmArrivalBatch,
+    item: models.PlmArrivalItem,
+    opportunity: models.NewProductOpportunity,
+    claim: models.SalesClaimForecast,
+) -> None:
+    exists = db.scalar(
+        select(models.ArrivalRecord.id).where(
+            models.ArrivalRecord.plm_arrival_batch_id == batch.id,
+            models.ArrivalRecord.claim_record_id == claim.id,
+        )
+    )
+    if exists:
+        return
+    db.add(
+        models.ArrivalRecord(
+            opportunity_id=opportunity.id,
+            claim_record_id=claim.id,
+            plm_arrival_batch_id=batch.id,
+            plm_arrival_item_id=item.id,
+            salesperson_name=claim.salesperson_name,
+            country=item.country or opportunity.country,
+            warehouse=item.warehouse,
+            arrived_quantity=_int_or_none(item.available_quantity),
+            arrived_at=item.latest_storage_time,
+            note="PLM arrival assigned by manager",
+        )
+    )
+
+
+def _plm_assignment_row(
+    db: Session,
+    item: models.PlmArrivalItem,
+    batch: models.PlmArrivalBatch,
+) -> dict:
+    current_matches = _current_opportunities_for_plm_item(db, item)
+    payload = (item.raw_payload or {}).get("_plm_assignment") or {}
+    return {
+        "plm_arrival_item_id": item.id,
+        "arrival_date": batch.arrival_date,
+        "source_file": batch.source_file,
+        "source_sheet": item.source_sheet,
+        "source_row": item.source_row,
+        "country": _country_label(item.country),
+        "warehouse": item.warehouse,
+        "main_sku": item.main_sku,
+        "sub_sku": item.sub_sku,
+        "product_name": item.product_name,
+        "plm_salesperson_name": item.salesperson_name,
+        "latest_storage_time": item.latest_storage_time,
+        "first_listing_time": item.first_listing_time,
+        "match_status": item.match_status,
+        "existing_opportunity_count": len(current_matches),
+        "assigned_salesperson_name": payload.get("assigned_salesperson_name"),
+        "claim_record_id": item.matched_claim_record_id,
+        "opportunity_id": payload.get("opportunity_id"),
+        "note": payload.get("close_reason"),
+    }
+
+
 def update_secondary_research_draft(
     db: Session,
     claim_record_id: str,
@@ -1295,6 +1999,7 @@ def correct_secondary_research(
         raise ValueError("only submitted secondary research can be corrected")
     if not manager_access and claim.salesperson_name != operator_name:
         raise PermissionError("secondary research record does not belong to current operator")
+    historical_fact = is_historical_secondary_submission(claim)
 
     before: dict[str, object] = {}
     after: dict[str, object] = {}
@@ -1307,14 +2012,15 @@ def correct_secondary_research(
         after[field] = new_value.isoformat() if isinstance(new_value, datetime) else deepcopy(new_value)
         setattr(claim, field, new_value)
 
-    if not _clean_text(claim.secondary_conclusion):
-        raise ValueError("secondary_conclusion is required")
-    if claim.product_positioning not in {"引流款", "利润款", "淘汰款", "稳定款", "清仓款"}:
-        raise ValueError("product_positioning is required")
-    if not claim.secondary_target_daily_sales or claim.secondary_target_daily_sales <= 0:
-        raise ValueError("secondary_target_daily_sales is required")
-    if not _clean_text(claim.secondary_selling_points):
-        raise ValueError("secondary_selling_points is required")
+    if not historical_fact:
+        if not _clean_text(claim.secondary_conclusion):
+            raise ValueError("secondary_conclusion is required")
+        if claim.product_positioning not in {"引流款", "利润款", "淘汰款", "稳定款", "清仓款"}:
+            raise ValueError("product_positioning is required")
+        if not claim.secondary_target_daily_sales or claim.secondary_target_daily_sales <= 0:
+            raise ValueError("secondary_target_daily_sales is required")
+        if not _clean_text(claim.secondary_selling_points):
+            raise ValueError("secondary_selling_points is required")
     if not before:
         return secondary_research_item(claim, opportunity, secondary_research_peers(db, claim))
 
@@ -1325,7 +2031,7 @@ def correct_secondary_research(
         )
     ).all()
     has_listing = any(claim.id in (listing.source_claim_ids or []) for listing in listing_rows)
-    if not has_listing and claim.downstream_status in {CLAIM_WAITING_LISTING, CLAIM_DISABLED}:
+    if not historical_fact and not has_listing and claim.downstream_status in {CLAIM_WAITING_LISTING, CLAIM_DISABLED}:
         old_status = claim.downstream_status
         claim.downstream_status = (
             CLAIM_DISABLED if claim.product_positioning in {"淘汰款", "清仓款"} else CLAIM_WAITING_LISTING
@@ -1345,6 +2051,12 @@ def correct_secondary_research(
         actor_user_id,
     )
     return secondary_research_item(claim, opportunity, secondary_research_peers(db, claim))
+
+def is_historical_secondary_submission(claim: models.SalesClaimForecast) -> bool:
+    return claim.secondary_research_submitted_at is not None and claim.downstream_status in {
+        CLAIM_HISTORICAL_SECONDARY_SUBMITTED,
+        CLAIM_WAITING_SECONDARY_RESEARCH,
+    }
 
 def submit_secondary_research_group(
     db: Session,
@@ -1416,7 +2128,11 @@ def list_secondary_research_export_rows(
 ) -> list[tuple[models.SalesClaimForecast, models.NewProductOpportunity]]:
     if scenario not in {"pending", "submitted", "all"}:
         raise ValueError("invalid secondary research export scenario")
-    filters = [models.SalesClaimForecast.downstream_status.is_not(None)]
+    filters = [
+        models.SalesClaimForecast.downstream_status.is_not(None),
+        _visible_business_period_filter(models.NewProductOpportunity.batch),
+        _active_import_batch_filter(),
+    ]
     if salesperson_name:
         filters.append(models.SalesClaimForecast.salesperson_name == salesperson_name)
     if business_period:
@@ -1434,6 +2150,7 @@ def list_secondary_research_export_rows(
     rows = db.execute(
         select(models.SalesClaimForecast, models.NewProductOpportunity)
         .join(models.NewProductOpportunity, models.NewProductOpportunity.id == models.SalesClaimForecast.opportunity_id)
+        .outerjoin(models.ImportBatch, models.ImportBatch.id == models.NewProductOpportunity.import_batch_id)
         .where(*filters)
         .order_by(
             models.NewProductOpportunity.batch.desc(),
@@ -1520,6 +2237,12 @@ def secondary_research_claim(
     row = db.execute(statement).one_or_none()
     if row is None:
         raise LookupError("secondary research record not found")
+    if (
+        is_read_only_historical_opportunity(row[1])
+        and row[0].downstream_status != CLAIM_WAITING_SECONDARY_RESEARCH
+        and row[0].secondary_research_submitted_at is None
+    ):
+        raise PermissionError("historical source products cannot enter secondary research")
     return row[0], row[1]
 
 
@@ -1564,6 +2287,7 @@ def secondary_research_item(
         "claim_record_id": claim.id,
         "opportunity_id": opportunity.id,
         "salesperson_name": claim.salesperson_name or "",
+        "claim_daily_sales": claim.claim_daily_sales,
         "downstream_status": claim.downstream_status or "",
         "arrival_detected_at": claim.arrival_detected_at,
         "secondary_research_at": claim.secondary_research_at,
@@ -1583,6 +2307,7 @@ def secondary_research_item(
             {
                 "claim_record_id": peer.id,
                 "salesperson_name": peer.salesperson_name,
+                "claim_daily_sales": peer.claim_daily_sales,
                 "secondary_research_at": peer.secondary_research_at,
                 "secondary_competitor_url": peer.secondary_competitor_url,
                 "secondary_conclusion": peer.secondary_conclusion,
@@ -2073,12 +2798,14 @@ def listing_source_context(
             claim_to_listing_ids[claim_id].append(listing.id)
     periods_by_listing: dict[str, set[str]] = defaultdict(set)
     positions_by_listing: dict[str, set[str]] = defaultdict(set)
+    images_by_listing: dict[str, str] = {}
     if claim_to_listing_ids:
         rows = db.execute(
             select(
                 models.SalesClaimForecast.id,
                 models.SalesClaimForecast.product_positioning,
                 models.NewProductOpportunity.batch,
+                models.NewProductOpportunity.image_url,
             )
             .join(
                 models.NewProductOpportunity,
@@ -2086,20 +2813,71 @@ def listing_source_context(
             )
             .where(models.SalesClaimForecast.id.in_(claim_to_listing_ids))
         ).all()
-        for claim_id, product_positioning, business_period in rows:
+        for claim_id, product_positioning, business_period, image_url in rows:
             for listing_id in claim_to_listing_ids[claim_id]:
                 if value := _clean_text(business_period):
                     periods_by_listing[listing_id].add(value)
                 if value := _clean_text(product_positioning):
                     positions_by_listing[listing_id].add(value)
+                if image_url and listing_id not in images_by_listing:
+                    images_by_listing[listing_id] = image_url
     bound_skus_by_listing: dict[str, set[str]] = defaultdict(set)
     if listings:
+        listing_ids = [listing.id for listing in listings]
+        listing_site_by_id = {
+            listing.id: normalize_site_code(listing.site or listing.country)
+            for listing in listings
+        }
         for listing_id, bound_main_sku in db.execute(
             select(models.ListingSkuBinding.listing_record_id, models.ListingSkuBinding.main_sku).where(
-                models.ListingSkuBinding.listing_record_id.in_([listing.id for listing in listings])
+                models.ListingSkuBinding.listing_record_id.in_(listing_ids)
             )
         ):
             bound_skus_by_listing[listing_id].add(bound_main_sku)
+        for listing_id, image_url in db.execute(
+            select(models.ListingSkuBinding.listing_record_id, models.NewProductOpportunity.image_url)
+            .join(
+                models.NewProductOpportunity,
+                models.NewProductOpportunity.id == models.ListingSkuBinding.opportunity_id,
+            )
+            .where(
+                models.ListingSkuBinding.listing_record_id.in_(listing_ids)
+            )
+        ):
+            if image_url and listing_id not in images_by_listing:
+                images_by_listing[listing_id] = image_url
+        main_skus = {
+            sku
+            for listing in listings
+            for sku in (listing.main_sku, *bound_skus_by_listing[listing.id])
+            if sku
+        }
+        opportunity_images: dict[tuple[str, str | None], str] = {}
+        if main_skus:
+            for main_sku, site, country, image_url in db.execute(
+                select(
+                    models.NewProductOpportunity.main_sku,
+                    models.NewProductOpportunity.site,
+                    models.NewProductOpportunity.country,
+                    models.NewProductOpportunity.image_url,
+                )
+                .where(
+                    models.NewProductOpportunity.main_sku.in_(main_skus),
+                    models.NewProductOpportunity.image_url.is_not(None),
+                )
+                .order_by(models.NewProductOpportunity.created_at)
+            ):
+                key = (main_sku, normalize_site_code(site or country))
+                if image_url and key not in opportunity_images:
+                    opportunity_images[key] = image_url
+        for listing in listings:
+            if listing.id in images_by_listing:
+                continue
+            for main_sku in (listing.main_sku, *sorted(bound_skus_by_listing[listing.id])):
+                image_url = opportunity_images.get((main_sku, listing_site_by_id[listing.id]))
+                if image_url:
+                    images_by_listing[listing.id] = image_url
+                    break
     return {
         listing.id: {
             "source_business_periods": sorted(periods_by_listing[listing.id]),
@@ -2107,6 +2885,7 @@ def listing_source_context(
             if len(positions_by_listing[listing.id]) == 1
             else None,
             "bound_main_skus": sorted(bound_skus_by_listing[listing.id]),
+            "image_url": images_by_listing.get(listing.id),
         }
         for listing in listings
     }
@@ -2117,6 +2896,14 @@ def observation_positioning_defaults(
     listing_ids: list[str],
     source_context: dict[str, dict],
 ) -> dict[str, str | None]:
+    source_type_by_listing = {
+        listing_id: source_type
+        for listing_id, source_type in db.execute(
+            select(models.ListingRecord.id, models.ListingRecord.source_type).where(
+                models.ListingRecord.id.in_(listing_ids)
+            )
+        )
+    } if listing_ids else {}
     periods_by_listing: dict[str, list[models.ItemObservationPeriod]] = defaultdict(list)
     if listing_ids:
         for period in db.scalars(
@@ -2129,6 +2916,9 @@ def observation_positioning_defaults(
     for listing_id, periods in periods_by_listing.items():
         latest_positioning = None
         for period in sorted(periods, key=lambda item: (item.period_start or date.min, item.week_number)):
+            if period.record_source == "history_finebi" or (source_type_by_listing.get(listing_id) or "").startswith("history_"):
+                defaults[period.id] = None
+                continue
             defaults[period.id] = latest_positioning or source_context.get(listing_id, {}).get("secondary_positioning")
             latest_positioning = _clean_text(period.product_positioning) or latest_positioning
     return defaults
@@ -2141,6 +2931,7 @@ def listing_record_read(item: models.ListingRecord, source_context: dict | None 
         "task_key": item.source_group_key,
         "main_sku": item.main_sku,
         "main_sku_name": item.main_sku_name,
+        "image_url": source_context.get("image_url"),
         "country": item.country,
         "site": item.site,
         "salesperson_name": item.salesperson_name,
@@ -2165,6 +2956,7 @@ def observation_period_read(
     period: models.ItemObservationPeriod,
     listing: models.ListingRecord,
     default_product_positioning: str | None = None,
+    image_url: str | None = None,
 ) -> dict:
     rate = None
     if period.total_revenue not in {None, 0} and period.gross_profit_amount is not None:
@@ -2174,6 +2966,7 @@ def observation_period_read(
         "listing_record_id": listing.id,
         "main_sku": listing.main_sku,
         "main_sku_name": listing.main_sku_name,
+        "image_url": image_url,
         "country": listing.country,
         "salesperson_name": listing.salesperson_name,
         "shop": listing.shop,
@@ -2290,6 +3083,7 @@ def list_listing_workbench(
                 period,
                 listing_by_id[period.listing_record_id],
                 positioning_defaults.get(period.id),
+                source_context.get(period.listing_record_id, {}).get("image_url"),
             )
             for period in periods
         ],
@@ -2334,6 +3128,7 @@ def listing_summary(db: Session, main_sku: str, owner: str | None = None, countr
                 period,
                 listing_by_id[period.listing_record_id],
                 positioning_defaults.get(period.id),
+                source_context.get(period.listing_record_id, {}).get("image_url"),
             )
             for period in periods
         ],
@@ -2770,8 +3565,18 @@ def list_product_board_groups(
     arrival_date_to: date | None = None,
     site: str | None = None,
     query: str | None = None,
+    limit: int | None = None,
 ) -> list[dict]:
-    filters = [models.NewProductOpportunity.current_status.notin_([OPPORTUNITY_DISABLED, OPPORTUNITY_REPLACED_BY_NORMALIZED_SELECTION1])]
+    filters = [
+        models.NewProductOpportunity.current_status.notin_([OPPORTUNITY_DISABLED, OPPORTUNITY_REPLACED_BY_NORMALIZED_SELECTION1]),
+        _visible_business_period_filter(models.NewProductOpportunity.batch),
+        _active_import_batch_filter(),
+        _product_board_source_filter(),
+    ]
+    claim_join_condition = (models.SalesClaimForecast.opportunity_id == models.NewProductOpportunity.id) & or_(
+        models.SalesClaimForecast.source_column.in_(("platform", "history_selection1", "plm_arrival_discovery", "manual_secondary")),
+        models.SalesClaimForecast.claim_source.in_(("history_selection2", "history_selection34")),
+    )
     if business_period:
         filters.append(models.NewProductOpportunity.batch == business_period)
     if site:
@@ -2799,6 +3604,53 @@ def list_product_board_groups(
                 models.NewProductOpportunity.id.in_(matching_task_opportunities),
             )
         )
+    if owner:
+        owner_task_opportunities = (
+            select(models.FlowInstance.opportunity_id)
+            .join(models.FlowTask, models.FlowTask.flow_instance_id == models.FlowInstance.id)
+            .where(
+                models.FlowTask.status == TASK_PENDING,
+                models.FlowTask.task_type == "sales_claim",
+                models.FlowTask.assignee_name == owner,
+            )
+        )
+        filters.append(or_(models.SalesClaimForecast.salesperson_name == owner, models.NewProductOpportunity.id.in_(owner_task_opportunities)))
+    group_key_conditions = []
+    if limit:
+        group_key_rows = db.execute(
+            select(
+                models.NewProductOpportunity.batch,
+                models.NewProductOpportunity.site,
+                models.NewProductOpportunity.country,
+                models.NewProductOpportunity.main_sku,
+            )
+            .outerjoin(models.SalesClaimForecast, claim_join_condition)
+            .outerjoin(models.ImportBatch, models.ImportBatch.id == models.NewProductOpportunity.import_batch_id)
+            .where(*filters)
+            .group_by(
+                models.NewProductOpportunity.batch,
+                models.NewProductOpportunity.site,
+                models.NewProductOpportunity.country,
+                models.NewProductOpportunity.main_sku,
+            )
+            .order_by(
+                models.NewProductOpportunity.batch.asc(),
+                models.NewProductOpportunity.main_sku.asc(),
+            )
+            .limit(limit)
+        ).all()
+        for batch, row_site, row_country, main_sku in group_key_rows:
+            group_key_conditions.append(
+                and_(
+                    models.NewProductOpportunity.batch.is_(None) if batch is None else models.NewProductOpportunity.batch == batch,
+                    models.NewProductOpportunity.site.is_(None) if row_site is None else models.NewProductOpportunity.site == row_site,
+                    models.NewProductOpportunity.country.is_(None) if row_country is None else models.NewProductOpportunity.country == row_country,
+                    models.NewProductOpportunity.main_sku.is_(None) if main_sku is None else models.NewProductOpportunity.main_sku == main_sku,
+                )
+            )
+        if not group_key_conditions:
+            return []
+        filters.append(or_(*group_key_conditions))
     pending_task_rows = db.execute(
         select(models.FlowInstance.opportunity_id, models.FlowTask)
         .join(models.FlowTask, models.FlowTask.flow_instance_id == models.FlowInstance.id)
@@ -2817,11 +3669,8 @@ def list_product_board_groups(
 
     rows = db.execute(
         select(models.NewProductOpportunity, models.SalesClaimForecast)
-        .outerjoin(
-            models.SalesClaimForecast,
-            (models.SalesClaimForecast.opportunity_id == models.NewProductOpportunity.id)
-            & (models.SalesClaimForecast.source_column.in_(("platform", "history_selection1"))),
-        )
+        .outerjoin(models.SalesClaimForecast, claim_join_condition)
+        .outerjoin(models.ImportBatch, models.ImportBatch.id == models.NewProductOpportunity.import_batch_id)
         .where(*filters)
         .order_by(
             models.NewProductOpportunity.batch.asc(),
@@ -2926,11 +3775,30 @@ def list_product_board_groups(
     return result
 
 
+def list_product_board_business_periods(db: Session) -> list[str]:
+    rows = db.execute(
+        select(models.NewProductOpportunity.batch, func.max(models.NewProductOpportunity.created_at))
+        .outerjoin(models.ImportBatch, models.ImportBatch.id == models.NewProductOpportunity.import_batch_id)
+        .where(
+            models.NewProductOpportunity.batch.is_not(None),
+            models.NewProductOpportunity.batch.notin_(HIDDEN_BUSINESS_PERIODS),
+            models.NewProductOpportunity.current_status.notin_([OPPORTUNITY_DISABLED, OPPORTUNITY_REPLACED_BY_NORMALIZED_SELECTION1]),
+            or_(models.NewProductOpportunity.import_batch_id.is_(None), models.ImportBatch.status != "disabled"),
+            _product_board_source_filter(),
+        )
+        .group_by(models.NewProductOpportunity.batch)
+        .order_by(func.max(models.NewProductOpportunity.created_at).desc())
+    ).all()
+    return [batch for batch, _ in rows if batch]
+
+
 def responsibility_visible_status(
     opportunity: models.NewProductOpportunity,
     claim: models.SalesClaimForecast | None,
     review: models.ReviewRecord | None = None,
 ) -> str:
+    if claim and claim.downstream_status == CLAIM_HISTORICAL_SECONDARY_SUBMITTED:
+        return CLAIM_HISTORICAL_SECONDARY_SUBMITTED
     if claim and claim.downstream_status:
         return claim.downstream_status
     if claim and claim.claim_result == CLAIM_RESULT_CLAIM and review and review.review_status == REVIEW_APPROVED:
@@ -3349,14 +4217,16 @@ def create_stocking_draft_for_claim(
     claim_record_id: str,
     actor_name: str | None = None,
 ) -> models.StockingRequest:
+    claim = db.get(models.SalesClaimForecast, claim_record_id)
+    if claim is None:
+        raise LookupError("claim record not found")
+    if claim.source_column != "platform":
+        raise PermissionError("only platform claims can create stocking drafts")
     existing = db.scalar(
         select(models.StockingRequest).where(models.StockingRequest.claim_record_id == claim_record_id)
     )
     if existing:
         return existing
-    claim = db.get(models.SalesClaimForecast, claim_record_id)
-    if claim is None:
-        raise LookupError("claim record not found")
     opportunity = db.get(models.NewProductOpportunity, claim.opportunity_id)
     if opportunity is None:
         raise LookupError("opportunity not found")
@@ -3394,6 +4264,7 @@ def create_stocking_draft_from_claim(
         .where(
             models.SalesClaimForecast.opportunity_id == opportunity_id,
             models.SalesClaimForecast.claim_result == CLAIM_RESULT_CLAIM,
+            models.SalesClaimForecast.source_column == "platform",
         )
         .order_by(models.SalesClaimForecast.created_at.desc())
     )
@@ -3420,6 +4291,7 @@ def _available_stocking_item(
         request_id=request.id,
         claim_record_id=claim.id,
         business_period=opportunity.batch,
+        operation_status="已导出" if request.status == "exported" else "未操作",
         time=request.submitted_at,
         application_date=request.application_date,
         stocking_type="补货" if request.request_type == "replenishment" else "首次备货",
@@ -3449,11 +4321,21 @@ def list_available_stocking_items(
 ) -> list[schemas.AvailableStockingItem]:
     filters = [
         models.NewProductOpportunity.current_status != OPPORTUNITY_DISABLED,
-        models.StockingRequest.status == "submitted",
+        _visible_business_period_filter(models.NewProductOpportunity.batch),
+        _active_import_batch_filter(),
+        or_(
+            and_(
+                models.StockingRequest.status == "submitted",
+                models.SalesClaimForecast.downstream_status == CLAIM_WAITING_EXPORT,
+            ),
+            and_(
+                models.StockingRequest.status == "exported",
+                models.SalesClaimForecast.downstream_status == CLAIM_WAITING_ARRIVAL,
+            ),
+        ),
         models.StockingRequest.opportunity_id == models.NewProductOpportunity.id,
         models.SalesClaimForecast.claim_result == CLAIM_RESULT_CLAIM,
         models.SalesClaimForecast.source_column == "platform",
-        models.SalesClaimForecast.downstream_status == CLAIM_WAITING_EXPORT,
     ]
     if business_period:
         filters.append(models.NewProductOpportunity.batch == business_period)
@@ -3465,6 +4347,7 @@ def list_available_stocking_items(
         select(models.NewProductOpportunity, models.SalesClaimForecast, models.StockingRequest)
         .join(models.SalesClaimForecast, models.SalesClaimForecast.opportunity_id == models.NewProductOpportunity.id)
         .join(models.StockingRequest, models.StockingRequest.claim_record_id == models.SalesClaimForecast.id)
+        .outerjoin(models.ImportBatch, models.ImportBatch.id == models.NewProductOpportunity.import_batch_id)
         .where(*filters)
         .order_by(models.NewProductOpportunity.updated_at.desc(), models.StockingRequest.id)
     ).all()
@@ -3989,38 +4872,129 @@ def list_not_claim_traceability_rows(
 def list_export_period_summaries(db: Session) -> list[schemas.ExportPeriodSummary]:
     imported_periods = db.execute(
         select(models.ImportBatch.business_period, func.max(models.ImportBatch.imported_at))
-        .where(models.ImportBatch.status != "disabled", models.ImportBatch.business_period.is_not(None))
+        .where(
+            models.ImportBatch.status != "disabled",
+            models.ImportBatch.business_period.is_not(None),
+            models.ImportBatch.business_period.notin_(HIDDEN_BUSINESS_PERIODS),
+        )
         .group_by(models.ImportBatch.business_period)
         .order_by(func.max(models.ImportBatch.imported_at).desc())
     ).all()
     stocking_counts: defaultdict[str, int] = defaultdict(int)
+    traceable_stocking_counts: defaultdict[str, int] = defaultdict(int)
     for item in list_available_stocking_items(db):
-        if item.business_period:
-            stocking_counts[item.business_period] += 1
-    confirmed_reject_counts: defaultdict[str, int] = defaultdict(int)
-    for opportunity, _, _ in list_not_claim_traceability_rows(db):
-        if opportunity.batch:
-            confirmed_reject_counts[opportunity.batch] += 1
+        if is_visible_business_period(item.business_period):
+            traceable_stocking_counts[item.business_period] += 1
+            if item.status == "submitted":
+                stocking_counts[item.business_period] += 1
+    review_traceability_counts: defaultdict[str, int] = defaultdict(int)
+    for opportunity, _, _ in list_claim_review_traceability_rows(db):
+        if is_visible_business_period(opportunity.batch):
+            review_traceability_counts[opportunity.batch] += 1
 
     summaries = [
         schemas.ExportPeriodSummary(
             business_period=business_period,
             latest_imported_at=latest_imported_at,
             stocking_count=stocking_counts[business_period],
-            traceability_count=stocking_counts[business_period] + confirmed_reject_counts[business_period],
+            traceability_count=review_traceability_counts[business_period],
         )
         for business_period, latest_imported_at in imported_periods
     ]
     imported_period_names = {business_period for business_period, _ in imported_periods}
-    for business_period in sorted((set(stocking_counts) | set(confirmed_reject_counts)) - imported_period_names):
+    for business_period in sorted(set(review_traceability_counts) - imported_period_names):
         summaries.append(
             schemas.ExportPeriodSummary(
                 business_period=business_period,
                 stocking_count=stocking_counts[business_period],
-                traceability_count=stocking_counts[business_period] + confirmed_reject_counts[business_period],
+                traceability_count=review_traceability_counts[business_period],
             )
         )
     return summaries
+
+
+def list_claim_review_traceability_rows(
+    db: Session,
+    source_sheet: str | None = None,
+    business_period: str | None = None,
+    import_batch_id: str | None = None,
+) -> list[tuple[models.NewProductOpportunity, models.SalesClaimForecast, models.ReviewRecord]]:
+    filters = [
+        models.NewProductOpportunity.current_status != OPPORTUNITY_DISABLED,
+        _visible_business_period_filter(models.NewProductOpportunity.batch),
+        _active_import_batch_filter(),
+        models.SalesClaimForecast.source_column == "platform",
+        models.SalesClaimForecast.claim_result.in_([CLAIM_RESULT_CLAIM, CLAIM_RESULT_REJECT]),
+    ]
+    if business_period:
+        filters.append(models.NewProductOpportunity.batch == business_period)
+    elif source_sheet:
+        filters.append(or_(models.NewProductOpportunity.batch == source_sheet, models.NewProductOpportunity.source_sheet == source_sheet))
+    if import_batch_id:
+        filters.append(models.NewProductOpportunity.import_batch_id == import_batch_id)
+    rows = db.execute(
+        select(models.NewProductOpportunity, models.SalesClaimForecast)
+        .join(models.SalesClaimForecast, models.SalesClaimForecast.opportunity_id == models.NewProductOpportunity.id)
+        .outerjoin(models.ImportBatch, models.ImportBatch.id == models.NewProductOpportunity.import_batch_id)
+        .where(*filters)
+        .order_by(
+            models.NewProductOpportunity.source_row.asc().nulls_last(),
+            models.NewProductOpportunity.updated_at.desc(),
+            models.SalesClaimForecast.created_at.asc(),
+        )
+    ).all()
+    output = []
+    for opportunity, claim in rows:
+        review = latest_review_for_claim(db, opportunity.id, claim)
+        if not review:
+            continue
+        if claim.claim_result == CLAIM_RESULT_CLAIM and review.review_status == REVIEW_APPROVED:
+            output.append((opportunity, claim, review))
+        elif claim.claim_result == CLAIM_RESULT_REJECT and review.review_status == REVIEW_CONFIRMED_NOT_CLAIM:
+            output.append((opportunity, claim, review))
+    return output
+
+
+def list_traceability_items(
+    db: Session,
+    source_sheet: str | None = None,
+    business_period: str | None = None,
+    import_batch_id: str | None = None,
+) -> list[schemas.TraceabilityItem]:
+    output: list[schemas.TraceabilityItem] = []
+    request_by_claim = {
+        request.claim_record_id: request
+        for request in db.scalars(select(models.StockingRequest)).all()
+    }
+    for opportunity, claim, review in list_claim_review_traceability_rows(
+        db,
+        source_sheet=source_sheet,
+        business_period=business_period,
+        import_batch_id=import_batch_id,
+    ):
+        request = request_by_claim.get(claim.id)
+        output.append(schemas.TraceabilityItem(
+            opportunity_id=opportunity.id,
+            request_id=request.id if request else None,
+            claim_record_id=claim.id,
+            business_period=opportunity.batch,
+            traceability_type="认领结果" if claim.claim_result == CLAIM_RESULT_CLAIM else "不认领结果",
+            operation_status=review_status_text(review.review_status),
+            salesperson_name=claim.salesperson_name,
+            main_sku=opportunity.main_sku,
+            sub_sku=opportunity.sub_sku,
+            site=opportunity.site,
+            claim_result=claim.claim_result,
+            claim_daily_sales=claim.claim_daily_sales,
+            reject_reason=claim.reject_reason,
+            feedback_summary=claim.feedback_summary,
+            review_status=review.review_status if review else None,
+            review_comment=review.review_comment if review else None,
+            source_file=opportunity.source_file,
+            source_sheet=opportunity.source_sheet,
+            source_row=opportunity.source_row,
+        ))
+    return output
 
 
 def build_traceability_workbook(
@@ -4030,86 +5004,121 @@ def build_traceability_workbook(
     export_batch: models.ExportBatch | None = None,
     not_claim_rows: list[tuple[models.NewProductOpportunity, models.SalesClaimForecast, models.ReviewRecord | None]]
     | None = None,
+    review_rows: list[tuple[models.NewProductOpportunity, models.SalesClaimForecast, models.ReviewRecord]] | None = None,
 ) -> bytes:
-    headers = CENTRAL_TRACEABILITY_HEADERS + TRACEABILITY_PLATFORM_HEADERS
     workbook = Workbook()
-    workbook.remove(workbook.active)
-    for sheet_name, sheet_items in export_sheet_groups(items, "中央字段导出"):
-        worksheet = workbook.create_sheet(title=sheet_name)
-        worksheet.append(headers)
-        product_images: list[tuple[int, str | None]] = []
-        for item in sheet_items:
+    worksheet = workbook.active
+    worksheet.title = "认领复核明细"
+    worksheet.append(TRACEABILITY_REVIEW_EXPORT_HEADERS)
+    if review_rows is None:
+        review_rows = []
+        for item in items:
             opportunity = db.get(models.NewProductOpportunity, item.opportunity_id)
             claim = db.get(models.SalesClaimForecast, item.claim_record_id)
             review = latest_review_for_claim(db, item.opportunity_id, claim) if claim else None
-            central_values = [central_field_value(opportunity, header, item, column) for column, header in CENTRAL_TRACEABILITY_COLUMNS]
-            product_images.append((worksheet.max_row + 1, opportunity.image_url if opportunity else None))
-            central_values[PRODUCT_IMAGE_COLUMN_INDEX] = None
-            worksheet.append(
-                central_values
-                + [
-                    opportunity.source_file if opportunity else None,
-                    opportunity.source_sheet if opportunity else None,
-                    opportunity.source_row if opportunity else None,
-                    opportunity.import_batch_id if opportunity else None,
-                    item.salesperson_name,
-                    claim.claim_result if claim else None,
-                    item.claim_daily_sales,
-                    claim.reject_reason if claim else None,
-                    claim.feedback_summary if claim else None,
-                    review.review_status if review else item.review_status,
-                    review.review_comment if review else None,
-                    excel_value(claim.first_submitted_at) if claim else None,
-                    excel_value(claim.last_updated_at) if claim else None,
-                    export_batch.id if export_batch else None,
-                    export_batch.exported_by if export_batch else None,
-                    excel_value(export_batch.exported_at) if export_batch else None,
-                    export_batch.file_name if export_batch else None,
-                    scope,
-                ]
-            )
-        style_worksheet(worksheet, max_width=36)
-        embed_product_images(worksheet, product_images)
-
-    not_claim_rows = not_claim_rows if not_claim_rows is not None else list_not_claim_traceability_rows(db)
-    if not_claim_rows:
-        worksheet = workbook.create_sheet(title="不认领结果")
-        worksheet.append(headers + ["图片附件"])
-        product_images = []
-        for opportunity, claim, review in not_claim_rows:
-            central_values = [central_field_value(opportunity, header, column=column) for column, header in CENTRAL_TRACEABILITY_COLUMNS]
-            product_images.append((worksheet.max_row + 1, opportunity.image_url))
-            central_values[PRODUCT_IMAGE_COLUMN_INDEX] = None
-            worksheet.append(
-                central_values
-                + [
-                    opportunity.source_file,
-                    opportunity.source_sheet,
-                    opportunity.source_row,
-                    opportunity.import_batch_id,
-                    claim.salesperson_name,
-                    claim.claim_result,
-                    claim.claim_daily_sales,
-                    claim.reject_reason,
-                    claim.feedback_summary,
-                    review.review_status if review else None,
-                    review.review_comment if review else None,
-                    excel_value(claim.first_submitted_at),
-                    excel_value(claim.last_updated_at),
-                    export_batch.id if export_batch else None,
-                    export_batch.exported_by if export_batch else None,
-                    excel_value(export_batch.exported_at) if export_batch else None,
-                    export_batch.file_name if export_batch else None,
-                    "traceability_not_claim",
-                    claim_evidence_summary(claim.note),
-                ]
-            )
-        style_worksheet(worksheet, max_width=36, fill="FCE4D6")
-        embed_product_images(worksheet, product_images)
+            if opportunity and claim and review:
+                review_rows.append((opportunity, claim, review))
+        not_claim_rows = not_claim_rows if not_claim_rows is not None else list_not_claim_traceability_rows(db)
+        review_rows.extend((opportunity, claim, review) for opportunity, claim, review in not_claim_rows if review)
+    for opportunity, claim, review in review_rows:
+        worksheet.append(traceability_review_export_row(
+            site=opportunity.site,
+            main_sku=opportunity.main_sku,
+            sub_sku=opportunity.sub_sku,
+            claim=claim,
+            review=review,
+            claim_daily_sales=claim.claim_daily_sales,
+        ))
+    style_worksheet(worksheet, max_width=36, fill="D9EAF7")
 
     buffer = BytesIO()
     workbook.save(buffer)
     return buffer.getvalue()
+
+
+def build_central_traceability_workbook(
+    db: Session,
+    review_rows: list[tuple[models.NewProductOpportunity, models.SalesClaimForecast, models.ReviewRecord]],
+    scope: str = "central_traceability",
+    export_batch: models.ExportBatch | None = None,
+) -> bytes:
+    headers = CENTRAL_TRACEABILITY_HEADERS + TRACEABILITY_PLATFORM_HEADERS
+    workbook = Workbook()
+    worksheet = workbook.active
+    worksheet.title = "中央字段导出"
+    worksheet.append(headers)
+    product_images: list[tuple[int, str | None]] = []
+    for opportunity, claim, review in review_rows:
+        central_values = [central_field_value(opportunity, header, column=column) for column, header in CENTRAL_TRACEABILITY_COLUMNS]
+        product_images.append((worksheet.max_row + 1, opportunity.image_url))
+        central_values[PRODUCT_IMAGE_COLUMN_INDEX] = None
+        worksheet.append(
+            central_values
+            + [
+                opportunity.source_file,
+                opportunity.source_sheet,
+                opportunity.source_row,
+                opportunity.import_batch_id,
+                claim.salesperson_name,
+                claim_result_text(claim.claim_result),
+                claim.claim_daily_sales,
+                claim.reject_reason,
+                claim.feedback_summary,
+                review_status_text(review.review_status),
+                review.review_comment,
+                excel_value(claim.first_submitted_at),
+                excel_value(claim.last_updated_at),
+                export_batch.id if export_batch else None,
+                export_batch.exported_by if export_batch else None,
+                excel_value(export_batch.exported_at) if export_batch else None,
+                export_batch.file_name if export_batch else None,
+                scope,
+            ]
+        )
+    style_worksheet(worksheet, max_width=36)
+    embed_product_images(worksheet, product_images)
+    buffer = BytesIO()
+    workbook.save(buffer)
+    return buffer.getvalue()
+
+
+def traceability_review_export_row(
+    *,
+    site: str | None,
+    main_sku: str,
+    sub_sku: str,
+    claim: models.SalesClaimForecast | None,
+    review: models.ReviewRecord | None,
+    claim_daily_sales: float | None,
+) -> list[object]:
+    return [
+        site,
+        main_sku,
+        sub_sku,
+        claim.salesperson_name if claim else None,
+        claim_result_text(claim.claim_result if claim else None),
+        claim_daily_sales,
+        claim.reject_reason if claim else None,
+        review_status_text(review.review_status if review else None),
+        review.review_comment if review else None,
+    ]
+
+
+def claim_result_text(value: str | None) -> str | None:
+    if value == CLAIM_RESULT_CLAIM:
+        return "认领"
+    if value == CLAIM_RESULT_REJECT:
+        return "不认领"
+    return value
+
+
+def review_status_text(value: str | None) -> str | None:
+    labels = {
+        REVIEW_APPROVED: "认领通过",
+        REVIEW_CONFIRMED_NOT_CLAIM: "确认不认领",
+        REVIEW_RETURNED_FOR_SUPPLEMENT: "退回补充",
+    }
+    return labels.get(value, value)
 
 
 def embed_product_images(worksheet, image_rows: list[tuple[int, str | None]]) -> None:
@@ -4551,11 +5560,33 @@ def count_returned_supplement_groups(db: Session, operator_name: str) -> int:
 
 
 def count_pending_claim_reviews(db: Session) -> int:
-    return count_opportunities_by_status(db, OPPORTUNITY_CLAIM_SUBMITTED)
+    return count_pending_platform_review_claims(db, CLAIM_RESULT_CLAIM)
 
 
 def count_pending_not_claim_reviews(db: Session) -> int:
-    return count_opportunities_by_status(db, OPPORTUNITY_CLAIM_REJECTED)
+    return count_pending_platform_review_claims(db, CLAIM_RESULT_REJECT)
+
+
+def count_pending_platform_review_claims(db: Session, claim_result: str) -> int:
+    reviewed = (
+        select(models.ReviewRecord.id)
+        .where(models.ReviewRecord.claim_record_id == models.SalesClaimForecast.id)
+        .exists()
+    )
+    return int(
+        db.scalar(
+            select(func.count())
+            .select_from(models.SalesClaimForecast)
+            .join(models.NewProductOpportunity, models.NewProductOpportunity.id == models.SalesClaimForecast.opportunity_id)
+            .where(
+                models.SalesClaimForecast.source_column == "platform",
+                models.SalesClaimForecast.claim_result == claim_result,
+                models.NewProductOpportunity.current_status.in_((OPPORTUNITY_CLAIM_SUBMITTED, OPPORTUNITY_CLAIM_REJECTED)),
+                ~reviewed,
+            )
+        )
+        or 0
+    )
 
 
 def count_opportunities_by_status(db: Session, status: str) -> int:
@@ -4601,9 +5632,15 @@ def count_pending_review_observation_periods(db: Session, owner: str | None = No
 
 
 def dingtalk_action_url(settings: Settings, role: str, view: str | None = None) -> str:
-    role_param = "operator" if role == "operator" else "supervisor"
-    url = f"{settings.platform_base_url.rstrip('/')}/?from=ding&role={role_param}"
-    return f"{url}&view={view}" if view else url
+    raw_url = settings.platform_base_url.strip()
+    parsed = urlsplit(raw_url)
+    if parsed.scheme and parsed.netloc:
+        path = parsed.path.rstrip("/") + "/" if parsed.path.strip("/") else "/"
+        query = {"from": "ding", "role": "operator" if role == "operator" else "supervisor"}
+        if view:
+            query["view"] = view
+        return urlunsplit((parsed.scheme, parsed.netloc, path, urlencode(query), ""))
+    return raw_url.rstrip("/") + "/"
 
 
 def _send_or_skip_dingtalk_todo(

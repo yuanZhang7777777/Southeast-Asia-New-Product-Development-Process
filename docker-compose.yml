@@ -4,6 +4,7 @@ services:
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
+    mem_limit: 384m
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-workflow}
       POSTGRES_USER: ${POSTGRES_USER:-workflow}
@@ -20,6 +21,7 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
+    mem_limit: 64m
     command: ["redis-server", "--appendonly", "yes"]
     volumes:
       - redis-data:/data
@@ -48,6 +50,7 @@ services:
   api:
     build: ./backend
     restart: unless-stopped
+    mem_limit: 1408m
     env_file:
       - path: .env
         required: false
@@ -61,6 +64,7 @@ services:
       - plm-cache:/data/plm
       - source-workbooks:/app/.private_uploads
       - uploaded-sources:/app/.uploaded_sources
+      - finebi-cache:/data/finebi
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -77,6 +81,7 @@ services:
   worker:
     build: ./backend
     restart: unless-stopped
+    mem_limit: 768m
     command: ["python", "-m", "app.worker"]
     env_file:
       - path: .env
@@ -87,6 +92,9 @@ services:
       AUTH_SECRET_KEY: ${AUTH_SECRET_KEY:?set AUTH_SECRET_KEY}
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-workflow}:${POSTGRES_PASSWORD:-change-me}@postgres:5432/${POSTGRES_DB:-workflow}
       REDIS_URL: redis://redis:6379/0
+    volumes:
+      - source-workbooks:/app/.private_uploads
+      - uploaded-sources:/app/.uploaded_sources
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -125,6 +133,7 @@ services:
         VITE_API_BASE_URL: /api
         VITE_DINGTALK_CORP_ID: ${VITE_DINGTALK_CORP_ID:-}
     restart: unless-stopped
+    mem_limit: 96m
     depends_on:
       api:
         condition: service_healthy
@@ -132,6 +141,7 @@ services:
   reverse-proxy:
     image: caddy:2-alpine
     restart: unless-stopped
+    mem_limit: 96m
     ports:
       - "${HTTP_PORT:-8080}:80"
     volumes:
@@ -158,5 +168,6 @@ volumes:
   caddy-data:
   caddy-config:
   plm-cache:
+  finebi-cache:
   source-workbooks:
   uploaded-sources:

@@ -323,7 +323,19 @@ def test_operator_token_only_lists_own_opportunities_and_tasks() -> None:
         own = models.NewProductOpportunity(source_type="test", main_sku="OWN", sub_sku="S1")
         other = models.NewProductOpportunity(source_type="test", main_sku="OTHER", sub_sku="S1")
         unassigned = models.NewProductOpportunity(source_type="test", main_sku="UNASSIGNED", sub_sku="S1")
-        db.add_all([own, other, unassigned])
+        selection2_pool = models.NewProductOpportunity(
+            source_type="selection2_caigen_claim_feedback",
+            main_sku="POOL",
+            sub_sku="S1",
+            claim_pool_open=True,
+        )
+        selection2_history = models.NewProductOpportunity(
+            source_type="history_selection2",
+            main_sku="HISTORY",
+            sub_sku="S1",
+            current_status="historical_archive",
+        )
+        db.add_all([own, other, unassigned, selection2_pool, selection2_history])
         db.flush()
         own_flow = models.FlowInstance(opportunity_id=own.id)
         other_flow = models.FlowInstance(opportunity_id=other.id)
@@ -343,14 +355,129 @@ def test_operator_token_only_lists_own_opportunities_and_tasks() -> None:
     opportunities = client.get("/opportunities", headers={"Authorization": f"Bearer {token}"}).json()
     tasks = client.get("/tasks/my?assignee_name=Operator B", headers={"Authorization": f"Bearer {token}"}).json()
 
-    assert [item["main_sku"] for item in opportunities] == ["OWN"]
+    assert {item["main_sku"] for item in opportunities} == {"OWN", "POOL", "HISTORY"}
     assert [item["assignee_name"] for item in tasks] == ["Operator A"]
 
     manager_login = client.post("/auth/dingtalk/login", json={"dingtalk_user_id": "dt-m"})
     manager_token = manager_login.json()["access_token"]
     manager_opportunities = client.get("/opportunities", headers={"Authorization": f"Bearer {manager_token}"}).json()
 
-    assert {item["main_sku"] for item in manager_opportunities} == {"OWN", "OTHER", "UNASSIGNED"}
+    assert {item["main_sku"] for item in manager_opportunities} == {"OWN", "OTHER", "UNASSIGNED", "POOL", "HISTORY"}
+
+
+def test_operator_can_edit_owned_selection2_fields_but_not_locked_identity() -> None:
+    with SessionLocal() as db:
+        db.add_all(
+            [
+                models.RoleMapping(name="Operator A", role="operator", dingtalk_user_id="dt-a", enabled=True),
+                models.RoleMapping(name="Operator B", role="operator", dingtalk_user_id="dt-b", enabled=True),
+            ]
+        )
+        opportunity = models.NewProductOpportunity(
+            source_type="selection2_caigen_claim_feedback",
+            main_sku="CG-MAIN",
+            sub_sku="CG-SUB",
+            main_sku_name="旧商品名",
+            claim_pool_open=True,
+            snapshot={
+                "allowed_columns": ["A", "B", "D", "G"],
+                "cells": {"A": "CG-MAIN", "B": "CG-SUB", "D": "旧商品名", "G": 20},
+                "headers_by_column": {"A": ["SPU"], "B": ["SKU"], "D": ["产品名称"], "G": ["进价"]},
+            },
+        )
+        db.add(opportunity)
+        db.flush()
+        flow = models.FlowInstance(opportunity_id=opportunity.id)
+        db.add(flow)
+        db.flush()
+        db.add(
+            models.FlowTask(
+                flow_instance_id=flow.id,
+                node_code="self_claim",
+                task_type="sales_claim",
+                assignee_name="Operator A",
+            )
+        )
+        opportunity_id = opportunity.id
+        db.commit()
+
+    operator_a = client.post("/auth/dingtalk/login", json={"dingtalk_user_id": "dt-a"}).json()["access_token"]
+    operator_b = client.post("/auth/dingtalk/login", json={"dingtalk_user_id": "dt-b"}).json()["access_token"]
+    owner_headers = {"Authorization": f"Bearer {operator_a}"}
+    other_headers = {"Authorization": f"Bearer {operator_b}"}
+
+    allowed = client.patch(
+        f"/opportunities/{opportunity_id}",
+        headers=owner_headers,
+        json={"main_sku_name": "新商品名", "source_cells": {"G": 21}, "edit_reason": "修正商品参数"},
+    )
+    locked_field = client.patch(
+        f"/opportunities/{opportunity_id}",
+        headers=owner_headers,
+        json={"main_sku": "CHANGED", "edit_reason": "尝试改编码"},
+    )
+    locked_cell = client.patch(
+        f"/opportunities/{opportunity_id}",
+        headers=owner_headers,
+        json={"source_cells": {"A": "CHANGED"}, "edit_reason": "尝试改编码"},
+    )
+    not_owned = client.patch(
+        f"/opportunities/{opportunity_id}",
+        headers=other_headers,
+        json={"main_sku_name": "他人修改", "edit_reason": "无权限"},
+    )
+
+    assert allowed.status_code == 200
+    assert allowed.json()["snapshot"]["cells"]["D"] == "新商品名"
+    assert allowed.json()["snapshot"]["cells"]["G"] == 21
+    assert locked_field.status_code == 403
+    assert locked_cell.status_code == 403
+    assert not_owned.status_code == 403
+
+
+def test_manager_and_operator_cannot_edit_read_only_historical_sources() -> None:
+    with SessionLocal() as db:
+        db.add_all(
+            [
+                models.RoleMapping(name="Operator A", role="operator", dingtalk_user_id="dt-a", enabled=True),
+                models.RoleMapping(name="Manager A", role="manager", dingtalk_user_id="dt-m", enabled=True),
+            ]
+        )
+        opportunities = [
+            models.NewProductOpportunity(
+                source_type=source_type,
+                main_sku=f"MAIN-{source_type}",
+                sub_sku=f"SUB-{source_type}",
+                main_sku_name="原商品名",
+                current_status="historical_archive",
+            )
+            for source_type in ("history_selection2", "history_selection34")
+        ]
+        db.add_all(opportunities)
+        db.commit()
+        opportunity_ids = [item.id for item in opportunities]
+
+    tokens = [
+        client.post("/auth/dingtalk/login", json={"dingtalk_user_id": dingtalk_user_id}).json()["access_token"]
+        for dingtalk_user_id in ("dt-a", "dt-m")
+    ]
+    responses = [
+        client.patch(
+            f"/opportunities/{opportunity_id}",
+            headers={"Authorization": f"Bearer {token}"},
+            json={"main_sku_name": "错误修改", "edit_reason": "测试历史只读"},
+        )
+        for token in tokens
+        for opportunity_id in opportunity_ids
+    ]
+
+    assert [response.status_code for response in responses] == [403, 403, 403, 403]
+    assert all("read-only" in response.json()["detail"] for response in responses)
+    with SessionLocal() as db:
+        rows = db.query(models.NewProductOpportunity).filter(models.NewProductOpportunity.id.in_(opportunity_ids)).all()
+        assert {row.main_sku_name for row in rows} == {"原商品名"}
+        assert {row.current_status for row in rows} == {"historical_archive"}
+        assert db.query(models.AuditLog).filter_by(action="opportunity.updated").count() == 0
 
 
 def test_tasks_endpoint_hides_disabled_opportunity_tasks() -> None:

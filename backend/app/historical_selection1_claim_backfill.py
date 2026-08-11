@@ -49,7 +49,6 @@ from app.historical_central_import import ERROR_VALUES, sheet_image_anchors
 from app.historical_selection1_import import SOURCE_TYPE, normalize_selection1_history_rows
 from app.oss_storage import upload_claim_evidence_image
 from app.selection1_importer import SOURCE_TYPE as CURRENT_SELECTION1_SOURCE_TYPE
-from app.selection2_importer import normalize_claim_result
 from app.services import audit
 
 CLAIM_SOURCE_COLUMN = "history_selection1"
@@ -81,6 +80,7 @@ FINANCE_SPLIT_SHEET_PERIODS = {
     "开发-财根团队7.15-7.21": "开发0715期-财根",
 }
 FINANCE_SPLIT_CLAIM_PERIODS = frozenset(FINANCE_SPLIT_SHEET_PERIODS.values())
+INVALID_SALESPERSON_VALUES = {"是", "否", "Y", "N"}
 # 旧表每期的认领区位置不同，必须按已核对的期数列位读取；不能再按最靠前的同名表头猜测。
 PERIOD_CLAIM_LAYOUTS = {
     "开发0414期": {"salesperson": "IT", "claim_flag": "IU", "daily_sales": "IV", "feedback_summary": "IW", "note": "IX"},
@@ -132,7 +132,7 @@ def _standard_claim_layout_available(cells: dict[str, Any]) -> bool:
 def _finance_split_claim_layout(cells: dict[str, Any]) -> dict[str, str]:
     salesperson = _clean_text((cells.get("BZ") or {}).get("value"))
     flag = _clean_text((cells.get("CA") or {}).get("value"))
-    if salesperson and salesperson not in {"是", "否", "Y", "N"} and normalize_claim_result(flag):
+    if salesperson and salesperson not in INVALID_SALESPERSON_VALUES and normalize_claim_result(flag):
         return FINANCE_SHIFTED_CLAIM_LAYOUT
     return STANDARD_CLAIM_LAYOUT
 
@@ -186,6 +186,15 @@ def _clean_text(value: Any) -> str | None:
     return None if text in ERROR_VALUES else text
 
 
+def normalize_claim_result(value: Any) -> str | None:
+    text = _clean_text(value)
+    if text in {"是", "认领", "claim", "CLAIM", "yes", "YES"}:
+        return "claim"
+    if text in {"否", "不认领", "reject", "REJECT", "no", "NO"}:
+        return "reject"
+    return None
+
+
 def _strict_number_value(value: Any) -> float | None:
     value = _clean_text(value)
     if value is None:
@@ -203,7 +212,7 @@ def _strict_number_value(value: Any) -> float | None:
 def decide_claim(fields: dict[str, Any]) -> tuple[str, dict[str, Any] | None]:
     """Return historical claim facts; only a positive numeric daily-sales value is a claim."""
     salesperson = _clean_text(fields.get("salesperson"))
-    if not salesperson:
+    if not salesperson or salesperson in INVALID_SALESPERSON_VALUES:
         return "no_claim_info", None
 
     raw_sales = _clean_text(fields.get("daily_sales"))

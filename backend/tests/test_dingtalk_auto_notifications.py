@@ -115,7 +115,14 @@ def test_operator_auto_card_counts_pending_claim_main_sku_groups() -> None:
         assert sender.cards[0].receiver_role == "operator"
         assert sender.cards[0].left_count == 2
         assert sender.cards[0].right_count == 2
-        assert sender.cards[0].action_url == "https://np.example/?from=ding&role=operator"
+        assert sender.cards[0].action_url == "https://np.example/"
+
+
+def test_dingtalk_action_url_is_base_url_with_trailing_slash() -> None:
+    settings = Settings(platform_base_url="http://101.132.26.138:8080/?from=ding&role=operator")
+
+    assert services.dingtalk_action_url(settings, "operator", view="research") == "http://101.132.26.138:8080/?from=ding&role=operator&view=research"
+    assert services.dingtalk_action_url(settings, "supervisor") == "http://101.132.26.138:8080/?from=ding&role=supervisor"
 
 
 def test_supervisor_card_uses_test_receiver_once_without_broadcasting() -> None:
@@ -129,15 +136,31 @@ def test_supervisor_card_uses_test_receiver_once_without_broadcasting() -> None:
                 models.RoleMapping(name="其他主管", role="manager", dingtalk_user_id="dt-other", enabled=True),
             ]
         )
-        db.add(
-            models.NewProductOpportunity(
-                source_type="test",
-                main_sku="MAIN-R",
-                sub_sku="S1",
-                current_status=OPPORTUNITY_CLAIM_REJECTED,
-            )
+        rejected = models.NewProductOpportunity(
+            source_type="test",
+            main_sku="MAIN-R",
+            sub_sku="S1",
+            current_status=OPPORTUNITY_CLAIM_REJECTED,
         )
-        db.add(models.NewProductOpportunity(source_type="test", main_sku="MAIN-C", sub_sku="S2", current_status=OPPORTUNITY_CLAIM_SUBMITTED))
+        claimed = models.NewProductOpportunity(source_type="test", main_sku="MAIN-C", sub_sku="S2", current_status=OPPORTUNITY_CLAIM_SUBMITTED)
+        db.add_all([rejected, claimed])
+        db.flush()
+        db.add_all(
+            [
+                models.SalesClaimForecast(
+                    opportunity_id=rejected.id,
+                    salesperson_name="运营A",
+                    claim_result=CLAIM_RESULT_REJECT,
+                    source_column="platform",
+                ),
+                models.SalesClaimForecast(
+                    opportunity_id=claimed.id,
+                    salesperson_name="运营B",
+                    claim_result="claim",
+                    source_column="platform",
+                ),
+            ]
+        )
         db.flush()
 
         log = services.notify_supervisor_new_product_todo_card(db, "not-claim-test", settings, sender)
@@ -148,7 +171,45 @@ def test_supervisor_card_uses_test_receiver_once_without_broadcasting() -> None:
         assert all(card.receiver_role == "supervisor" for card in sender.cards)
         assert all(card.left_count == 1 for card in sender.cards)
     assert all(card.right_count == 1 for card in sender.cards)
-    assert all(card.action_url == "https://np.example/?from=ding&role=supervisor" for card in sender.cards)
+    assert all(card.action_url == "https://np.example/" for card in sender.cards)
+
+
+def test_supervisor_review_counts_only_current_platform_claims() -> None:
+    with SessionLocal() as db:
+        historical = models.NewProductOpportunity(
+            source_type="history_selection1",
+            main_sku="HISTORY-C",
+            sub_sku="S1",
+            current_status=OPPORTUNITY_CLAIM_SUBMITTED,
+        )
+        platform = models.NewProductOpportunity(
+            source_type="test",
+            main_sku="PLATFORM-C",
+            sub_sku="S2",
+            current_status=OPPORTUNITY_CLAIM_SUBMITTED,
+        )
+        db.add_all([historical, platform])
+        db.flush()
+        db.add_all(
+            [
+                models.SalesClaimForecast(
+                    opportunity_id=historical.id,
+                    salesperson_name="历史运营",
+                    claim_result="claim",
+                    source_column="history_selection1",
+                ),
+                models.SalesClaimForecast(
+                    opportunity_id=platform.id,
+                    salesperson_name="当前运营",
+                    claim_result="claim",
+                    source_column="platform",
+                ),
+            ]
+        )
+        db.flush()
+
+        assert services.count_pending_claim_reviews(db) == 1
+        assert services.count_pending_not_claim_reviews(db) == 0
 
 
 def test_card_test_receiver_redirects_operator_card_to_named_user() -> None:

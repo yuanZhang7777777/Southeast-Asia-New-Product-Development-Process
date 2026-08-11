@@ -206,6 +206,69 @@ def test_listing_batch_creates_main_sku_binding() -> None:
         ]
 
 
+def test_listing_workbench_returns_bound_product_image() -> None:
+    headers = login("销售A", "operator", "dt-a")
+    create_waiting_listing_group("销售A", "MAIN-A")
+    with SessionLocal() as db:
+        opportunity = db.scalar(select(models.NewProductOpportunity).where(models.NewProductOpportunity.main_sku == "MAIN-A"))
+        assert opportunity is not None
+        opportunity.image_url = "/uploaded-sources/product-images/main-a.png"
+        db.commit()
+
+    listing = create_listing(headers, "ITEM-IMAGE")
+    response = client.get("/listing-workbench", headers=headers)
+
+    assert response.status_code == 200
+    body = response.json()
+    listing_row = next(row for row in body["listing_records"] if row["id"] == listing["id"])
+    period_row = next(row for row in body["period_rows"] if row["listing_record_id"] == listing["id"])
+    assert listing_row["image_url"] == "/uploaded-sources/product-images/main-a.png"
+    assert period_row["image_url"] == "/uploaded-sources/product-images/main-a.png"
+
+
+def test_listing_workbench_falls_back_to_product_image_by_main_sku_and_country() -> None:
+    headers = login("销售A", "operator", "dt-a")
+    with SessionLocal() as db:
+        listing = models.ListingRecord(
+            id=models.new_id(),
+            source_group_key="history:MAIN-HIST:PH",
+            source_claim_ids=[],
+            source_type="history_finebi",
+            business_period="开发0414期",
+            country="菲律宾",
+            site="PH",
+            main_sku="MAIN-HIST",
+            main_sku_name="历史商品",
+            salesperson_name="销售A",
+            shop="Shop History",
+            item="90001",
+            listing_strategy="历史刊登",
+            first_period_start=date(2026, 4, 16),
+            first_period_end=date(2026, 4, 22),
+        )
+        db.add(listing)
+        db.add(
+            models.NewProductOpportunity(
+                source_type="selection1_developer_claim_feedback",
+                source_file="选品1.xlsx",
+                source_sheet="开发0414期",
+                batch="开发0414期",
+                country="菲律宾",
+                site="PH",
+                main_sku="MAIN-HIST",
+                sub_sku="MAIN-HIST-A",
+                image_url="/uploaded-sources/product-images/main-hist.png",
+            )
+        )
+        db.commit()
+
+    response = client.get("/listing-workbench?include_history=true", headers=headers)
+
+    assert response.status_code == 200
+    listing_row = next(row for row in response.json()["listing_records"] if row["main_sku"] == "MAIN-HIST")
+    assert listing_row["image_url"] == "/uploaded-sources/product-images/main-hist.png"
+
+
 def test_main_level_binding_duplicate_is_rejected_by_partial_index() -> None:
     with SessionLocal() as db:
         listing = seeded_listing("销售A", date(2026, 7, 16))

@@ -32,7 +32,7 @@ from app.item_finance_source import (
 SOURCE_TYPE = "history_finebi"
 RECORD_SOURCE = "history_finebi"
 BUSINESS_PERIOD = "历史归档"
-EXCLUDED_PERIODS = ("0723-0729",)
+EXCLUDED_PERIODS: tuple[str, ...] = ()
 from app.historical_archive_import import APPLY_ALLOWED_ENVS
 PERIOD_FILE_PATTERN = re.compile(r"(\d{4}-\d{4})\.xlsx$")
 KEY_COLUMNS = ("ITEMID", "主SKU", "店铺")
@@ -217,13 +217,11 @@ def build_plan(
             (bench["main_skus"] if bench else set())
             | set().union(*(bucket["main_skus"] for bucket in period_data.values()), set())
         )
-        finebi_weeks = _first_four_finebi_weeks(period_data, year)
+        finebi_weeks = _latest_four_finebi_weeks(period_data, year)
         workbench_fallback_weeks = []
         review_weeks = []
         if bench:
             for week_number, week in sorted(bench["weeks"].items()):
-                if week["has_metrics"] and not finebi_weeks:
-                    workbench_fallback_weeks.append(week)
                 if week["has_review"]:
                     review_weeks.append(week)
         country = None
@@ -273,8 +271,155 @@ def build_plan(
     return {"summary": summary, "items": items}
 
 
+def build_plan_from_candidate_json(db: Session, raw_plan: dict[str, Any]) -> dict[str, Any]:
+    existing_active = {
+        (shop, item): listing_id
+        for listing_id, shop, item in db.execute(
+            select(
+                models.ListingRecord.id,
+                models.ListingRecord.shop,
+                models.ListingRecord.item,
+            ).where(models.ListingRecord.status == "active")
+        )
+    }
+    opportunity_by_period: dict[tuple[str, str | None, str | None], list[str]] = defaultdict(list)
+    opportunity_by_country: dict[tuple[str, str | None], list[str]] = defaultdict(list)
+    for opportunity_id, main_sku, country, batch in db.execute(
+        select(
+            models.NewProductOpportunity.id,
+            models.NewProductOpportunity.main_sku,
+            models.NewProductOpportunity.country,
+            models.NewProductOpportunity.batch,
+        )
+    ):
+        opportunity_by_period[(main_sku, country, batch)].append(opportunity_id)
+        opportunity_by_country[(main_sku, country)].append(opportunity_id)
 
-def _first_four_finebi_weeks(period_data: dict[str, dict[str, Any]], year: int) -> list[dict[str, Any]]:
+    entries: dict[tuple[str, str], dict[str, Any]] = {}
+    for candidate in raw_plan.get("push_listing_candidates", []):
+        if not candidate.get("can_enter_observation"):
+            continue
+        shop = candidate.get("shop")
+        item = candidate.get("item")
+        main_sku = normalize_main_sku(candidate.get("main_sku"))
+        if not shop or not item or not main_sku:
+            continue
+        entry = entries.setdefault(
+            (shop, item),
+            {
+                "shop": shop,
+                "item": item,
+                "main_skus": set(),
+                "salespersons": set(),
+                "countries": set(),
+                "business_periods": set(),
+                "source_rows": [],
+                "strategy": {},
+            },
+        )
+        entry["main_skus"].add(main_sku)
+        if candidate.get("push_salesperson"):
+            entry["salespersons"].add(candidate["push_salesperson"])
+        if candidate.get("country_zh"):
+            entry["countries"].add(candidate["country_zh"])
+        if candidate.get("selected_platform_period"):
+            entry["business_periods"].add(candidate["selected_platform_period"])
+        source_row = (candidate.get("push_source") or {}).get("row")
+        if source_row is not None:
+            entry["source_rows"].append(source_row)
+        for key, value in (candidate.get("strategy_raw") or {}).items():
+            if value and not entry["strategy"].get(key):
+                entry["strategy"][key] = value
+
+    weeks_by_item: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
+    for row in raw_plan.get("candidate_observation_periods", []):
+        shop = row.get("shop")
+        item = row.get("item")
+        if not shop or not item:
+            continue
+        source = row.get("finebi_source") or {}
+        weeks_by_item[(shop, item)].append(
+            {
+                "period": row["period_code"],
+                "window": (date.fromisoformat(row["period_start"]), date.fromisoformat(row["period_end"])),
+                "orders": row.get("orders") or 0,
+                "revenue": row.get("revenue") or 0,
+                "gross_profit": row.get("gross_profit") or 0,
+                "row_count": source.get("source_row_count") or len(source.get("rows") or []),
+                "source_file": source.get("file_name"),
+                "main_skus": sorted(set(source.get("main_skus") or row.get("main_skus") or [row.get("main_sku")])),
+                "binding_keys": sorted(set(row.get("binding_keys") or [row.get("binding_key")])),
+                "source_rows": sorted(set(row.get("source_rows") or [])),
+            }
+        )
+
+    items: list[dict[str, Any]] = []
+    for key in sorted(entries):
+        entry = entries[key]
+        shop, item = key
+        main_skus = sorted(entry["main_skus"])
+        countries = sorted(entry["countries"])
+        business_periods = sorted(entry["business_periods"])
+        country = countries[0] if countries else country_from_shop(shop)
+        business_period = business_periods[0] if len(business_periods) == 1 else BUSINESS_PERIOD
+        opportunity_by_main_sku = {}
+        for main_sku in main_skus:
+            period_matches = opportunity_by_period.get((main_sku, country, business_period), [])
+            opportunity_by_main_sku[main_sku] = (
+                period_matches
+                if len(period_matches) == 1
+                else opportunity_by_country.get((main_sku, country), [])
+            )
+        finebi_weeks = sorted(weeks_by_item.get(key, []), key=lambda week: week["window"][0])
+        items.append(
+            {
+                "shop": shop,
+                "item": item,
+                "main_skus": main_skus,
+                "representative_main_sku": main_skus[0] if main_skus else None,
+                "salesperson": sorted(entry["salespersons"])[0] if len(entry["salespersons"]) == 1 else None,
+                "country": country,
+                "business_period": business_period,
+                "strategy": entry["strategy"],
+                "summary": None,
+                "operation_dates": [],
+                "source_rows": sorted(set(entry["source_rows"])),
+                "finebi_weeks": finebi_weeks,
+                "workbench_fallback_weeks": [],
+                "review_weeks": [],
+                "opportunity_by_main_sku": opportunity_by_main_sku,
+                "existing_listing": existing_active.get(key),
+                "is_shared": len(main_skus) > 1,
+            }
+        )
+    return {
+        "summary": {
+            "scoped_items": len(items),
+            "workbench_items": len(items),
+            "finebi_items_total": len(weeks_by_item),
+            "finebi_items_out_of_scope": 0,
+            "items_without_main_sku": sum(1 for entry in items if not entry["main_skus"]),
+            "listings_to_update": sum(1 for entry in items if entry["existing_listing"]),
+            "listings_to_create": sum(1 for entry in items if not entry["existing_listing"] and entry["main_skus"]),
+            "shared_items": sum(1 for entry in items if entry["is_shared"]),
+            "bindings_planned": sum(len(entry["main_skus"]) for entry in items),
+            "finebi_week_rows": sum(len(entry["finebi_weeks"]) for entry in items),
+            "workbench_fallback_week_rows": 0,
+            "review_weeks": 0,
+            "opportunity_linked_items": sum(
+                1 for entry in items if any(len(ids) == 1 for ids in entry["opportunity_by_main_sku"].values())
+            ),
+        },
+        "items": items,
+    }
+
+
+
+def _latest_four_finebi_weeks(period_data: dict[str, dict[str, Any]], year: int) -> list[dict[str, Any]]:
+    selected = sorted(
+        ((period, bucket) for period, bucket in period_data.items() if bucket["row_count"] > 0),
+        key=lambda item: period_window(item[0], year)[0],
+    )[-4:]
     return [
         {
             "period": period,
@@ -282,7 +427,7 @@ def _first_four_finebi_weeks(period_data: dict[str, dict[str, Any]], year: int) 
             **{field: bucket[field] for field in ("orders", "revenue", "gross_profit", "row_count", "source_file")},
             "main_skus": sorted(bucket["main_skus"]),
         }
-        for period, bucket in sorted(period_data.items())[:4]
+        for period, bucket in selected
     ]
 def apply_plan(db: Session, plan: dict[str, Any], source_label: str, imported_by: str | None = None) -> dict[str, int]:
     batch = models.ImportBatch(
@@ -317,12 +462,13 @@ def apply_plan(db: Session, plan: dict[str, Any], source_label: str, imported_by
         ).one_or_none()
         if listing is None:
             first_window = entry["finebi_weeks"][0]["window"] if entry["finebi_weeks"] else None
+            business_period = entry.get("business_period") or BUSINESS_PERIOD
             listing = models.ListingRecord(
                 id=models.new_id(),
                 source_group_key=f"history:finebi:{entry['shop']}:{entry['item']}",
                 source_claim_ids=[],
                 source_type=SOURCE_TYPE,
-                business_period=BUSINESS_PERIOD,
+                business_period=business_period,
                 country=entry["country"],
                 site=entry["country"],
                 main_sku=entry["representative_main_sku"],
@@ -394,6 +540,8 @@ def apply_plan(db: Session, plan: dict[str, Any], source_label: str, imported_by
                     "source_file": week["source_file"],
                     "row_count": week["row_count"],
                     "main_skus": week["main_skus"],
+                    "binding_keys": week.get("binding_keys") or [],
+                    "push_source_rows": week.get("source_rows") or [],
                 },
                 fetched_at=now,
             )
@@ -416,44 +564,14 @@ def apply_plan(db: Session, plan: dict[str, Any], source_label: str, imported_by
         for week in entry["review_weeks"]:
             period = existing_weeks.get(week["week_number"])
             if period is None:
-                period = _upsert_week(
-                    db,
-                    existing_weeks,
-                    listing,
-                    week["week_number"],
-                    counts,
-                    period_start=None,
-                    period_end=None,
-                    orders=None,
-                    revenue=None,
-                    gross_profit=None,
-                    metrics_origin=None,
-                    snapshot={"source": "刊登监控", "week_number": week["week_number"]},
-                    fetched_at=None,
-                )
+                continue
             if week["positioning"] and not period.product_positioning:
                 period.product_positioning = week["positioning"]
             if week["optimization_action"] and not period.optimization_action:
                 period.optimization_action = week["optimization_action"]
         if entry["summary"]:
-            week_four = existing_weeks.get(4)
-            if week_four is None:
-                week_four = _upsert_week(
-                    db,
-                    existing_weeks,
-                    listing,
-                    4,
-                    counts,
-                    period_start=None,
-                    period_end=None,
-                    orders=None,
-                    revenue=None,
-                    gross_profit=None,
-                    metrics_origin=None,
-                    snapshot={"source": "刊登监控", "week_number": 4},
-                    fetched_at=None,
-                )
-            if not week_four.four_week_summary:
+            week_four = existing_weeks.get(4) or existing_weeks.get(max(existing_weeks) if existing_weeks else 0)
+            if week_four is not None and not week_four.four_week_summary:
                 week_four.four_week_summary = entry["summary"]
     batch.created_count = counts["listings_created"]
     batch.updated_count = counts["listings_reused"]
@@ -546,8 +664,9 @@ def _strategy_text(strategy: dict[str, Any]) -> str:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="历史 FineBI/刊登监控导入器（默认 dry-run）")
-    parser.add_argument("--workbench", required=True, help="刊登监控7.25.xlsx 路径")
-    parser.add_argument("--finebi-dir", required=True, help="finebi_live 目录路径")
+    parser.add_argument("--workbench", help="刊登监控7.25.xlsx 路径")
+    parser.add_argument("--finebi-dir", help="finebi_live 目录路径")
+    parser.add_argument("--plan-json", help="已审核的历史推品/FineBI JSON 计划；提供后不重新按源表匹配")
     parser.add_argument("--year", type=int, default=2026)
     parser.add_argument("--output-dir", default="outputs")
     parser.add_argument("--apply-dev", action="store_true", help="真正写入开发库（默认只 dry-run）")
@@ -557,22 +676,37 @@ def main() -> None:
     from app.config import get_settings
     from app.db import SessionLocal
 
-    workbench, warnings = read_workbench(Path(args.workbench))
-    finebi, periods, skipped = read_finebi_periods(Path(args.finebi_dir), args.year)
     with SessionLocal() as db:
-        plan = build_plan(db, workbench, finebi, args.year)
-        report = {
-            "mode": "apply" if args.apply_dev else "dry-run",
-            "periods": periods,
-            "excluded_periods": skipped,
-            "workbench_warnings": warnings,
-            **plan["summary"],
-        }
+        if args.plan_json:
+            raw_plan = json.loads(Path(args.plan_json).read_text(encoding="utf-8"))
+            plan = build_plan_from_candidate_json(db, raw_plan)
+            report = {
+                "mode": "apply" if args.apply_dev else "dry-run",
+                "source": "plan-json",
+                "plan_json": args.plan_json,
+                **plan["summary"],
+            }
+            source_label = Path(args.plan_json).name
+        else:
+            if not args.workbench or not args.finebi_dir:
+                parser.error("--workbench and --finebi-dir are required unless --plan-json is provided")
+            workbench, warnings = read_workbench(Path(args.workbench))
+            finebi, periods, skipped = read_finebi_periods(Path(args.finebi_dir), args.year)
+            plan = build_plan(db, workbench, finebi, args.year)
+            report = {
+                "mode": "apply" if args.apply_dev else "dry-run",
+                "source": "workbench+finebi",
+                "periods": periods,
+                "excluded_periods": skipped,
+                "workbench_warnings": warnings,
+                **plan["summary"],
+            }
+            source_label = Path(args.workbench).name
         if args.apply_dev:
             settings = get_settings()
             if settings.app_env not in APPLY_ALLOWED_ENVS:
                 raise SystemExit(f"apply blocked: app_env={settings.app_env} 不在允许环境 {sorted(APPLY_ALLOWED_ENVS)}")
-            counts = apply_plan(db, plan, source_label=Path(args.workbench).name, imported_by=args.imported_by)
+            counts = apply_plan(db, plan, source_label=source_label, imported_by=args.imported_by)
             db.commit()
             report["apply_counts"] = counts
     output_dir = Path(args.output_dir)

@@ -112,6 +112,7 @@ class NewProductOpportunity(TimestampMixin, Base):
     product_type: Mapped[str | None] = mapped_column(String(64))
     reason: Mapped[str | None] = mapped_column(Text)
     current_status: Mapped[str] = mapped_column(String(64), default="pending_assignment")
+    claim_pool_open: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
     snapshot: Mapped[dict] = mapped_column(JSON, default=dict)
 
     import_batch: Mapped["ImportBatch | None"] = relationship(back_populates="opportunities")
@@ -135,6 +136,21 @@ class ImportBatch(TimestampMixin, Base):
 
     opportunities: Mapped[list[NewProductOpportunity]] = relationship(back_populates="import_batch")
     source_snapshots: Mapped[list["SourceRecordSnapshot"]] = relationship(back_populates="import_batch")
+
+
+class ImportJob(TimestampMixin, Base):
+    __tablename__ = "import_job"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    kind: Mapped[str] = mapped_column(String(32), index=True)
+    status: Mapped[str] = mapped_column(String(32), default="pending", index=True)
+    source_file: Mapped[str] = mapped_column(String(512))
+    source_sheet: Mapped[str] = mapped_column(String(128))
+    business_period: Mapped[str | None] = mapped_column(String(128))
+    error: Mapped[str | None] = mapped_column(Text)
+    result: Mapped[dict | None] = mapped_column(JSON)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class SourceRecordSnapshot(TimestampMixin, Base):

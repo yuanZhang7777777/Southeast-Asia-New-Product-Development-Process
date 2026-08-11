@@ -6,6 +6,7 @@ from pathlib import Path
 os.environ["DATABASE_URL"] = f"sqlite:///{Path(__file__).with_name('test_workflow.db')}"
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 from sqlalchemy import event  # noqa: E402
 
@@ -148,6 +149,7 @@ def test_stocking_request_post_reuses_claim_draft_and_rejects_mismatched_opportu
             salesperson_name="Sales A",
             claim_result="claim",
             claim_daily_sales=2,
+            source_column="platform",
         )
         db.add(claim)
         db.flush()
@@ -169,6 +171,49 @@ def test_stocking_request_post_reuses_claim_draft_and_rejects_mismatched_opportu
     assert valid.json()["id"] == ids[3]
     with SessionLocal() as db:
         assert db.query(models.StockingRequest).count() == 1
+
+
+def test_historical_claim_cannot_create_stocking_draft_via_service_or_api() -> None:
+    with SessionLocal() as db:
+        opportunity = models.NewProductOpportunity(
+            source_type="history_selection34",
+            main_sku="MAIN-HISTORY",
+            sub_sku="SUB-HISTORY",
+            current_status="historical_archive",
+        )
+        db.add(opportunity)
+        db.flush()
+        claim = models.SalesClaimForecast(
+            opportunity_id=opportunity.id,
+            salesperson_name="History Operator",
+            claim_result="claim",
+            claim_daily_sales=2,
+            source_column="history_selection34:BZ:CE",
+            claim_source="history_selection34",
+        )
+        db.add(claim)
+        db.commit()
+        opportunity_id = opportunity.id
+        claim_id = claim.id
+
+        assert services.create_stocking_draft_from_claim(db, opportunity_id) is None
+        with pytest.raises(PermissionError, match="platform"):
+            services.create_stocking_draft_for_claim(db, claim_id)
+        assert db.query(models.StockingRequest).count() == 0
+
+    response = client.post(
+        "/stocking/requests",
+        json={
+            "opportunity_id": opportunity_id,
+            "claim_record_id": claim_id,
+            "daily_sales": 2,
+        },
+    )
+
+    assert response.status_code == 403
+    assert "platform" in response.json()["detail"]
+    with SessionLocal() as db:
+        assert db.query(models.StockingRequest).count() == 0
 
 
 def test_sales_self_selection_creates_each_child_atomically_and_applies_decisions() -> None:

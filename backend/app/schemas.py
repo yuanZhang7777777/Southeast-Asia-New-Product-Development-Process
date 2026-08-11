@@ -76,10 +76,21 @@ class OpportunityCreate(OpportunityBase):
     snapshot: dict[str, Any] = Field(default_factory=dict)
 
 
+class PendingReviewClaimRead(BaseModel):
+    claim_record_id: str
+    claim_result: str
+    salesperson_name: str | None = None
+    claim_daily_sales: float | None = None
+    reject_reason: str | None = None
+    feedback_summary: str | None = None
+    note: str | None = None
+
+
 # 列表专用轻量视图：不带 snapshot（源表快照可达数十 KB/行），完整快照走 GET /opportunities/{id}。
 class OpportunityListRead(OpportunityBase):
     id: str
     current_status: str
+    claim_pool_open: bool = False
     latest_claim_record_id: str | None = None
     latest_claim_result: str | None = None
     latest_claim_salesperson: str | None = None
@@ -89,6 +100,7 @@ class OpportunityListRead(OpportunityBase):
     latest_claim_note: str | None = None
     latest_review_status: str | None = None
     latest_review_comment: str | None = None
+    pending_review_claims: list[PendingReviewClaimRead] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
 
@@ -105,6 +117,7 @@ class HistoricalClaimRead(BaseModel):
     source_column: str | None = None
     source_period: str | None = None
     source_row: int | None = None
+    source_note: Any | None = None
     evidence_images: list[dict[str, Any]] = Field(default_factory=list)
     manager_review_status: str | None = None
     manager_review_comment: str | None = None
@@ -182,6 +195,22 @@ class Selection2ImportResponse(BaseModel):
     task_count: int
 
 
+class ImportJobRead(BaseModel):
+    id: str
+    kind: str
+    status: str
+    source_file: str
+    source_sheet: str
+    business_period: str | None = None
+    error: str | None = None
+    result: dict[str, Any] | None = None
+    created_at: datetime
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+
+    model_config = {"from_attributes": True}
+
+
 class ExcelSheetListResponse(BaseModel):
     sheets: list[str]
     default_sheet: str | None = None
@@ -257,6 +286,14 @@ class TaskRead(BaseModel):
     status: str
     deadline_at: datetime | None
     completed_at: datetime | None
+    claim_record_id: str | None = None
+    claim_result: str | None = None
+    claim_daily_sales: float | None = None
+    reject_reason: str | None = None
+    feedback_summary: str | None = None
+    claim_note: str | None = None
+    review_status: str | None = None
+    review_comment: str | None = None
 
     model_config = {"from_attributes": True}
 
@@ -299,6 +336,11 @@ class ClaimCreate(BaseModel):
     note: str | None = None
     claim_source: str = "assigned_task"
     task_id: str | None = None
+
+
+class ClaimPoolJoinRequest(BaseModel):
+    opportunity_ids: list[str] = Field(min_length=1, max_length=500)
+    assignee_name: str | None = None
 
 
 class ReviewCreate(BaseModel):
@@ -523,6 +565,28 @@ class AvailableStockingItem(BaseModel):
     status: str
 
 
+class TraceabilityItem(BaseModel):
+    opportunity_id: str
+    request_id: str | None = None
+    claim_record_id: str
+    business_period: str | None = None
+    traceability_type: str
+    operation_status: str
+    salesperson_name: str | None = None
+    main_sku: str
+    sub_sku: str
+    site: str | None = None
+    claim_result: str | None = None
+    claim_daily_sales: float | None = None
+    reject_reason: str | None = None
+    feedback_summary: str | None = None
+    review_status: str | None = None
+    review_comment: str | None = None
+    source_file: str | None = None
+    source_sheet: str | None = None
+    source_row: int | None = None
+
+
 class ExportPeriodSummary(BaseModel):
     business_period: str
     latest_imported_at: datetime | None = None
@@ -552,6 +616,7 @@ class ArrivalRecordRead(ArrivalRecordCreate):
 class SecondaryResearchPeerRead(BaseModel):
     claim_record_id: str
     salesperson_name: str | None = None
+    claim_daily_sales: float | None = None
     secondary_research_at: datetime | None = None
     secondary_competitor_url: str | None = None
     secondary_conclusion: str | None = None
@@ -565,6 +630,7 @@ class SecondaryResearchItemRead(BaseModel):
     claim_record_id: str
     opportunity_id: str
     salesperson_name: str
+    claim_daily_sales: float | None = None
     downstream_status: str
     arrival_detected_at: datetime | None = None
     secondary_research_at: datetime | None = None
@@ -656,6 +722,54 @@ class SecondaryResearchSubmitGroupRequest(BaseModel):
     claim_record_ids: list[str] = Field(min_length=1)
 
 
+class ManualSecondaryResearchCreate(BaseModel):
+    country: str
+    site: str | None = None
+    main_sku: str
+    sub_sku: str
+    salesperson_name: str | None = None
+    business_period: str | None = None
+    main_sku_name: str | None = None
+    sub_sku_name: str | None = None
+    secondary_competitor_url: str | None = None
+
+    model_config = {"extra": "forbid"}
+
+
+class PlmArrivalAssignmentRead(BaseModel):
+    plm_arrival_item_id: str
+    arrival_date: str
+    source_file: str | None = None
+    source_sheet: str | None = None
+    source_row: int | None = None
+    country: str | None = None
+    warehouse: str | None = None
+    main_sku: str | None = None
+    sub_sku: str | None = None
+    product_name: str | None = None
+    plm_salesperson_name: str | None = None
+    latest_storage_time: datetime | None = None
+    first_listing_time: datetime | None = None
+    match_status: str
+    existing_opportunity_count: int = 0
+    assigned_salesperson_name: str | None = None
+    claim_record_id: str | None = None
+    opportunity_id: str | None = None
+    note: str | None = None
+
+
+class PlmArrivalAssignmentRequest(BaseModel):
+    salesperson_name: str
+
+    model_config = {"extra": "forbid"}
+
+
+class PlmArrivalAssignmentCloseRequest(BaseModel):
+    reason: str
+
+    model_config = {"extra": "forbid"}
+
+
 class PendingListingTaskRead(BaseModel):
     task_key: str
     source_type: str
@@ -676,6 +790,7 @@ class ListingRecordRead(BaseModel):
     task_key: str
     main_sku: str
     main_sku_name: str | None = None
+    image_url: str | None = None
     country: str | None = None
     site: str | None = None
     salesperson_name: str
@@ -700,6 +815,7 @@ class ObservationPeriodRead(BaseModel):
     listing_record_id: str
     main_sku: str
     main_sku_name: str | None = None
+    image_url: str | None = None
     country: str | None = None
     salesperson_name: str
     shop: str
@@ -734,6 +850,8 @@ class DashboardCountsRead(BaseModel):
     waiting_listing: int = Field(ge=0)
     waiting_secondary_research: int = Field(ge=0)
     pending_review_periods: int = Field(ge=0)
+    pending_claim_reviews: int = Field(ge=0)
+    pending_not_claim_reviews: int = Field(ge=0)
 
 
 class ListingBatchRow(BaseModel):

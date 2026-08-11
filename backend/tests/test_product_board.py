@@ -45,6 +45,35 @@ def test_product_board_keeps_one_group_with_owner_filtered_responsibilities() ->
     assert "multi_owner" in manager.json()[0]["summary_tags"]
 
 
+def test_product_board_default_limits_main_sku_groups_and_server_filters_query() -> None:
+    with SessionLocal() as db:
+        for index in range(305):
+            db.add(
+                models.NewProductOpportunity(
+                    source_type="selection1_developer_claim_feedback",
+                    source_file="selection1.xlsx",
+                    source_sheet="2026-W30",
+                    source_row=index + 1,
+                    batch="2026-W30",
+                    site="PH",
+                    main_sku=f"MAIN-{index:03d}",
+                    main_sku_name=f"Main {index:03d}",
+                    sub_sku=f"SUB-{index:03d}",
+                    sub_sku_name=f"Sub {index:03d}",
+                    current_status="pending_assignment",
+                )
+            )
+        db.commit()
+
+    default_response = client.get("/product-board")
+    query_response = client.get("/product-board?query=MAIN-304")
+
+    assert default_response.status_code == 200
+    assert len(default_response.json()) == 300
+    assert query_response.status_code == 200
+    assert [group["main_sku"] for group in query_response.json()] == ["MAIN-304"]
+
+
 def test_product_board_owner_filter_includes_pending_assignment_tasks() -> None:
     with SessionLocal() as db:
         opportunity = models.NewProductOpportunity(
@@ -136,6 +165,16 @@ def test_product_board_filters_status_arrival_site_query_and_export_moves_claim_
     assert export.status_code == 200
     assert after_export.json()[0]["responsibilities"][0]["claim_record_id"] == owner_b_claim
     assert after_export.json()[0]["responsibilities"][0]["visible_status"] == "waiting_arrival"
+
+
+def test_product_board_shows_historical_secondary_status() -> None:
+    owner_a_claim, _ = prepare_approved_group(site="PH")
+    set_claim_status(owner_a_claim, "historical_secondary_submitted", datetime(2026, 7, 10, tzinfo=timezone.utc))
+
+    response = client.get("/product-board", params={"visible_status": "historical_secondary_submitted"})
+
+    assert response.status_code == 200
+    assert response.json()[0]["responsibilities"][0]["visible_status"] == "historical_secondary_submitted"
 
 
 def test_product_board_isolates_same_sku_by_business_period() -> None:
@@ -253,6 +292,195 @@ def test_product_board_shows_historical_claim_relationships() -> None:
         ("历史运营甲", 0.5, "historical_archive"),
         ("历史运营乙", None, "historical_archive"),
     }
+
+
+def test_product_board_shows_plm_discovery_claim_owner() -> None:
+    with SessionLocal() as db:
+        opportunity = models.NewProductOpportunity(
+            source_type="plm_arrival_discovery",
+            source_file="plm.xlsx",
+            source_sheet="汇总表格",
+            batch="PLM到货20260727-0802",
+            site="越南",
+            country="越南",
+            main_sku="CAHG224",
+            main_sku_name="PLM新品",
+            sub_sku="CAHG224-SV",
+            sub_sku_name="PLM新品",
+            current_status="claim_submitted",
+        )
+        db.add(opportunity)
+        db.flush()
+        db.add(
+            models.SalesClaimForecast(
+                opportunity_id=opportunity.id,
+                salesperson_name="赵钰婷",
+                claim_result="claim",
+                source_column="plm_arrival_discovery",
+                claim_source="plm_arrival_discovery",
+                downstream_status="waiting_secondary_research",
+                arrival_detected_at=datetime(2026, 7, 28, 8, 31, tzinfo=timezone.utc),
+            )
+        )
+        db.commit()
+
+    response = client.get("/product-board?query=CAHG224")
+
+    assert response.status_code == 200
+    [group] = response.json()
+    assert group["main_sku"] == "CAHG224"
+    assert group["responsibilities"][0]["salesperson_name"] == "赵钰婷"
+    assert group["responsibilities"][0]["visible_status"] == "waiting_secondary_research"
+
+
+def test_product_board_shows_selection2_and_selection34_historical_claim_relationships() -> None:
+    with SessionLocal() as db:
+        for index, source_type in enumerate(("history_selection2", "history_selection34"), start=1):
+            opportunity = models.NewProductOpportunity(
+                source_type=source_type,
+                source_file=f"{source_type}.xlsx",
+                source_sheet=f"历史期{index}",
+                source_row=2,
+                batch=f"历史期{index}",
+                site="PH",
+                country="PH",
+                main_sku=f"MAIN-{index}",
+                sub_sku=f"SUB-{index}",
+                current_status="historical_archive",
+            )
+            db.add(opportunity)
+            db.flush()
+            db.add(
+                models.SalesClaimForecast(
+                    opportunity_id=opportunity.id,
+                    salesperson_name=f"历史运营{index}",
+                    claim_result="claim",
+                    claim_daily_sales=float(index),
+                    source_column=f"{source_type}:BZ:CE",
+                    claim_source=source_type,
+                )
+            )
+        db.commit()
+
+    response = client.get("/product-board")
+
+    assert response.status_code == 200
+    assert {
+        (group["business_period"], item["salesperson_name"], item["claim_daily_sales"])
+        for group in response.json()
+        for item in group["responsibilities"]
+    } == {
+        ("历史期1", "历史运营1", 1.0),
+    }
+
+
+def test_product_board_business_periods_use_active_board_scope() -> None:
+    with SessionLocal() as db:
+        active_batch = models.ImportBatch(
+            source_type="selection1_developer_claim_feedback",
+            source_file="active.xlsx",
+            source_sheet="开发0721期",
+            business_period="开发0721期",
+            imported_by="tester",
+            status="completed",
+        )
+        disabled_batch = models.ImportBatch(
+            source_type="history_cleanup",
+            source_file="old.xlsx",
+            source_sheet="历史归档",
+            business_period="历史归档",
+            imported_by="tester",
+            status="disabled",
+        )
+        db.add_all([active_batch, disabled_batch])
+        db.flush()
+        db.add_all([
+            models.NewProductOpportunity(
+                import_batch_id=active_batch.id,
+                source_type=active_batch.source_type,
+                source_file=active_batch.source_file,
+                source_sheet=active_batch.source_sheet,
+                batch="开发0721期",
+                main_sku="MAIN-ACTIVE",
+                sub_sku="SUB-ACTIVE",
+                current_status="pending_assignment",
+            ),
+            models.NewProductOpportunity(
+                source_type="history_selection1",
+                source_file="clean-history.xlsx",
+                source_sheet="开发0414期",
+                batch="开发0414期",
+                main_sku="MAIN-HISTORY",
+                sub_sku="SUB-HISTORY",
+                current_status="historical_archive",
+            ),
+            models.NewProductOpportunity(
+                source_type="plm_arrival_discovery",
+                source_file="plm.xlsx",
+                source_sheet="PLM新增到货",
+                batch="PLM新增到货",
+                main_sku="MAIN-PLM",
+                sub_sku="SUB-PLM",
+                current_status="waiting_secondary_research",
+            ),
+            models.NewProductOpportunity(
+                source_type="history_selection34",
+                source_file="selection34.xlsx",
+                source_sheet="小货老品-4月底",
+                batch="小货老品-4月底",
+                main_sku="MAIN-SELECTION34",
+                sub_sku="SUB-SELECTION34",
+                current_status="historical_archive",
+            ),
+            models.NewProductOpportunity(
+                source_type="history_cleanup",
+                source_file="old-active.xlsx",
+                source_sheet="历史归档",
+                batch="历史归档",
+                main_sku="MAIN-OLD-ACTIVE",
+                sub_sku="SUB-OLD-ACTIVE",
+                current_status="historical_archive",
+            ),
+            models.NewProductOpportunity(
+                import_batch_id=disabled_batch.id,
+                source_type=disabled_batch.source_type,
+                source_file=disabled_batch.source_file,
+                source_sheet=disabled_batch.source_sheet,
+                batch="8.4期",
+                main_sku="MAIN-OLD",
+                sub_sku="SUB-OLD",
+                current_status="historical_archive",
+            ),
+            models.NewProductOpportunity(
+                source_type="selection1_developer_claim_feedback",
+                source_file="disabled.xlsx",
+                source_sheet="5.26期",
+                batch="5.26期",
+                main_sku="MAIN-DISABLED",
+                sub_sku="SUB-DISABLED",
+                current_status="disabled",
+            ),
+        ])
+        db.commit()
+
+    response = client.get("/product-board/business-periods")
+
+    assert response.status_code == 200
+    periods = response.json()
+    assert "开发0721期" in periods
+    assert "开发0414期" in periods
+    assert "PLM新增到货" in periods
+    assert "小货老品-4月底" not in periods
+    assert "历史归档" not in periods
+    assert "8.4期" not in periods
+
+    board_response = client.get("/product-board")
+    assert board_response.status_code == 200
+    board_periods = {group["business_period"] for group in board_response.json()}
+    assert "开发0721期" in board_periods
+    assert "开发0414期" in board_periods
+    assert "PLM新增到货" in board_periods
+    assert "小货老品-4月底" not in board_periods
 
 
 def prepare_approved_group(

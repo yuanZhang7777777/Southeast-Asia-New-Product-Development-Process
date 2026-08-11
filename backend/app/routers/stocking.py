@@ -39,6 +39,17 @@ def list_available_stocking_items(
     return services.list_available_stocking_items(db, source_sheet=source_sheet, business_period=business_period, import_batch_id=import_batch_id)
 
 
+@router.get("/traceability-list", response_model=list[schemas.TraceabilityItem])
+def list_traceability_items(
+    source_sheet: str | None = Query(None),
+    business_period: str | None = Query(None),
+    import_batch_id: str | None = Query(None),
+    db: Session = Depends(get_db),
+    _auth: AuthContext | None = Depends(require_roles("manager")),
+) -> list[schemas.TraceabilityItem]:
+    return services.list_traceability_items(db, source_sheet=source_sheet, business_period=business_period, import_batch_id=import_batch_id)
+
+
 @router.post("/available-list/export")
 def export_available_stocking_items(
     payload: schemas.StockingExportSelection,
@@ -86,28 +97,50 @@ def export_traceability_items(
     db: Session = Depends(get_db),
     _auth: AuthContext | None = Depends(require_roles("manager")),
 ) -> Response:
-    items = services.list_available_stocking_items(
-        db,
-        source_sheet=source_sheet,
-        business_period=business_period,
-        import_batch_id=import_batch_id,
-    )
-    not_claim_rows = services.list_not_claim_traceability_rows(db, source_sheet=source_sheet, business_period=business_period, import_batch_id=import_batch_id)
-    file_name = period_file_name("新品中央字段导出", business_period or source_sheet, import_batch_id)
+    review_rows = services.list_claim_review_traceability_rows(db, source_sheet=source_sheet, business_period=business_period, import_batch_id=import_batch_id)
+    file_name = period_file_name("认领情况表导出", business_period or source_sheet, import_batch_id)
     batch = services.record_export_batch(
         db,
-        items,
+        [],
         file_name=file_name,
         scope="traceability",
-        extra_row_count=len(not_claim_rows),
-        extra_rows=[(opportunity, claim) for opportunity, claim, _ in not_claim_rows],
+        extra_row_count=len(review_rows),
+        extra_rows=[(opportunity, claim) for opportunity, claim, _ in review_rows],
     )
     content = services.build_traceability_workbook(
         db,
-        items,
+        [],
         export_batch=batch,
-        not_claim_rows=not_claim_rows,
+        review_rows=review_rows,
     )
+    db.commit()
+    filename = quote(file_name)
+    return Response(
+        content=content,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{filename}"},
+    )
+
+
+@router.get("/traceability/central-export")
+def export_central_traceability_items(
+    source_sheet: str | None = Query(None),
+    business_period: str | None = Query(None),
+    import_batch_id: str | None = Query(None),
+    db: Session = Depends(get_db),
+    _auth: AuthContext | None = Depends(require_roles("manager")),
+) -> Response:
+    review_rows = services.list_claim_review_traceability_rows(db, source_sheet=source_sheet, business_period=business_period, import_batch_id=import_batch_id)
+    file_name = period_file_name("中央表导出", business_period or source_sheet, import_batch_id)
+    batch = services.record_export_batch(
+        db,
+        [],
+        file_name=file_name,
+        scope="central_traceability",
+        extra_row_count=len(review_rows),
+        extra_rows=[(opportunity, claim) for opportunity, claim, _ in review_rows],
+    )
+    content = services.build_central_traceability_workbook(db, review_rows, export_batch=batch)
     db.commit()
     filename = quote(file_name)
     return Response(
@@ -133,7 +166,11 @@ def create_stocking_request(
         raise HTTPException(status_code=404, detail="claim record not found")
     if claim.opportunity_id != payload.opportunity_id:
         raise HTTPException(status_code=400, detail="claim record does not belong to opportunity")
-    item = services.create_stocking_draft_for_claim(db, claim.id, auth.user.name if auth else payload.salesperson_name)
+    try:
+        item = services.create_stocking_draft_for_claim(db, claim.id, auth.user.name if auth else payload.salesperson_name)
+    except (LookupError, PermissionError, ValueError, RuntimeError) as exc:
+        db.rollback()
+        _raise_service_error(exc)
     db.commit()
     return schemas.MessageResponse(message="stocking draft created", id=item.id)
 

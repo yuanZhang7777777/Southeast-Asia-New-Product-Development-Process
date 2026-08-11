@@ -4,26 +4,50 @@
 export type OpportunityDetailRow = {
   id: string;
   snapshot?: Record<string, unknown>;
+  historical_claims?: unknown[];
 };
+
+export type OpportunityDetailCacheEntry = {
+  snapshot?: Record<string, unknown>;
+  historical_claims?: unknown[];
+};
+
+type OpportunityDetailCacheValue = OpportunityDetailCacheEntry | Record<string, unknown>;
+
+export function opportunityDetailCacheEntry(detail: OpportunityDetailRow): OpportunityDetailCacheEntry {
+  return {
+    snapshot: detail.snapshot || {},
+    historical_claims: detail.historical_claims
+  };
+}
+
+function normalizeCacheEntry(cached: OpportunityDetailCacheValue | undefined): OpportunityDetailCacheEntry | undefined {
+  if (!cached) return undefined;
+  if ("snapshot" in cached || "historical_claims" in cached) return cached as OpportunityDetailCacheEntry;
+  return { snapshot: cached };
+}
 
 export function idsNeedingDetail<T extends OpportunityDetailRow>(
   items: readonly T[],
   pending: ReadonlySet<string>,
-  cache: ReadonlyMap<string, Record<string, unknown>>
+  cache: ReadonlyMap<string, OpportunityDetailCacheValue>
 ): string[] {
   return items
-    .filter((item) => item.snapshot === undefined && !cache.has(item.id) && !pending.has(item.id))
+    .filter((item) => item.snapshot === undefined && normalizeCacheEntry(cache.get(item.id))?.snapshot === undefined && !pending.has(item.id))
     .map((item) => item.id);
 }
 
 export function attachCachedSnapshots<T extends OpportunityDetailRow>(
   items: readonly T[],
-  cache: ReadonlyMap<string, Record<string, unknown>>
+  cache: ReadonlyMap<string, OpportunityDetailCacheValue>
 ): T[] {
   return items.map((item) => {
-    if (item.snapshot !== undefined) return item;
-    const snapshot = cache.get(item.id);
-    return snapshot ? { ...item, snapshot } : item;
+    const cached = normalizeCacheEntry(cache.get(item.id));
+    if (!cached) return item;
+    const patch: Partial<OpportunityDetailRow> = {};
+    if (item.snapshot === undefined && cached.snapshot !== undefined) patch.snapshot = cached.snapshot;
+    if (cached.historical_claims !== undefined) patch.historical_claims = cached.historical_claims;
+    return Object.keys(patch).length ? { ...item, ...patch } : item;
   });
 }
 

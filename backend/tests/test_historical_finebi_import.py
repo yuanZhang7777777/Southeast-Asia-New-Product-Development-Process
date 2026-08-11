@@ -108,7 +108,7 @@ def test_shared_item_aggregation_review_and_idempotency(tmp_path: Path) -> None:
     }
     plan, counts, meta = run_import(tmp_path, workbench_rows, finebi_files)
 
-    assert meta["skipped"] == ["0723-0729"]
+    assert meta["skipped"] == []
     assert plan["summary"]["scoped_items"] == 1
     assert plan["summary"]["shared_items"] == 1
     assert counts["listings_created"] == 1
@@ -129,16 +129,16 @@ def test_shared_item_aggregation_review_and_idempotency(tmp_path: Path) -> None:
         assert listing.first_period_start == date(2026, 4, 2)
         assert [binding.main_sku for binding in bindings] == ["MAINA", "MAINB"]
         assert {binding.binding_source for binding in bindings} == {"history_finebi"}
-        assert [week.week_number for week in weeks] == [1, 2, 4]
-        week1, week2, week4 = weeks
+        assert [week.week_number for week in weeks] == [1, 2, 3]
+        week1, week2, week3 = weeks
         assert (week1.order_count, week1.total_revenue, week1.gross_profit_amount) == (5, 150.0, 30.0)
         assert week1.period_start == date(2026, 4, 2)
         assert week1.record_source == "history_finebi"
         assert week1.metrics_origin == "finebi_live"
         assert week1.product_positioning == "利润款"
         assert week2.order_count == 4
-        assert week4.period_start is None
-        assert week4.four_week_summary == "总体表现稳定"
+        assert week3.period_start == date(2026, 7, 23)
+        assert week3.four_week_summary == "总体表现稳定"
         assert db.query(models.NotificationLog).count() == 0
         assert db.query(models.SalesClaimForecast).count() == 0
 
@@ -164,7 +164,7 @@ def test_shared_item_aggregation_review_and_idempotency(tmp_path: Path) -> None:
     assert len(summary_view["period_rows"]) == 3
 
 
-def test_finebi_metrics_start_at_first_complete_period_and_cap_at_four_weeks(tmp_path: Path) -> None:
+def test_finebi_metrics_use_latest_four_periods_with_data(tmp_path: Path) -> None:
     workbench_rows = [workbench_row("MAINF", "Shopee-105PH", "10000000006")]
     finebi_files = {
         "0402-0408": [finebi_row("10000000006", "MAINF", "Shopee-105PH", 0.0, 0, 0.0)],
@@ -176,42 +176,56 @@ def test_finebi_metrics_start_at_first_complete_period_and_cap_at_four_weeks(tmp
     }
     plan, counts, meta = run_import(tmp_path, workbench_rows, finebi_files)
 
-    assert meta["skipped"] == ["0723-0729"]
+    assert meta["skipped"] == []
     assert len(plan["items"][0]["finebi_weeks"]) == 4
     assert [week["period"] for week in plan["items"][0]["finebi_weeks"]] == [
-        "0402-0408",
-        "0409-0415",
         "0416-0422",
         "0423-0429",
+        "0430-0506",
+        "0723-0729",
     ]
     assert counts["weeks_created"] == 4
     with SessionLocal() as db:
         weeks = db.query(models.ItemObservationPeriod).order_by(models.ItemObservationPeriod.week_number).all()
         assert [week.period_start for week in weeks] == [
-            date(2026, 4, 2),
-            date(2026, 4, 9),
             date(2026, 4, 16),
             date(2026, 4, 23),
+            date(2026, 4, 30),
+            date(2026, 7, 23),
         ]
+        assert weeks[-1].order_count == 99
+
+
+def test_sparse_finebi_periods_keep_real_zero_week_without_placeholders(tmp_path: Path) -> None:
+    workbench_rows = [workbench_row("MAINZ", "Shopee-108PH", "10000000009")]
+    finebi_files = {
+        "0716-0722": [finebi_row("10000000009", "MAINZ", "Shopee-108PH", 0.0, 0, 0.0)],
+        "0723-0729": [finebi_row("10000000009", "MAINZ", "Shopee-108PH", 20.0, 2, 4.0)],
+    }
+    plan, counts, _ = run_import(tmp_path, workbench_rows, finebi_files)
+
+    assert [week["period"] for week in plan["items"][0]["finebi_weeks"]] == ["0716-0722", "0723-0729"]
+    assert counts["weeks_created"] == 2
+    with SessionLocal() as db:
+        weeks = db.query(models.ItemObservationPeriod).order_by(models.ItemObservationPeriod.week_number).all()
+        assert [week.week_number for week in weeks] == [1, 2]
+        assert weeks[0].period_start == date(2026, 7, 16)
         assert weeks[0].order_count == 0
-def test_workbench_only_item_uses_fallback_metrics(tmp_path: Path) -> None:
+        assert weeks[1].period_start == date(2026, 7, 23)
+def test_workbench_only_item_creates_binding_without_observation_period(tmp_path: Path) -> None:
     workbench_rows = [
         workbench_row("MAINC", "Shopee-102TH", "10000000002", country="TH",
                       week1_metrics=[6, 300.0, 60.0, 0.2], week1_review=["2026-06-08", "引流款", "加广告"]),
     ]
     plan, counts, _ = run_import(tmp_path, workbench_rows, {})
 
-    assert plan["summary"]["workbench_fallback_week_rows"] == 1
+    assert plan["summary"]["workbench_fallback_week_rows"] == 0
+    assert counts["weeks_created"] == 0
     with SessionLocal() as db:
         listing = db.query(models.ListingRecord).one()
-        week = db.query(models.ItemObservationPeriod).one()
+        assert db.query(models.ItemObservationPeriod).count() == 0
         assert listing.country == "TH"
         assert listing.first_period_start is None
-        assert week.week_number == 1
-        assert week.period_start is None
-        assert week.metrics_origin == "workbench_fallback"
-        assert (week.order_count, week.total_revenue, week.gross_profit_amount) == (6, 300.0, 60.0)
-        assert week.product_positioning == "引流款"
 
 
 def test_finebi_only_item_scoped_by_known_main_sku(tmp_path: Path) -> None:
@@ -295,3 +309,227 @@ def test_history_import_attaches_to_existing_platform_listing(tmp_path: Path) ->
         assert len(history_weeks) == 1
         assert len(platform_weeks) == 1
         assert platform_weeks[0].period_start == date(2026, 7, 16)
+
+
+def test_candidate_json_import_deduplicates_shared_item_metrics() -> None:
+    raw_plan = {
+        "push_listing_candidates": [
+            {
+                "can_enter_observation": True,
+                "binding_key": "Shopee-150PH|25239908809|MAINA",
+                "listing_key": "Shopee-150PH|25239908809",
+                "country_zh": "菲律宾",
+                "push_salesperson": "运营A",
+                "main_sku": "MAINA",
+                "shop": "Shopee-150PH",
+                "item": "25239908809",
+                "strategy_raw": {"ads": "是"},
+                "selected_platform_period": "开发0526期",
+                "push_source": {"row": 10},
+            },
+            {
+                "can_enter_observation": True,
+                "binding_key": "Shopee-150PH|25239908809|MAINB",
+                "listing_key": "Shopee-150PH|25239908809",
+                "country_zh": "菲律宾",
+                "push_salesperson": "运营A",
+                "main_sku": "MAINB",
+                "shop": "Shopee-150PH",
+                "item": "25239908809",
+                "strategy_raw": {"ads": "是"},
+                "selected_platform_period": "开发0526期",
+                "push_source": {"row": 11},
+            },
+        ],
+        "candidate_observation_periods": [
+            {
+                "shop": "Shopee-150PH",
+                "item": "25239908809",
+                "main_sku": "MAINA",
+                "main_skus": ["MAINA", "MAINB"],
+                "binding_key": "Shopee-150PH|25239908809|MAINA",
+                "binding_keys": ["Shopee-150PH|25239908809|MAINA", "Shopee-150PH|25239908809|MAINB"],
+                "week_number": 1,
+                "period_code": "0716-0722",
+                "period_start": "2026-07-16",
+                "period_end": "2026-07-22",
+                "orders": 3,
+                "revenue": 100.0,
+                "gross_profit": 20.0,
+                "finebi_source": {"file_name": "05_ItemID财务数据八部_0716-0722.xlsx", "rows": [8], "main_skus": ["MAINA", "MAINB"]},
+            }
+        ],
+    }
+
+    with SessionLocal() as db:
+        plan = hfi.build_plan_from_candidate_json(db, raw_plan)
+        counts = hfi.apply_plan(db, plan, source_label="candidate-json")
+        db.commit()
+
+    assert counts["listings_created"] == 1
+    assert counts["bindings_created"] == 2
+    assert counts["weeks_created"] == 1
+    with SessionLocal() as db:
+        listing = db.query(models.ListingRecord).one()
+        bindings = db.query(models.ListingSkuBinding).order_by(models.ListingSkuBinding.main_sku).all()
+        weeks = db.query(models.ItemObservationPeriod).all()
+        assert listing.business_period == "开发0526期"
+        assert listing.is_shared_item is True
+        assert [binding.main_sku for binding in bindings] == ["MAINA", "MAINB"]
+        assert len(weeks) == 1
+        assert weeks[0].source_snapshot["binding_keys"] == [
+            "Shopee-150PH|25239908809|MAINA",
+            "Shopee-150PH|25239908809|MAINB",
+        ]
+
+
+def test_candidate_json_zero_data_binding_creates_listing_without_period() -> None:
+    raw_plan = {
+        "push_listing_candidates": [
+            {
+                "can_enter_observation": True,
+                "binding_key": "Shopee-311PH|54013530289|YZH007",
+                "listing_key": "Shopee-311PH|54013530289",
+                "country_zh": "菲律宾",
+                "push_salesperson": "陈丽妹",
+                "main_sku": "YZH007",
+                "shop": "Shopee-311PH",
+                "item": "54013530289",
+                "strategy_raw": {},
+                "selected_platform_period": "开发0526期",
+                "rejected_platform_periods": ["选品2-财根0526期"],
+                "push_source": {"row": 442},
+            }
+        ],
+        "candidate_observation_periods": [],
+    }
+
+    with SessionLocal() as db:
+        plan = hfi.build_plan_from_candidate_json(db, raw_plan)
+        counts = hfi.apply_plan(db, plan, source_label="candidate-json")
+        db.commit()
+
+    assert counts["listings_created"] == 1
+    assert counts["bindings_created"] == 1
+    assert counts["weeks_created"] == 0
+    with SessionLocal() as db:
+        listing = db.query(models.ListingRecord).one()
+        assert listing.business_period == "开发0526期"
+        assert listing.first_period_start is None
+        assert db.query(models.ItemObservationPeriod).count() == 0
+
+
+def test_history_period_with_blank_push_positioning_does_not_default_to_secondary(tmp_path: Path) -> None:
+    with SessionLocal() as db:
+        opportunity = models.NewProductOpportunity(
+            source_type="selection1_developer_claim_feedback",
+            batch="开发0703期",
+            country="PH",
+            main_sku="MAING",
+            sub_sku="MAING-1",
+        )
+        db.add(opportunity)
+        db.flush()
+        claim = models.SalesClaimForecast(
+            opportunity_id=opportunity.id,
+            salesperson_name="运营C",
+            claim_result="claim",
+            product_positioning="稳定款",
+        )
+        db.add(claim)
+        db.flush()
+        listing = models.ListingRecord(
+            id=models.new_id(),
+            source_group_key="seed-task",
+            source_claim_ids=[claim.id],
+            source_type="selection1",
+            business_period="开发0703期",
+            country="PH",
+            site="PH",
+            main_sku="MAING",
+            salesperson_name="运营C",
+            shop="Shopee-106PH",
+            item="10000000007",
+            listing_strategy="平台策略",
+            first_period_start=date(2026, 7, 16),
+            first_period_end=date(2026, 7, 22),
+            representative_rule="single_binding",
+        )
+        db.add(listing)
+        db.add(
+            models.ItemObservationPeriod(
+                id=models.new_id(),
+                listing_record_id=listing.id,
+                week_number=1,
+                period_start=date(2026, 7, 16),
+                period_end=date(2026, 7, 22),
+            )
+        )
+        db.commit()
+
+    finebi_files = {"0402-0408": [finebi_row("10000000007", "MAING", "Shopee-106PH", 10.0, 1, 2.0)]}
+    run_import(tmp_path, [], finebi_files)
+
+    with SessionLocal() as db:
+        summary = services.listing_summary(db, "MAING")
+    rows_by_source = {row["record_source"]: row for row in summary["period_rows"]}
+    assert rows_by_source["platform"]["default_product_positioning"] == "稳定款"
+    assert rows_by_source["history_finebi"]["product_positioning"] is None
+    assert rows_by_source["history_finebi"]["default_product_positioning"] is None
+
+
+def test_history_push_listing_period_does_not_default_to_secondary_positioning() -> None:
+    with SessionLocal() as db:
+        opportunity = models.NewProductOpportunity(
+            source_type="selection1_developer_claim_feedback",
+            batch="开发0703期",
+            country="PH",
+            main_sku="MAINH",
+            sub_sku="MAINH-1",
+        )
+        db.add(opportunity)
+        db.flush()
+        claim = models.SalesClaimForecast(
+            opportunity_id=opportunity.id,
+            salesperson_name="运营D",
+            claim_result="claim",
+            product_positioning="稳定款",
+        )
+        db.add(claim)
+        db.flush()
+        listing = models.ListingRecord(
+            id=models.new_id(),
+            source_group_key="history-push",
+            source_claim_ids=[claim.id],
+            source_type="history_push_20260727",
+            business_period="开发0703期",
+            country="PH",
+            site="PH",
+            main_sku="MAINH",
+            salesperson_name="运营D",
+            shop="Shopee-107PH",
+            item="10000000008",
+            listing_strategy="历史策略",
+            first_period_start=date(2026, 7, 16),
+            first_period_end=date(2026, 7, 22),
+            representative_rule="history_main_sku_group",
+        )
+        db.add(listing)
+        db.add(
+            models.ItemObservationPeriod(
+                id=models.new_id(),
+                listing_record_id=listing.id,
+                week_number=1,
+                period_start=date(2026, 7, 16),
+                period_end=date(2026, 7, 22),
+                record_source="platform",
+            )
+        )
+        db.commit()
+
+    with SessionLocal() as db:
+        summary = services.listing_summary(db, "MAINH")
+
+    row = summary["period_rows"][0]
+    assert row["product_positioning"] is None
+    assert row["default_product_positioning"] is None

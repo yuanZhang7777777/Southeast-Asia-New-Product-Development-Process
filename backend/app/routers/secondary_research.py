@@ -61,6 +61,84 @@ def export_secondary_research(
     )
 
 
+@router.post("/manual", response_model=schemas.SecondaryResearchItemRead)
+def create_manual_secondary_research(
+    payload: schemas.ManualSecondaryResearchCreate,
+    db: Session = Depends(get_db),
+    auth: AuthContext | None = Depends(require_roles("operator", "manager")),
+) -> dict:
+    owner = secondary_research_write_owner(auth, payload.salesperson_name)
+    if not owner:
+        raise HTTPException(status_code=400, detail="salesperson_name is required")
+    try:
+        item = services.create_manual_secondary_research(
+            db,
+            payload,
+            owner,
+            actor_name=auth.user.name if auth else owner,
+            actor_user_id=auth.user.id if auth else None,
+        )
+    except ValueError as exc:
+        status_code = 409 if "已存在于后续阶段" in str(exc) else 400
+        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
+    db.commit()
+    return item
+
+
+@router.get("/plm-arrival-assignments", response_model=list[schemas.PlmArrivalAssignmentRead])
+def list_plm_arrival_assignments(
+    db: Session = Depends(get_db),
+    _auth: AuthContext | None = Depends(require_roles("manager")),
+) -> list[dict]:
+    return services.list_plm_arrival_assignments(db)
+
+
+@router.post("/plm-arrival-assignments/{plm_arrival_item_id}/assign", response_model=schemas.PlmArrivalAssignmentRead)
+def assign_plm_arrival_assignment(
+    plm_arrival_item_id: str,
+    payload: schemas.PlmArrivalAssignmentRequest,
+    db: Session = Depends(get_db),
+    auth: AuthContext | None = Depends(require_roles("manager")),
+) -> dict:
+    try:
+        result = services.assign_plm_arrival_to_secondary_research(
+            db,
+            plm_arrival_item_id,
+            payload.salesperson_name,
+            actor_name=auth.user.name if auth else "local",
+            actor_user_id=auth.user.id if auth else None,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    db.commit()
+    return result
+
+
+@router.post("/plm-arrival-assignments/{plm_arrival_item_id}/close", response_model=schemas.PlmArrivalAssignmentRead)
+def close_plm_arrival_assignment(
+    plm_arrival_item_id: str,
+    payload: schemas.PlmArrivalAssignmentCloseRequest,
+    db: Session = Depends(get_db),
+    auth: AuthContext | None = Depends(require_roles("manager")),
+) -> dict:
+    try:
+        result = services.close_plm_arrival_assignment(
+            db,
+            plm_arrival_item_id,
+            payload.reason,
+            actor_name=auth.user.name if auth else "local",
+            actor_user_id=auth.user.id if auth else None,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    db.commit()
+    return result
+
+
 @router.patch("/{claim_record_id}", response_model=schemas.SecondaryResearchItemRead)
 def save_secondary_research_draft(
     claim_record_id: str,

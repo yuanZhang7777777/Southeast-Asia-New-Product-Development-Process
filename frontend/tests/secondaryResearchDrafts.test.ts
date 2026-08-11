@@ -6,42 +6,19 @@ import {
   createSecondaryResearchDraft,
   filterSecondaryResearchGroups,
   incompleteSecondaryResearchItems,
-  latestSecondaryResearchPeriod,
   patchSecondaryResearchDraft,
+  researchLinkLabels,
   SECONDARY_RESEARCH_POSITIONINGS,
   SECONDARY_RESEARCH_SKIP_LISTING,
   syncSecondaryResearchDraftPatch
 } from "../src/secondaryResearchDrafts.ts";
 
 const secondaryResearchViewSource = readFileSync(new URL("../src/SecondaryResearchView.tsx", import.meta.url), "utf8");
-test("最新期数按待处理和已提交场景分别计算", () => {
-  const groups = [
-    {
-      country: "TH",
-      business_period: "UAT-SR-20260717",
-      salesperson_name: "刘学城",
-      main_sku: "PENDING",
-      items: [{ sub_sku: "P-1", secondary_research_submitted_at: null, downstream_status: "waiting_secondary_research" }]
-    },
-    {
-      country: "VN",
-      business_period: "UAT-SR-20260720",
-      salesperson_name: "其他运营",
-      main_sku: "PENDING-NEWER",
-      items: [{ sub_sku: "P-2", secondary_research_submitted_at: null, downstream_status: "waiting_secondary_research" }]
-    },
-    {
-      country: "TH",
-      business_period: "销售自选20260722",
-      salesperson_name: "刘学城",
-      main_sku: "SUBMITTED",
-      items: [{ sub_sku: "S-1", secondary_research_submitted_at: "2026-07-22T09:00:00Z", downstream_status: "waiting_listing" }]
-    }
-  ];
+const apiSource = readFileSync(new URL("../src/api.ts", import.meta.url), "utf8");
 
-  assert.equal(latestSecondaryResearchPeriod(groups, "pending"), "UAT-SR-20260720");
-  assert.equal(latestSecondaryResearchPeriod(groups, "submitted"), "销售自选20260722");
-  assert.equal(latestSecondaryResearchPeriod(groups, "pending", { country: "TH", salespersonName: "刘学城" }), "UAT-SR-20260717");
+test("二次调研页面使用短期缓存避免切页重复全量拉取", () => {
+  assert.match(secondaryResearchViewSource, /cachedValue<SecondaryResearchGroup\[\]>/);
+  assert.match(secondaryResearchViewSource, /setCachedValue\(cacheKey, result\)/);
 });
 
 test("二次调研按场景和组合条件精确筛选国家及子 SKU", () => {
@@ -234,4 +211,18 @@ test("二次调研填写区使用锚定链接和新增字段且不再编辑 AL",
   assert.match(secondaryResearchViewSource, /提交后自动记录|自动记录/);
   assert.doesNotMatch(secondaryResearchViewSource, /type="datetime-local"/);
   assert.doesNotMatch(secondaryResearchViewSource, /placeholder="竞品链接"/);
+});
+
+test("二次调研支持手工新增之前没有的 SKU", () => {
+  assert.match(secondaryResearchViewSource, /新增二调 SKU/);
+  assert.match(secondaryResearchViewSource, /createManualSecondaryResearch/);
+  assert.match(apiSource, /\/secondary-research\/manual/);
+});
+
+test("源表链接按实际 URL 编号，重复链接显示同链接编号", () => {
+  assert.deepEqual(
+    researchLinkLabels(["https://a.example/item", "https://b.example/item", "https://a.example/item"]).map((item) => item.label),
+    ["链接1", "链接2", "同链接1"]
+  );
+  assert.match(secondaryResearchViewSource, /research-link-chip/);
 });

@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from app import models, services
 from app.site_codes import normalize_site_code
-from app.workflow_status import CLAIM_RESULT_CLAIM, CLAIM_WAITING_ARRIVAL, OPPORTUNITY_CLAIM_SUBMITTED
+from app.workflow_status import CLAIM_RESULT_CLAIM, CLAIM_WAITING_ARRIVAL, CLAIM_WAITING_SECONDARY_RESEARCH
 
 
 HISTORICAL_CLAIM_COLUMNS = ("history_selection1",)
@@ -33,9 +33,6 @@ def activate_historical_arrival(
     evidence = _historical_evidence(db, item)
     if not evidence:
         return {"status": "no_historical_claim", "historical_claim_ids": []}
-    evidence, main_status = _resolve_main_sku_evidence(evidence, item)
-    if not evidence:
-        return {"status": main_status or "main_sku_ambiguous", "historical_claim_ids": []}
     historical_claim_ids = [claim.id for claim, _ in evidence]
 
     if _has_historical_secondary_research(db, item, evidence):
@@ -103,7 +100,7 @@ def activate_historical_arrival(
         db.add(runtime_claim)
         db.flush()
         if opportunity.current_status == "historical_archive":
-            opportunity.current_status = OPPORTUNITY_CLAIM_SUBMITTED
+            opportunity.current_status = CLAIM_WAITING_SECONDARY_RESEARCH
         _open_and_record(db, item, runtime_claim, claim_ids)
         activation.update({"status": "activated", "runtime_claim_id": runtime_claim.id})
         runtime_claim_ids.append(runtime_claim.id)
@@ -134,8 +131,10 @@ def _historical_evidence(
     item: models.PlmArrivalItem,
 ) -> list[tuple[models.SalesClaimForecast, models.NewProductOpportunity]]:
     site = normalize_site_code(item.country)
+    main_sku = _sku_key(item.main_sku)
     sub_sku = _sku_key(item.sub_sku)
-    if not site or not sub_sku:
+    salesperson_name = (item.salesperson_name or "").strip()
+    if not site or not main_sku or not sub_sku or not salesperson_name:
         return []
     rows = db.execute(
         select(models.SalesClaimForecast, models.NewProductOpportunity)
@@ -149,23 +148,13 @@ def _historical_evidence(
         (claim, opportunity)
         for claim, opportunity in rows
         if (claim.claim_daily_sales or 0) > 0
+        and (claim.salesperson_name or "").strip() == salesperson_name
         and claim.product_positioning not in BLOCKED_POSITIONINGS
+        and _sku_key(opportunity.main_sku) == main_sku
         and _sku_key(opportunity.sub_sku) == sub_sku
         and normalize_site_code(opportunity.site or opportunity.country) == site
     ]
     return sorted(matches, key=lambda row: _evidence_sort_key(row, item))
-
-
-def _resolve_main_sku_evidence(
-    evidence: list[tuple[models.SalesClaimForecast, models.NewProductOpportunity]],
-    item: models.PlmArrivalItem,
-) -> tuple[list[tuple[models.SalesClaimForecast, models.NewProductOpportunity]], str | None]:
-    item_main_sku = _sku_key(item.main_sku)
-    exact = [row for row in evidence if item_main_sku and _sku_key(row[1].main_sku) == item_main_sku]
-    if exact:
-        return exact, None
-    main_skus = {_sku_key(opportunity.main_sku) for _, opportunity in evidence if _sku_key(opportunity.main_sku)}
-    return (evidence, None) if len(main_skus) <= 1 else ([], "main_sku_ambiguous")
 
 
 def _claimant_groups(

@@ -249,7 +249,7 @@ def prepare_approved_claims(
                     salesperson_name=salesperson_name,
                     claim_result="claim",
                     claim_daily_sales=daily_sales,
-                    claim_source="caigen_self_claim",
+                    claim_source="assigned_task",
                 ),
             )
         services.submit_review(
@@ -320,7 +320,11 @@ def export_auth_headers(name: str, role: str, dingtalk_user_id: str) -> dict[str
 
 def export_all_available(query: str = ""):
     suffix = f"?{query}" if query else ""
-    request_ids = [row["request_id"] for row in client.get(f"/stocking/available-list{suffix}").json()]
+    request_ids = [
+        row["request_id"]
+        for row in client.get(f"/stocking/available-list{suffix}").json()
+        if row["status"] == "submitted"
+    ]
     return client.post(
         "/stocking/available-list/export",
         headers=export_auth_headers("主管A", "manager", "dt-manager"),
@@ -395,7 +399,92 @@ def test_selected_export_uses_exact_workbook_contract_and_persists_request_snaps
         assert db.get(models.StockingRequest, request_id).status == "exported"
         assert db.get(models.SalesClaimForecast, claim_id).downstream_status == "waiting_arrival"
         assert db.get(models.NewProductOpportunity, opportunity_id).current_status == "ready_for_stocking"
-    assert [row["request_id"] for row in client.get("/stocking/available-list").json()] == [other_id]
+    rows = client.get("/stocking/available-list").json()
+    assert {
+        row["request_id"]: (row["status"], row["operation_status"])
+        for row in rows
+    } == {
+        request_id: ("exported", "已导出"),
+        other_id: ("submitted", "未操作"),
+    }
+
+
+def test_available_list_keeps_exported_rows_visible_but_excludes_later_invalid_state() -> None:
+    opportunity_id, claim_id, request_id = prepare_export_request()
+    headers = export_auth_headers("主管A", "manager", "dt-manager")
+
+    assert client.post("/stocking/available-list/export", headers=headers, json={"request_ids": [request_id]}).status_code == 200
+    rows = client.get("/stocking/available-list?business_period=BATCH-SELECTED").json()
+    assert [(row["request_id"], row["status"], row["operation_status"]) for row in rows] == [
+        (request_id, "exported", "已导出"),
+    ]
+
+    with SessionLocal() as db:
+        db.get(models.SalesClaimForecast, claim_id).downstream_status = "waiting_secondary_research"
+        db.get(models.NewProductOpportunity, opportunity_id).current_status = "waiting_secondary_research"
+        db.commit()
+
+    assert client.get("/stocking/available-list?business_period=BATCH-SELECTED").json() == []
+
+
+def test_traceability_list_includes_reviewed_claim_and_confirmed_not_claim_rows_without_stocking() -> None:
+    opportunity_id, claim_id, request_id = prepare_export_request()
+    headers = export_auth_headers("主管A", "manager", "dt-manager")
+    with SessionLocal() as db:
+        db.add(models.ReviewRecord(
+            opportunity_id=opportunity_id,
+            claim_record_id=claim_id,
+            reviewer_name="主管A",
+            review_status="approved",
+            review_comment="通过",
+        ))
+        db.commit()
+    assert client.post("/stocking/available-list/export", headers=headers, json={"request_ids": [request_id]}).status_code == 200
+
+    with SessionLocal() as db:
+        rejected = models.NewProductOpportunity(
+            source_type="selection1_developer_claim_feedback",
+            source_file="source.xlsx",
+            source_sheet="SHEET-TRACE",
+            source_row=99,
+            batch="BATCH-SELECTED",
+            country="PH",
+            site="PH",
+            main_sku="MAIN-REJECT",
+            sub_sku="SUB-REJECT",
+            current_status="confirmed_not_claim",
+        )
+        db.add(rejected)
+        db.flush()
+        reject_claim = models.SalesClaimForecast(
+            opportunity_id=rejected.id,
+            salesperson_name="销售拒绝",
+            claim_result="reject",
+            reject_reason="不适合",
+            feedback_summary="市场差",
+            source_column="platform",
+        )
+        db.add(reject_claim)
+        db.flush()
+        db.add(models.ReviewRecord(
+            opportunity_id=rejected.id,
+            claim_record_id=reject_claim.id,
+            reviewer_name="主管A",
+            review_status="confirmed_not_claim",
+            review_comment="确认",
+        ))
+        db.commit()
+
+    response = client.get("/stocking/traceability-list?business_period=BATCH-SELECTED")
+
+    assert response.status_code == 200
+    rows = sorted(response.json(), key=lambda row: row["main_sku"])
+    assert [(row["traceability_type"], row["operation_status"], row["main_sku"]) for row in rows] == [
+        ("不认领结果", "确认不认领", "MAIN-REJECT"),
+        ("认领结果", "认领通过", "MAIN-SELECTED"),
+    ]
+    assert rows[0]["reject_reason"] == "不适合"
+    assert rows[1]["request_id"] == request_id
 
 
 def test_selected_export_only_advances_selected_claim_when_opportunity_has_siblings() -> None:

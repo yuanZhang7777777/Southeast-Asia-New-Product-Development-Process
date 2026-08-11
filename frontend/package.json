@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
-    "test": "node --test tests/claimDrafts.test.ts tests/secondaryResearchDrafts.test.ts tests/productBoard.test.ts tests/selection1Columns.test.ts tests/importResults.test.ts tests/productDetailNavigation.test.ts tests/reviewLayout.test.ts tests/opportunityGroups.test.ts tests/opportunityDetails.test.ts tests/operatorClaimFilters.test.ts tests/assignmentFilters.test.ts tests/assignmentBoard.test.ts tests/competitorGroups.test.ts tests/businessFormat.test.ts tests/exportPeriods.test.ts tests/listingObservation.test.ts tests/imageUploads.test.ts tests/imageSource.test.ts tests/stockingRequests.test.ts tests/listingDensity.test.ts tests/historicalSnapshot.test.ts tests/adminConsole.test.ts tests/homeMetrics.test.ts tests/keyCategories.test.ts tests/finebiPull.test.ts",
+    "test": "node --test tests/claimDrafts.test.ts tests/secondaryResearchDrafts.test.ts tests/productBoard.test.ts tests/selection1Columns.test.ts tests/importResults.test.ts tests/productDetailNavigation.test.ts tests/reviewLayout.test.ts tests/opportunityGroups.test.ts tests/opportunityDetails.test.ts tests/operatorClaimFilters.test.ts tests/assignmentFilters.test.ts tests/assignmentBoard.test.ts tests/competitorGroups.test.ts tests/businessFormat.test.ts tests/exportPeriods.test.ts tests/listingObservation.test.ts tests/imageUploads.test.ts tests/imageSource.test.ts tests/stockingRequests.test.ts tests/listingDensity.test.ts tests/historicalSnapshot.test.ts tests/adminConsole.test.ts tests/homeMetrics.test.ts tests/keyCategories.test.ts tests/finebiPull.test.ts tests/pageDataCache.test.ts",
     "build": "tsc && vite build",
     "preview": "vite preview --host 127.0.0.1"
   },

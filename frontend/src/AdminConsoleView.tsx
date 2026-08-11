@@ -1,4 +1,4 @@
-import { Download, Pencil, Plus, RefreshCw, ShieldCheck, Trash2, Users, X } from "lucide-react";
+import { Pencil, Plus, RefreshCw, ShieldCheck, Trash2, Users, X } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
 import {
@@ -6,12 +6,10 @@ import {
   AdminUser,
   api,
   FeatureSwitch,
-  FineBIPullResult,
   ImportBatchPage,
   ImportBatchSummary,
   RoleMapping
 } from "./api";
-import { defaultFineBIWeekLabel, validateFineBIWeekLabel } from "./finebiPull";
 import {
   ADMIN_SECTIONS,
   AdminSectionKey,
@@ -42,8 +40,8 @@ function formatBatchTime(value?: string | null) {
   return value ? value.replace("T", " ").slice(0, 16) : "-";
 }
 
-export function AdminConsoleView(props: { onStatus: (message: string) => void }) {
-  const { onStatus } = props;
+export function AdminConsoleView(props: { onStatus: (message: string) => void; onOperatorConfigChanged?: () => Promise<void> | void }) {
+  const { onOperatorConfigChanged, onStatus } = props;
   const [section, setSection] = useState<AdminSectionKey>("users");
   const [loading, setLoading] = useState(false);
   const [users, setUsers] = useState<AdminUser[]>([]);
@@ -57,10 +55,6 @@ export function AdminConsoleView(props: { onStatus: (message: string) => void })
   const [resetResult, setResetResult] = useState<{ userName: string; result: AdminPasswordReset } | null>(null);
   const [batchToggleTarget, setBatchToggleTarget] = useState<{ batch: ImportBatchSummary; disabled: boolean } | null>(null);
   const [batchToggleReason, setBatchToggleReason] = useState("");
-  const [finebiWeekLabel, setFinebiWeekLabel] = useState(() => defaultFineBIWeekLabel());
-  const [finebiRunning, setFinebiRunning] = useState(false);
-  const [finebiResult, setFinebiResult] = useState<FineBIPullResult | null>(null);
-  const [finebiError, setFinebiError] = useState("");
   const [userEditor, setUserEditor] = useState<{ user: AdminUser | null; draft: AdminUserDraft } | null>(null);
   const [userEditorError, setUserEditorError] = useState("");
 
@@ -107,6 +101,7 @@ export function AdminConsoleView(props: { onStatus: (message: string) => void })
     try {
       await api.adminSetUserEnabled(user.id, enabled);
       setUsers(await api.adminUsers());
+      await onOperatorConfigChanged?.();
       onStatus(enabled ? `已启用用户 ${user.name}` : `已停用用户 ${user.name}`);
     } catch (error) {
       onStatus(readableError(error, "用户状态更新失败"));
@@ -118,6 +113,7 @@ export function AdminConsoleView(props: { onStatus: (message: string) => void })
       const notification_enabled = !mapping.notification_enabled;
       await api.updateRoleMapping(mapping.id, { notification_enabled });
       await loadBase();
+      await onOperatorConfigChanged?.();
       onStatus(notification_enabled ? `已开启 ${mapping.name} 的卡片通知` : `已关闭 ${mapping.name} 的卡片通知`);
     } catch (error) {
       onStatus(readableError(error, "卡片通知状态更新失败"));
@@ -154,6 +150,7 @@ export function AdminConsoleView(props: { onStatus: (message: string) => void })
       }
       setUserEditor(null);
       await loadBase();
+      await onOperatorConfigChanged?.();
     } catch (error) {
       setUserEditorError(readableError(error, "保存用户失败"));
     }
@@ -164,7 +161,8 @@ export function AdminConsoleView(props: { onStatus: (message: string) => void })
     try {
       await api.adminDeleteUser(user.id);
       await loadBase();
-      onStatus(`已删除用户 ${user.name}`);
+      await onOperatorConfigChanged?.();
+      onStatus(`已停用用户 ${user.name}`);
     } catch (error) {
       onStatus(readableError(error, "删除用户失败"));
     }
@@ -211,27 +209,6 @@ export function AdminConsoleView(props: { onStatus: (message: string) => void })
       onStatus(disabled ? "已停用导入批次" : "已恢复导入批次");
     } catch (error) {
       onStatus(readableError(error, disabled ? "停用导入批次失败" : "恢复导入批次失败"));
-    }
-  }
-
-  async function submitFineBIPull() {
-    const label = finebiWeekLabel.trim();
-    const validation = validateFineBIWeekLabel(label);
-    if (validation) {
-      setFinebiError(validation);
-      return;
-    }
-    setFinebiRunning(true);
-    setFinebiError("");
-    setFinebiResult(null);
-    try {
-      const result = await api.adminFineBIPull(label);
-      setFinebiResult(result);
-      onStatus(`FineBI ${result.week_label} 拉取并入库完成`);
-    } catch (error) {
-      setFinebiError(readableError(error, "FineBI 拉取失败"));
-    } finally {
-      setFinebiRunning(false);
     }
   }
 
@@ -438,43 +415,6 @@ export function AdminConsoleView(props: { onStatus: (message: string) => void })
               下一页
             </button>
           </div>
-        </section>
-      )}
-
-      {section === "finebi" && (
-        <section className="info">
-          <h3>
-            <Download size={16} />
-            FineBI 周数据拉取
-          </h3>
-          <p className="muted">
-            一键完成 FineBI 登录、导出、下载并入库到刊登观察，替代人工每周下载；周标签默认取上一个周四至周三区间。
-            需后端开启 FINEBI_AUTO_PULL_ENABLED，仅超级管理员可操作。
-          </p>
-          <div className="admin-filters">
-            <label>
-              周标签
-              <input
-                value={finebiWeekLabel}
-                onChange={(event) => {
-                  setFinebiWeekLabel(event.target.value);
-                  setFinebiError("");
-                }}
-                placeholder="MMDD-MMDD，如 0723-0729"
-              />
-            </label>
-            <button className="btn primary" type="button" disabled={finebiRunning} onClick={() => void submitFineBIPull()}>
-              {finebiRunning ? "拉取中…" : "拉取并入库"}
-            </button>
-          </div>
-          {finebiError && <p className="admin-dialog-error">{finebiError}</p>}
-          {finebiResult && (
-            <p className="muted">
-              已入库 {finebiResult.week_label}：文件 {finebiResult.file}；新增刊登 {finebiResult.apply_counts.listings_created ?? 0}，
-              复用刊登 {finebiResult.apply_counts.listings_reused ?? 0}，新增绑定 {finebiResult.apply_counts.bindings_created ?? 0}，
-              新增周 {finebiResult.apply_counts.weeks_created ?? 0}，更新周 {finebiResult.apply_counts.weeks_updated ?? 0}。
-            </p>
-          )}
         </section>
       )}
 

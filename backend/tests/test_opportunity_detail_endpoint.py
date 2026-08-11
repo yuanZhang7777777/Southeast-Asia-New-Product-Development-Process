@@ -82,6 +82,7 @@ def test_detail_endpoint_returns_historical_claim_facts_without_replacing_platfo
             note=json.dumps(
                 {
                     "history_source": {"business_period": "开发0526期", "source_row": 71, "claim_column": "BX"},
+                    "source_payload": {"note": "CE逐条备注"},
                     "evidence_images": [{"name": "history-proof.png", "url": "/uploaded-sources/claim-evidence/OPP/history-proof.png", "type": "image/png", "size": 123}],
                 },
                 ensure_ascii=False,
@@ -125,6 +126,7 @@ def test_detail_endpoint_returns_historical_claim_facts_without_replacing_platfo
         "source_column": "history_selection1",
         "source_period": "开发0526期",
         "source_row": 71,
+        "source_note": "CE逐条备注",
         "evidence_images": [{"name": "history-proof.png", "url": "/uploaded-sources/claim-evidence/OPP/history-proof.png", "type": "image/png", "size": 123}],
         "manager_review_status": None,
         "manager_review_comment": None,
@@ -132,6 +134,47 @@ def test_detail_endpoint_returns_historical_claim_facts_without_replacing_platfo
     assert facts["历史运营乙"]["claim_result"] == "reject"
     assert facts["历史运营乙"]["reject_reason"] == "来源拒绝理由"
     assert facts["历史运营乙"]["source_period"] == "开发0623期"
+
+
+def test_detail_endpoint_uses_selection34_history_as_read_only_summary() -> None:
+    with SessionLocal() as db:
+        opportunity = models.NewProductOpportunity(
+            source_type="history_selection34",
+            source_file="selection34.xlsx",
+            source_sheet="销售自选0601期",
+            source_row=2,
+            batch="销售自选0601期",
+            site="VN",
+            country="VN",
+            main_sku="AXBI3166",
+            sub_sku="AXBI3166",
+            current_status="historical_archive",
+        )
+        db.add(opportunity)
+        db.flush()
+        claim = models.SalesClaimForecast(
+            opportunity_id=opportunity.id,
+            salesperson_name="江琴",
+            claim_result="claim",
+            claim_daily_sales=1,
+            source_column="history_selection34:BZ:CE",
+            claim_source="history_selection34",
+        )
+        db.add(claim)
+        db.commit()
+        opportunity_id = opportunity.id
+        claim_id = claim.id
+
+    response = client.get(f"/opportunities/{opportunity_id}")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["latest_claim_record_id"] == claim_id
+    assert body["latest_claim_salesperson"] == "江琴"
+    assert body["latest_claim_daily_sales"] == 1
+    assert [(item["salesperson_name"], item["source_period"], item["source_row"]) for item in body["historical_claims"]] == [
+        ("江琴", "销售自选0601期", 2)
+    ]
 
 
 def test_detail_endpoint_missing_id_returns_404() -> None:

@@ -20,18 +20,6 @@ export function filterSecondaryResearchGroups<T extends SecondaryResearchFilterG
   });
 }
 
-export function latestSecondaryResearchPeriod<T extends SecondaryResearchFilterGroup>(
-  groups: readonly T[],
-  scenario: SecondaryResearchScenario,
-  filters: Pick<SecondaryResearchFilters, "country" | "salespersonName"> = {}
-) {
-  const periods = filterSecondaryResearchGroups(groups, { scenario, ...filters })
-    .map((group) => group.business_period || "")
-    .filter(Boolean)
-    .sort();
-  return periods[periods.length - 1] || "";
-}
-
 export type SecondaryResearchDraft<TImage = Record<string, unknown>> = {
   competitorUrl: string;
   conclusion: string;
@@ -119,4 +107,30 @@ export function incompleteSecondaryResearchItems<TImage>(
       return !draft.conclusion.trim() || !draft.positioning || !Number.isFinite(target) || target <= 0 || !draft.sellingPoints.trim();
     })
     .map((item) => item.sub_sku);
+}
+
+export type ResearchLinkLabel = {
+  label: string;
+  tone: number;
+  repeated: boolean;
+};
+
+export function researchLinkLabels(urls: readonly string[]): ResearchLinkLabel[] {
+  const seen = new Map<string, number>();
+  let nextIndex = 1;
+  return urls.map((url) => {
+    const key = url.trim();
+    let index = seen.get(key);
+    const repeated = index !== undefined;
+    if (index === undefined) {
+      index = nextIndex;
+      seen.set(key, index);
+      nextIndex += 1;
+    }
+    return {
+      label: repeated ? `同链接${index}` : `链接${index}`,
+      tone: ((index - 1) % 6) + 1,
+      repeated
+    };
+  });
 }

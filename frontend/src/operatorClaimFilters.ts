@@ -27,10 +27,6 @@ export function businessPeriodsByNewest<T extends OperatorClaimFilterRow>(rows: 
   return Array.from(newest).sort((left, right) => right[1] - left[1]).map(([period]) => period);
 }
 
-export function latestBusinessPeriod<T extends OperatorClaimFilterRow>(rows: readonly T[]) {
-  return businessPeriodsByNewest(rows)[0] || "";
-}
-
 export function filterOperatorClaimRows<T extends OperatorClaimFilterRow>(rows: readonly T[], filter: OperatorClaimFilter): T[] {
   return rows.filter((row) => {
     if (filter.businessPeriod && businessPeriodOf(row) !== filter.businessPeriod) return false;

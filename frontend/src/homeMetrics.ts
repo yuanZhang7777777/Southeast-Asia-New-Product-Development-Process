@@ -34,7 +34,9 @@ export type HomeMetricItem = {
 export const EMPTY_DASHBOARD_COUNTS: DashboardCounts = {
   waiting_listing: 0,
   waiting_secondary_research: 0,
-  pending_review_periods: 0
+  pending_review_periods: 0,
+  pending_claim_reviews: 0,
+  pending_not_claim_reviews: 0
 };
 
 const RESEARCH_PRESET: SecondaryResearchPreset = { scenario: "pending", periodFilter: "__all__" };
@@ -63,7 +65,7 @@ export function roleHomeMetrics(
   return [
     { label: "待导入", value: stats.sourceTodo, view: "source" },
     { label: "待分配", value: stats.pendingAssign, view: "assign" },
-    { label: "待复核", value: stats.pendingReview, view: "review" },
+    { label: "待复核", value: counts.pending_claim_reviews + counts.pending_not_claim_reviews, view: "review" },
     { label: "可导出", value: stats.ready, view: "stock" },
     ...downstream
   ];

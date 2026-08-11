@@ -6,12 +6,12 @@ from pathlib import Path
 from urllib.parse import unquote
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Response, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Response, UploadFile, status
 from openpyxl import load_workbook
-from sqlalchemy import or_, select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session
 
-from app import models, schemas, selection1_importer, selection2_importer, services
+from app import import_jobs, models, schemas, selection1_importer, selection2_importer, services
 from app.auth import AuthContext, require_roles
 from app.db import get_db
 from app.excel_images import UPLOADED_SOURCES_ROOT
@@ -24,7 +24,7 @@ UPLOAD_ROOT = Path(__file__).resolve().parents[2] / ".private_uploads" / "source
 
 @router.get("", response_model=list[schemas.OpportunityListRead])
 def list_opportunities(
-    limit: int = Query(1000, ge=1, le=5000),
+    limit: int = Query(300, ge=1, le=300),
     source_sheet: str | None = Query(None),
     business_period: str | None = Query(None),
     import_batch_id: str | None = Query(None),
@@ -62,6 +62,10 @@ def list_opportunities(
                 models.NewProductOpportunity.id.in_(claim_opportunity_ids),
                 # 历史档案对运营开放只读可见（刊登工作台点击进详情需要；2026-07-27 用户要求）。
                 models.NewProductOpportunity.current_status == "historical_archive",
+                and_(
+                    models.NewProductOpportunity.source_type == "selection2_caigen_claim_feedback",
+                    models.NewProductOpportunity.claim_pool_open.is_(True),
+                ),
             )
         )
     opportunities = list(db.scalars(query.order_by(models.NewProductOpportunity.created_at.desc()).limit(limit)))
@@ -130,11 +134,30 @@ def update_opportunity(
     db: Session = Depends(get_db),
     auth: AuthContext | None = Depends(require_roles("operator", "manager")),
 ) -> models.NewProductOpportunity:
-    # 运营仅可编辑历史档案商品（补全商品信息）；现行流程行仍限主管/超管。
+    target = db.get(models.NewProductOpportunity, opportunity_id)
+    if target is None:
+        raise HTTPException(status_code=404, detail="opportunity not found")
+    if services.is_read_only_historical_opportunity(target):
+        raise HTTPException(status_code=403, detail="historical source products are read-only")
     if auth and auth.role_keys.isdisjoint({"manager", "super_admin"}):
-        target = db.get(models.NewProductOpportunity, opportunity_id)
-        if target is None or target.current_status != "historical_archive":
-            raise HTTPException(status_code=403, detail="operators may only edit historical archive products")
+        if target.current_status != "historical_archive" and not services.operator_has_opportunity_access(
+            db,
+            opportunity_id,
+            auth.operator_name,
+            auth.user.id,
+        ):
+            raise HTTPException(status_code=403, detail="opportunity does not belong to current operator")
+        locked_fields = {"main_sku", "sub_sku", "site", "country", "current_status"}
+        if payload.model_fields_set.intersection(locked_fields):
+            raise HTTPException(status_code=403, detail="SPU, SKU, site, country and status require manager access")
+        locked_columns = {
+            column
+            for field, column in services.opportunity_field_columns(target).items()
+            if field in locked_fields
+        }
+        submitted_columns = {column.strip().upper() for column in (payload.source_cells or {})}
+        if locked_columns.intersection(submitted_columns):
+            raise HTTPException(status_code=403, detail="locked source identity fields require manager access")
     try:
         item = services.update_opportunity(
             db,
@@ -145,6 +168,8 @@ def update_opportunity(
         )
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     db.commit()
@@ -281,6 +306,28 @@ def import_selection1_upload(
     )
 
 
+@router.post("/import/selection1/upload-async", response_model=schemas.ImportJobRead, status_code=status.HTTP_202_ACCEPTED)
+def import_selection1_upload_async(
+    source_sheet: str = Form(""),
+    business_period: str = Form(""),
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    _: object = Depends(require_roles("manager")),
+) -> models.ImportJob:
+    source_file = _save_upload(file)
+    source_sheet = source_sheet.strip() or _first_sheet(source_file)
+    job = import_jobs.create_import_job(
+        kind="selection1",
+        source_file=str(source_file),
+        source_sheet=source_sheet,
+        business_period=business_period.strip() or None,
+    )
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+    return job
+
+
 @router.post("/import/selection2", response_model=schemas.Selection2ImportResponse)
 def import_selection2(
     payload: schemas.Selection2ImportRequest,
@@ -307,6 +354,34 @@ def import_selection2_upload(
     source_file = _save_upload(file)
     source_sheet = source_sheet.strip() or _first_sheet(source_file)
     return import_selection2(schemas.Selection2ImportRequest(source_file=str(source_file), source_sheet=source_sheet), db)
+
+
+@router.post("/import/selection2/upload-async", response_model=schemas.ImportJobRead, status_code=status.HTTP_202_ACCEPTED)
+def import_selection2_upload_async(
+    source_sheet: str = Form(""),
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    _: object = Depends(require_roles("manager")),
+) -> models.ImportJob:
+    source_file = _save_upload(file)
+    source_sheet = source_sheet.strip() or _first_sheet(source_file)
+    job = import_jobs.create_import_job(kind="selection2", source_file=str(source_file), source_sheet=source_sheet)
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+    return job
+
+
+@router.get("/import-jobs/{job_id}", response_model=schemas.ImportJobRead)
+def get_import_job(
+    job_id: str,
+    db: Session = Depends(get_db),
+    _: object = Depends(require_roles("manager")),
+) -> models.ImportJob:
+    job = db.get(models.ImportJob, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="import job not found")
+    return job
 
 
 def _save_upload(file: UploadFile) -> Path:
@@ -349,18 +424,52 @@ def attach_latest_summaries(
 ) -> None:
     opportunity_ids = [opportunity.id for opportunity in opportunities]
     latest_claims: dict[str, models.SalesClaimForecast] = {}
+    archive_claims: dict[str, models.SalesClaimForecast] = {}
     latest_reviews: dict[str, models.ReviewRecord] = {}
+    pending_review_claims: dict[str, list[dict[str, object]]] = {opportunity_id: [] for opportunity_id in opportunity_ids}
     historical_claims: dict[str, list[dict[str, object]]] = {opportunity_id: [] for opportunity_id in opportunity_ids}
     if opportunity_ids:
-        for item in db.scalars(
+        platform_claims = list(db.scalars(
             select(models.SalesClaimForecast)
             .where(
                 models.SalesClaimForecast.opportunity_id.in_(opportunity_ids),
                 models.SalesClaimForecast.source_column == "platform",
             )
             .order_by(models.SalesClaimForecast.last_updated_at.desc(), models.SalesClaimForecast.created_at.desc())
-        ):
+        ))
+        for item in platform_claims:
             latest_claims.setdefault(item.opportunity_id, item)
+        standalone_history_ids = [
+            opportunity.id
+            for opportunity in opportunities
+            if opportunity.source_type in {"history_selection2", "history_selection34"}
+        ]
+        if standalone_history_ids:
+            for item in db.scalars(
+                select(models.SalesClaimForecast)
+                .where(
+                    models.SalesClaimForecast.opportunity_id.in_(standalone_history_ids),
+                    models.SalesClaimForecast.source_column != "platform",
+                )
+                .order_by(models.SalesClaimForecast.created_at.asc())
+            ):
+                current = archive_claims.get(item.opportunity_id)
+                if current is None or (current.claim_result != "claim" and item.claim_result == "claim"):
+                    archive_claims[item.opportunity_id] = item
+        for item in platform_claims:
+            if services.latest_review_for_claim(db, item.opportunity_id, item):
+                continue
+            pending_review_claims[item.opportunity_id].append(
+                {
+                    "claim_record_id": item.id,
+                    "claim_result": item.claim_result,
+                    "salesperson_name": item.salesperson_name,
+                    "claim_daily_sales": item.claim_daily_sales,
+                    "reject_reason": item.reject_reason,
+                    "feedback_summary": item.feedback_summary,
+                    "note": item.note,
+                }
+            )
         for item in db.scalars(
             select(models.ReviewRecord)
             .where(models.ReviewRecord.opportunity_id.in_(opportunity_ids))
@@ -401,13 +510,14 @@ def attach_latest_summaries(
                         "source_column": claim.source_column,
                         "source_period": metadata.get("source_period") or opportunity.batch or opportunity.source_sheet,
                         "source_row": metadata.get("source_row") or opportunity.source_row,
+                        "source_note": metadata.get("source_note"),
                         "evidence_images": metadata.get("evidence_images") or [],
                         "manager_review_status": review.review_status if review else None,
                         "manager_review_comment": review.review_comment if review else None,
                     }
                 )
     for opportunity in opportunities:
-        claim = latest_claims.get(opportunity.id)
+        claim = latest_claims.get(opportunity.id) or archive_claims.get(opportunity.id)
         review = latest_reviews.get(opportunity.id)
         opportunity.latest_claim_record_id = claim.id if claim else None
         opportunity.latest_claim_result = claim.claim_result if claim else None
@@ -418,6 +528,7 @@ def attach_latest_summaries(
         opportunity.latest_claim_note = claim.note if claim else None
         opportunity.latest_review_status = review.review_status if review else None
         opportunity.latest_review_comment = review.review_comment if review else None
+        opportunity.pending_review_claims = pending_review_claims[opportunity.id]
         if include_historical_claims:
             opportunity.historical_claims = historical_claims[opportunity.id]
 
@@ -431,9 +542,12 @@ def _historical_claim_metadata(note: str | None) -> dict[str, object]:
         return {}
     source = payload.get("history_source")
     source = source if isinstance(source, dict) else {}
+    source_payload = payload.get("source_payload")
+    source_payload = source_payload if isinstance(source_payload, dict) else {}
     images = payload.get("evidence_images")
     return {
         "source_period": source.get("business_period"),
         "source_row": source.get("source_row"),
+        "source_note": source_payload.get("note"),
         "evidence_images": images if isinstance(images, list) else [],
     }

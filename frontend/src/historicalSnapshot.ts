@@ -89,7 +89,13 @@ export type HistoryCellSections = Record<HistoryCellSectionKey, HistoryCellField
 
 export function isHistorySelection1Item(item: SnapshotItem) {
   const snapshot = snapshotOf(item);
-  return item.source_type === "history_selection1" || snapshot.archive_type === "historical_selection1" || isRecord(snapshot.historical_selection1);
+  return (
+    item.source_type === "history_selection1"
+    || item.source_type === "history_selection34"
+    || snapshot.archive_type === "historical_selection1"
+    || snapshot.archive_type === "historical_selection34"
+    || isRecord(snapshot.historical_selection1)
+  );
 }
 
 // 列位兜底（Z-AN 竞品、AO-AX 定价、AQ-BR 成本等）只对真正是选品1列布局的来源成立；
@@ -102,12 +108,28 @@ export function isSelection2Item(item: SnapshotItem) {
   return item.source_type === "selection2_caigen_claim_feedback" || item.source_type === "history_selection2";
 }
 
-export type Selection2SectionKey = "market" | "pricing" | "cost";
+export type Selection2SectionKey = "core" | "pricing" | "cost" | "market" | "valuation";
 
 const selection2SectionKeywords: Record<Selection2SectionKey, readonly string[]> = {
-  market: ["低价高消", "最新低价", "最低价链接"],
+  core: ["SPU", "SKU", "首单备货数量", "产品名称", "产品规格属性", "图片"],
   pricing: ["进价", "SP上家", "SP上架", "定价", "销售成本", "利润额", "利润率"],
-  cost: ["海运", "操作费", "费率", "进货运费"]
+  cost: [
+    "海运",
+    "操作费",
+    "费率",
+    "进货运费",
+    "长(箱)",
+    "宽(箱)",
+    "高(箱)",
+    "体积(箱)",
+    "件数",
+    "体积(单)",
+    "重量KG",
+    "贴标包装",
+    "下单备注"
+  ],
+  market: ["高价高消", "进货链接", "1688商家核价记录", "审核", "低价高消", "最新低价", "最低价链接"],
+  valuation: ["首单备货金额", "首单备货体积", "供应链核价", "核价意见", "核价人", "核价时间"]
 };
 
 // 选品2 按自己的真实表头（headers_by_column）挑出板块相关字段；非选品2 来源返回空。
@@ -143,6 +165,8 @@ export function historyFieldsByCellSections(item: SnapshotItem): HistoryCellSect
   const historySnapshot = isRecord(snapshot.historical_selection1) ? snapshot.historical_selection1 : snapshot;
   const cells = historySnapshot.fields_by_cell;
   if (!isRecord(cells)) return null;
+  const usesStandardColumnSections =
+    item.source_type === "history_selection34" || historySnapshot.source_schema === "selection1_standard_v20260729";
   const sections: HistoryCellSections = { development: [], market: [], pricing: [], cost: [], other: [] };
   const columns = Object.keys(cells).sort((left, right) => columnNumber(left) - columnNumber(right));
   for (const column of columns) {
@@ -152,12 +176,26 @@ export function historyFieldsByCellSections(item: SnapshotItem): HistoryCellSect
     if (!value) continue;
     const group = valueText(cell.group);
     const label = valueText(cell.header) || group || column;
-    const section = historyFieldSection(label, group);
+    const section = usesStandardColumnSections
+      ? historyStandardFieldSection(column, label)
+      : historyFieldSection(label, group);
     if (section === null) continue;
     sections[section].push({ column, label, group, value });
   }
   if (!Object.values(sections).some((rows) => rows.length)) return null;
   return sections;
+}
+
+function historyStandardFieldSection(column: string, label: string): HistoryCellSectionKey | null {
+  if (/主销售员|是否认领|认领单销|不认领理由|不认领原因|销售反馈|备注/.test(label) && columnNumber(column) >= columnNumber("BZ")) {
+    return null;
+  }
+  const position = columnNumber(column);
+  if (position >= columnNumber("N") && position <= columnNumber("Z")) return "development";
+  if (position >= columnNumber("AA") && position <= columnNumber("AO")) return "market";
+  if (position >= columnNumber("AP") && position <= columnNumber("AW")) return "pricing";
+  if (position >= columnNumber("AX") && position <= columnNumber("BY")) return "cost";
+  return "other";
 }
 
 // R1 分组是合并单元格前向填充，认领区/总结列常被打上邻组名（如"开发是否接受核价结果"）——

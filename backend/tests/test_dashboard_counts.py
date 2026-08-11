@@ -128,9 +128,99 @@ def test_dashboard_counts_split_by_owner_and_exclude_finished_or_voided_rows() -
     operator_counts = client.get("/dashboard/counts", params={"salesperson_name": "销售A"}).json()
 
     # 主管视角=全部；已提交二次调研、已完成复盘、已作废与历史周期不计入。
-    assert manager_counts == {"waiting_listing": 2, "waiting_secondary_research": 2, "pending_review_periods": 2}
+    assert manager_counts == {
+        "waiting_listing": 2,
+        "waiting_secondary_research": 2,
+        "pending_review_periods": 2,
+        "pending_claim_reviews": 0,
+        "pending_not_claim_reviews": 0,
+    }
     # 运营视角=本人。
-    assert operator_counts == {"waiting_listing": 1, "waiting_secondary_research": 1, "pending_review_periods": 1}
+    assert operator_counts == {
+        "waiting_listing": 1,
+        "waiting_secondary_research": 1,
+        "pending_review_periods": 1,
+        "pending_claim_reviews": 0,
+        "pending_not_claim_reviews": 0,
+    }
+
+
+def test_dashboard_counts_review_uses_real_platform_review_rows_not_historical_status() -> None:
+    with SessionLocal() as db:
+        pending_opportunity = models.NewProductOpportunity(
+            id=models.new_id(),
+            source_type="selection1_developer_claim_feedback",
+            batch="开发0804期",
+            country="PH",
+            site="PH",
+            main_sku="MAIN-PENDING",
+            sub_sku="SUB-PENDING",
+            current_status="claim_submitted",
+        )
+        pending_claim = models.SalesClaimForecast(
+            opportunity_id=pending_opportunity.id,
+            salesperson_name="销售A",
+            claim_result="claim",
+            source_column="platform",
+            claim_source="platform",
+        )
+        historical_opportunity = models.NewProductOpportunity(
+            id=models.new_id(),
+            source_type="history_selection1",
+            batch="开发0623期",
+            country="PH",
+            site="PH",
+            main_sku="MAIN-HIST",
+            sub_sku="SUB-HIST",
+            current_status="claim_submitted",
+        )
+        historical_claim = models.SalesClaimForecast(
+            opportunity_id=historical_opportunity.id,
+            salesperson_name="销售A",
+            claim_result="claim",
+            source_column="history_selection1",
+            claim_source="history_selection1",
+        )
+        reviewed_opportunity = models.NewProductOpportunity(
+            id=models.new_id(),
+            source_type="selection1_developer_claim_feedback",
+            batch="开发0804期",
+            country="PH",
+            site="PH",
+            main_sku="MAIN-REVIEWED",
+            sub_sku="SUB-REVIEWED",
+            current_status="claim_submitted",
+        )
+        reviewed_claim = models.SalesClaimForecast(
+            opportunity_id=reviewed_opportunity.id,
+            salesperson_name="销售B",
+            claim_result="claim",
+            source_column="platform",
+            claim_source="platform",
+        )
+        db.add_all([
+            pending_opportunity,
+            pending_claim,
+            historical_opportunity,
+            historical_claim,
+            reviewed_opportunity,
+            reviewed_claim,
+        ])
+        db.flush()
+        db.add(
+            models.ReviewRecord(
+                opportunity_id=reviewed_opportunity.id,
+                claim_record_id=reviewed_claim.id,
+                reviewer_name="主管",
+                review_status="approved",
+            )
+        )
+        db.commit()
+
+    counts = client.get("/dashboard/counts").json()
+
+    assert counts["pending_claim_reviews"] == 1
+    assert counts["pending_not_claim_reviews"] == 0
 
 
 def test_dashboard_counts_match_target_page_rows() -> None:

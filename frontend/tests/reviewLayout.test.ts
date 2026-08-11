@@ -21,6 +21,23 @@ test("主管复核展开右栏时左侧列表保持顶部紧凑排列", () => {
   assert.match(rule, /align-self:\s*start/);
 });
 
+test("主管复核筛选分页和批量操作固定在列表顶部", () => {
+  const reviewView = app.slice(app.indexOf("function ReviewView"), app.indexOf("function ArrivalPreviewView"));
+  const rule = styles.match(/\.review-sticky-controls\s*\{([^}]*)\}/)?.[1] || "";
+
+  assert.match(reviewView, /review-sticky-controls[\s\S]*review-type-tabs[\s\S]*ListControls[\s\S]*review-bulkbar/);
+  assert.match(rule, /position:\s*sticky/);
+  assert.match(rule, /top:\s*0/);
+  assert.match(rule, /z-index:\s*9/);
+});
+
+test("商品详情返回恢复打开前页面", () => {
+  assert.match(app, /detailReturnView/);
+  assert.match(app, /setDetailReturnView\(activeView\)/);
+  assert.match(app, /function closeProductDetail\(\)[\s\S]*setDetailGroupKey\(null\)[\s\S]*if \(returnView\) setActiveView\(returnView\)/);
+  assert.match(app, /onBack=\{closeProductDetail\}/);
+});
+
 test("主管复核使用自身右栏时不再显示通用主管统计侧栏", () => {
   const sideCondition = app.slice(app.indexOf('{activeView !== "claim"'), app.indexOf('<aside className="side">'));
 
@@ -33,7 +50,17 @@ test("主管复核按认领类型筛选并提供批量通过和拒绝", () => {
   assert.match(app, /运营不认领待复核/);
   assert.match(app, /批量通过/);
   assert.match(app, /批量拒绝/);
-  assert.match(app, /api\.bulkReview/);
+  assert.match(app, /pendingReviewRows\(opportunities\)/);
+  assert.match(app, /claim_record_id:\s*item\.latest_claim_record_id/);
+  assert.match(app, /for \(const item of items\)[\s\S]*api\.review/);
+  assert.match(app, /function reviewRowKey/);
+});
+
+test("运营任务用任务自身的认领记录覆盖机会级最新汇总", () => {
+  assert.match(app, /function opportunityForOperatorTask/);
+  assert.match(app, /task\.claim_record_id/);
+  assert.match(app, /task\.node_code === "returned_claim"/);
+  assert.match(app, /opportunityForOperatorTask\(item, task\)/);
 });
 
 test("普通运营列表保留提交状态，商品详情矩阵只在顶部统计未提交项", () => {
@@ -82,7 +109,6 @@ test("运营配置紧邻提交分配且全部运营负载直接换行展示", ()
   assert.ok(toolbar.indexOf("提交分配") < toolbar.indexOf("运营配置"));
   assert.match(toolbar, /assignment-primary-actions[\s\S]*提交分配[\s\S]*运营配置/);
   assert.match(toolbar, /onOpenProfilePanel/);
-  assert.match(workloadRule, /position:\s*sticky/);
   assert.match(workloadRule, /display:\s*grid/);
   assert.match(workloadRule, /grid-template-columns:\s*repeat\(auto-fit/);
   assert.doesNotMatch(workloadRule, /overflow-x/);
@@ -106,6 +132,16 @@ test("窄屏分配明细只在表格内部横向滚动", () => {
   assert.match(viewportRule, /max-width:\s*100%/);
 });
 
+test("分配台筛选和分页控件固定在列表顶部", () => {
+  const assignView = app.slice(app.indexOf("function AssignView"), app.indexOf("function assignmentItemKey"));
+  const stickyRule = styles.match(/\.assignment-sticky-controls\s*\{([^}]*)\}/)?.[1] || "";
+
+  assert.match(assignView, /assignment-sticky-controls[\s\S]*assignment-commandbar[\s\S]*assignment-workload-toggle/);
+  assert.match(stickyRule, /position:\s*sticky/);
+  assert.match(stickyRule, /top:\s*0/);
+  assert.match(stickyRule, /z-index:\s*9/);
+});
+
 test("导出中心按期筛选并只导出勾选申请", () => {
   assert.match(stockViewSource, /stocking-periods/);
   assert.match(stockViewSource, /stocking-manager-toolbar/);
@@ -123,6 +159,12 @@ test("导出中心刷新失败时保留当前期数和明细切片", () => {
   assert.doesNotMatch(refresh, /loadPart\("导出中心", api\.availableStocking, \[\]\)/);
   assert.doesNotMatch(refresh, /loadPart\("导出期数", api\.exportPeriods, \[\]\)/);
   assert.match(refresh, /部分数据未加载/);
+});
+
+test("静默刷新失败不弹出部分数据未加载提示", () => {
+  const refresh = app.slice(app.indexOf("async function refresh"), app.indexOf("async function loadPlmArrivalPreview"));
+
+  assert.match(refresh, /if \(!options\.silent\)\s*\{[\s\S]*setStatusMessage\(failures\.length \? `部分数据未加载：/);
 });
 
 
@@ -143,4 +185,18 @@ test("运营配置重点类目使用字典多选而不是自由文本", () => {
   assert.match(assignView, /companyCategories/);
   assert.doesNotMatch(assignView, /key_category1/);
   assert.doesNotMatch(assignView, /key_category2/);
+});
+
+test("分配台按最终选择运营显示站点和品类匹配红绿标记", () => {
+  const tableRow = app.slice(app.indexOf("function AssignmentTableRow"), app.indexOf("function AssignmentPreviewCard"));
+  const reasonClass = app.slice(app.indexOf("function assignmentReasonClass"), app.indexOf("function siteOptionLabel"));
+
+  assert.match(tableRow, /selectedProfile[\s\S]*assignmentMatchLines/);
+  assert.match(tableRow, /selectedProfile[\s\S]*reasonLines/);
+  assert.match(app, /站点匹配/);
+  assert.match(app, /站点未匹配/);
+  assert.match(app, /一级类目匹配|二级类目匹配/);
+  assert.match(app, /品类未匹配/);
+  assert.match(reasonClass, /assignment-reason-line category/);
+  assert.match(reasonClass, /assignment-reason-line miss/);
 });

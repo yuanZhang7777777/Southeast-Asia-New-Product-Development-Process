@@ -3,9 +3,9 @@ from __future__ import annotations
 import hashlib
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session
 
 from app import models, schemas, services
@@ -20,12 +20,13 @@ from app.workflow_status import (
 
 
 MANAGER_ROLES = ("manager",)
-TEST_RECEIVER_ROLES = ("operator", "supervisor", "manager", "super_admin")
+TEST_RECEIVER_ROLES = ("operator", "sales", "supervisor", "manager", "super_admin")
 ELIMINATION_POSITIONING = "淘汰款"
 ELIMINATION_CARD_TITLE = "淘汰款提醒"
 ELIMINATION_MARKED_TITLE = "淘汰款已汇总"
 LISTING_REMINDER_CARD_TITLE = "已到货新品催办"
 LISTING_REMINDER_TIP_LIMIT = 5
+CURRENT_SECONDARY_SOURCE_COLUMNS = ("platform", "history_selection1", "plm_arrival_discovery", "manual_secondary")
 
 
 @dataclass(frozen=True)
@@ -69,7 +70,7 @@ def send_arrival_daily_cards(
     test_mapping = _test_receiver_mapping(db, settings) if groups else None
     for group in groups:
         dedupe_key = f"dingtalk_card:arrival:{group.arrival_date}:{group.salesperson_name}"
-        mapping = test_mapping or services.dingtalk_mapping_for_name(db, group.salesperson_name, ("operator",))
+        mapping = test_mapping or services.dingtalk_mapping_for_name(db, group.salesperson_name, ("operator", "sales"))
         if mapping is None or not mapping.dingtalk_user_id:
             logs.append(services.skipped_dingtalk_notification(db, dedupe_key, group.salesperson_name, "skipped_no_receiver"))
             continue
@@ -106,7 +107,7 @@ def send_operator_listing_reminder_cards(
         if group.waiting_listing_count == 0 and group.waiting_secondary_count == 0:
             continue
         dedupe_key = f"dingtalk_card:listing-reminder:{reminder_date}:{group.salesperson_name}"
-        mapping = test_mapping or services.dingtalk_mapping_for_name(db, group.salesperson_name, ("operator",))
+        mapping = test_mapping or services.dingtalk_mapping_for_name(db, group.salesperson_name, ("operator", "sales"))
         if mapping is None or not mapping.dingtalk_user_id:
             logs.append(services.skipped_dingtalk_notification(db, dedupe_key, group.salesperson_name, "skipped_no_receiver"))
             continue
@@ -187,21 +188,68 @@ def send_thursday_manager_review_summary(
 
 
 def _arrival_groups(db: Session, arrival_date: str) -> list[_ArrivalGroup]:
-    rows = db.execute(
+    arrival_day_start = datetime.strptime(arrival_date, "%Y-%m-%d").replace(tzinfo=BEIJING)
+    arrival_utc_start = arrival_day_start.astimezone(timezone.utc)
+    arrival_utc_end = (arrival_day_start + timedelta(days=1)).astimezone(timezone.utc)
+    new_rows = db.execute(
+        select(models.ArrivalRecord, models.PlmArrivalItem, models.SalesClaimForecast, models.NewProductOpportunity)
+        .outerjoin(models.PlmArrivalBatch, models.ArrivalRecord.plm_arrival_batch_id == models.PlmArrivalBatch.id)
+        .outerjoin(models.PlmArrivalItem, models.ArrivalRecord.plm_arrival_item_id == models.PlmArrivalItem.id)
+        .join(models.SalesClaimForecast, models.ArrivalRecord.claim_record_id == models.SalesClaimForecast.id)
+        .join(models.NewProductOpportunity, models.ArrivalRecord.opportunity_id == models.NewProductOpportunity.id)
+        .where(
+            or_(
+                models.PlmArrivalBatch.arrival_date == arrival_date,
+                and_(
+                    models.ArrivalRecord.plm_arrival_batch_id.is_(None),
+                    models.ArrivalRecord.arrived_at >= arrival_utc_start,
+                    models.ArrivalRecord.arrived_at < arrival_utc_end,
+                ),
+            )
+        )
+        .where(
+            or_(models.PlmArrivalItem.id.is_(None), models.PlmArrivalItem.arrival_type == "new_arrival"),
+            models.SalesClaimForecast.claim_result == CLAIM_RESULT_CLAIM,
+            models.SalesClaimForecast.source_column.in_(CURRENT_SECONDARY_SOURCE_COLUMNS),
+            models.SalesClaimForecast.downstream_status == CLAIM_WAITING_SECONDARY_RESEARCH,
+            models.SalesClaimForecast.secondary_research_submitted_at.is_(None),
+        )
+        .order_by(
+            models.ArrivalRecord.salesperson_name,
+            models.PlmArrivalItem.main_sku,
+            models.NewProductOpportunity.main_sku,
+            models.PlmArrivalItem.sub_sku,
+            models.NewProductOpportunity.sub_sku,
+        )
+    ).all()
+    old_rows = db.execute(
         select(models.PlmArrivalItem)
         .join(models.PlmArrivalBatch, models.PlmArrivalItem.batch_id == models.PlmArrivalBatch.id)
-        .where(models.PlmArrivalBatch.arrival_date == arrival_date)
+        .where(
+            models.PlmArrivalBatch.arrival_date == arrival_date,
+            models.PlmArrivalItem.arrival_type != "new_arrival",
+        )
         .order_by(models.PlmArrivalItem.salesperson_name, models.PlmArrivalItem.main_sku, models.PlmArrivalItem.sub_sku)
     ).scalars()
     grouped: dict[str, dict[str, dict[str, set[str] | str]]] = defaultdict(dict)
     old_grouped: dict[str, dict[str, dict[str, set[str] | str]]] = defaultdict(dict)
-    for row in rows:
+    for record, row, claim, opportunity in new_rows:
+        row_salesperson = row.salesperson_name if row else ""
+        salesperson = (record.salesperson_name or claim.salesperson_name or row_salesperson or "").strip()
+        main_sku = ((row.main_sku if row else None) or opportunity.main_sku or "").strip()
+        if not salesperson or not main_sku:
+            continue
+        product_name = ((row.product_name if row else None) or opportunity.main_sku_name or opportunity.sub_sku_name or "").strip()
+        item = grouped[salesperson].setdefault(main_sku, {"product_name": product_name, "sub_skus": set()})
+        sub_sku = ((row.sub_sku if row else None) or opportunity.sub_sku or "").strip()
+        if sub_sku:
+            item["sub_skus"].add(sub_sku)
+    for row in old_rows:
         salesperson = (row.salesperson_name or "").strip()
         main_sku = (row.main_sku or "").strip()
         if not salesperson or not main_sku:
             continue
-        target = grouped if row.arrival_type == "new_arrival" else old_grouped
-        item = target[salesperson].setdefault(main_sku, {"product_name": row.product_name or "", "sub_skus": set()})
+        item = old_grouped[salesperson].setdefault(main_sku, {"product_name": row.product_name or "", "sub_skus": set()})
         if row.sub_sku:
             item["sub_skus"].add(row.sub_sku)
     names = sorted(set(grouped) | set(old_grouped))

@@ -3,6 +3,7 @@ import json
 import os
 import sys
 import uuid
+from datetime import date
 from io import BytesIO
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
@@ -202,6 +203,12 @@ def test_pull_week_success_writes_file_and_backs_up_existing(tmp_path: Path) -> 
     assert f"{fap.DOWNLOAD_PATH}/{query['operationId'][0]}?" in fake.download_url
 
 
+def test_latest_completed_week_label_defaults_to_finished_thursday_wednesday_period() -> None:
+    assert fap.latest_completed_week_label(date(2026, 8, 4)) == "0723-0729"
+    assert fap.latest_completed_week_label(date(2026, 8, 5)) == "0723-0729"
+    assert fap.latest_completed_week_label(date(2026, 8, 6)) == "0730-0805"
+
+
 def test_operation_and_session_ids_regenerated_each_run(tmp_path: Path) -> None:
     settings = make_settings(tmp_path)
     body = finebi_workbook_bytes([finebi_row("10000000001", "MAINA", "Shopee-101PH", 100.0, 3, 20.0)])
@@ -337,8 +344,8 @@ def test_invalid_week_label_rejected(tmp_path: Path) -> None:
         fap.pull_week("1345-1352", settings=settings, target_dir=tmp_path / "live", session=FakeFineBI())
 
 
-def test_pull_and_import_ingests_week_even_when_in_excluded_periods(tmp_path: Path) -> None:
-    assert "0723-0729" in hfi.EXCLUDED_PERIODS
+def test_pull_and_import_ingests_0723_rerun_period_by_default(tmp_path: Path) -> None:
+    assert hfi.EXCLUDED_PERIODS == ()
     settings = make_settings(tmp_path)
     target_dir = tmp_path / "finebi_live"
     body = finebi_workbook_bytes([finebi_row("10000000001", "MAINX", "Shopee-101PH", 100.0, 3, 20.0)])
@@ -371,10 +378,10 @@ def test_pull_and_import_ingests_week_even_when_in_excluded_periods(tmp_path: Pa
         assert week.metrics_origin == "finebi_live"
         assert batch.imported_by == "tester"
 
-    # 不传 include_period 时，默认行为保持不变：0723-0729 仍被排除
+    # 2026-07-30 已有完整 rerun；默认读取也必须纳入 0723-0729。
     _, periods, skipped = hfi.read_finebi_periods(target_dir, 2026)
-    assert periods == []
-    assert skipped == ["0723-0729"]
+    assert periods == ["0723-0729"]
+    assert skipped == []
 
     # 幂等：重复拉取不产生新纪录
     with SessionLocal() as db:
@@ -405,12 +412,12 @@ def enable_auth(finebi_enabled: bool) -> None:
     get_settings.cache_clear()
 
 
-def test_endpoint_returns_403_with_switch_name_when_disabled() -> None:
-    enable_auth(finebi_enabled=False)
+def test_endpoint_is_disabled_because_finebi_runs_by_schedule() -> None:
+    enable_auth(finebi_enabled=True)
     headers = admin_headers()
     response = client.post("/admin/finebi/pull", headers=headers, json={"week_label": "0723-0729"})
     assert response.status_code == 403
-    assert "FINEBI_AUTO_PULL_ENABLED" in response.json()["detail"]
+    assert "每周四自动拉取" in response.json()["detail"]
 
 
 def test_endpoint_requires_super_admin() -> None:
@@ -428,26 +435,20 @@ def test_endpoint_rejects_bad_week_label_without_touching_network() -> None:
     enable_auth(finebi_enabled=True)
     headers = admin_headers()
     response = client.post("/admin/finebi/pull", headers=headers, json={"week_label": "bad-label"})
-    assert response.status_code == 400
-    assert "MMDD-MMDD" in response.json()["detail"]
+    assert response.status_code == 403
+    assert "每周四自动拉取" in response.json()["detail"]
 
 
-def test_endpoint_returns_pull_and_import_report(monkeypatch) -> None:
+def test_endpoint_does_not_call_pull_and_import(monkeypatch) -> None:
     enable_auth(finebi_enabled=True)
     headers = admin_headers()
-    captured: dict[str, object] = {}
 
     def fake_pull_and_import(db, week_label, imported_by=None, *, settings=None, **kwargs):
-        captured["week_label"] = week_label
-        captured["imported_by"] = imported_by
-        assert settings.finebi_auto_pull_enabled is True
-        return {"week_label": week_label, "apply_counts": {"listings_created": 1}}
+        raise AssertionError("manual FineBI endpoint must not import")
 
     monkeypatch.setattr(fap, "pull_and_import", fake_pull_and_import)
     response = client.post("/admin/finebi/pull", headers=headers, json={"week_label": "0723-0729"})
-    assert response.status_code == 200
-    assert response.json() == {"week_label": "0723-0729", "apply_counts": {"listings_created": 1}}
-    assert captured == {"week_label": "0723-0729", "imported_by": "Admin"}
+    assert response.status_code == 403
 
 
 def test_endpoint_maps_protocol_error_to_502(monkeypatch) -> None:
@@ -459,5 +460,5 @@ def test_endpoint_maps_protocol_error_to_502(monkeypatch) -> None:
 
     monkeypatch.setattr(fap, "pull_and_import", failing_pull)
     response = client.post("/admin/finebi/pull", headers=headers, json={"week_label": "0723-0729"})
-    assert response.status_code == 502
-    assert "下载失败" in response.json()["detail"]
+    assert response.status_code == 403
+    assert "每周四自动拉取" in response.json()["detail"]

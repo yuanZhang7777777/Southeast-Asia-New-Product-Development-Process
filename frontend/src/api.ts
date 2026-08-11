@@ -1,4 +1,4 @@
-export const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
+export const API_BASE = import.meta.env.VITE_API_BASE_URL || "/api";
 const AUTH_TOKEN_KEY = "np_flow_auth_token";
 
 export type Opportunity = {
@@ -20,6 +20,7 @@ export type Opportunity = {
   image_url?: string | null;
   reason?: string | null;
   current_status: string;
+  claim_pool_open?: boolean;
   latest_claim_record_id?: string | null;
   latest_claim_result?: string | null;
   latest_claim_salesperson?: string | null;
@@ -29,6 +30,15 @@ export type Opportunity = {
   latest_claim_note?: string | null;
   latest_review_status?: string | null;
   latest_review_comment?: string | null;
+  pending_review_claims?: Array<{
+    claim_record_id: string;
+    claim_result: string;
+    salesperson_name?: string | null;
+    claim_daily_sales?: number | null;
+    reject_reason?: string | null;
+    feedback_summary?: string | null;
+    note?: string | null;
+  }>;
   source_file?: string | null;
   source_sheet?: string | null;
   source_row?: number | null;
@@ -45,6 +55,14 @@ export type Task = {
   assignee_role?: string | null;
   status: string;
   deadline_at?: string | null;
+  claim_record_id?: string | null;
+  claim_result?: string | null;
+  claim_daily_sales?: number | null;
+  reject_reason?: string | null;
+  feedback_summary?: string | null;
+  claim_note?: string | null;
+  review_status?: string | null;
+  review_comment?: string | null;
 };
 
 export type StockingRequest = {
@@ -156,6 +174,27 @@ export type AvailableStockingItem = {
   review_status?: string | null;
   status: string;
 };
+export type TraceabilityItem = {
+  opportunity_id: string;
+  request_id?: string | null;
+  claim_record_id: string;
+  business_period?: string | null;
+  traceability_type: string;
+  operation_status: string;
+  salesperson_name?: string | null;
+  main_sku: string;
+  sub_sku: string;
+  site?: string | null;
+  claim_result?: string | null;
+  claim_daily_sales?: number | null;
+  reject_reason?: string | null;
+  feedback_summary?: string | null;
+  review_status?: string | null;
+  review_comment?: string | null;
+  source_file?: string | null;
+  source_sheet?: string | null;
+  source_row?: number | null;
+};
 export type ExportPeriodSummary = {
   business_period: string;
   latest_imported_at?: string | null;
@@ -211,6 +250,20 @@ export type Selection1ImportResponse = {
 };
 
 export type Selection2ImportResponse = Selection1ImportResponse;
+
+export type ImportJob = {
+  id: string;
+  kind: "selection1" | "selection2";
+  status: "pending" | "running" | "completed" | "failed";
+  source_file: string;
+  source_sheet: string;
+  business_period?: string | null;
+  error?: string | null;
+  result?: Selection1ImportResponse | null;
+  created_at: string;
+  started_at?: string | null;
+  completed_at?: string | null;
+};
 
 export type ImportBatchSummary = {
   id: string;
@@ -390,6 +443,7 @@ export type UploadedEvidenceImage = {
 export type SecondaryResearchPeer = {
   claim_record_id: string;
   salesperson_name?: string | null;
+  claim_daily_sales?: number | null;
   secondary_research_at?: string | null;
   secondary_competitor_url?: string | null;
   secondary_conclusion?: string | null;
@@ -403,6 +457,7 @@ export type SecondaryResearchItem = {
   claim_record_id: string;
   opportunity_id: string;
   salesperson_name: string;
+  claim_daily_sales?: number | null;
   downstream_status: string;
   arrival_detected_at?: string | null;
   secondary_research_at?: string | null;
@@ -431,6 +486,39 @@ export type SecondaryResearchGroup = {
   main_sku_name?: string | null;
   salesperson_name: string;
   items: SecondaryResearchItem[];
+};
+
+export type ManualSecondaryResearchPayload = {
+  country: string;
+  main_sku: string;
+  sub_sku: string;
+  salesperson_name?: string | null;
+  business_period?: string | null;
+  main_sku_name?: string | null;
+  sub_sku_name?: string | null;
+  secondary_competitor_url?: string | null;
+};
+
+export type PlmArrivalAssignment = {
+  plm_arrival_item_id: string;
+  arrival_date: string;
+  source_file?: string | null;
+  source_sheet?: string | null;
+  source_row?: number | null;
+  country?: string | null;
+  warehouse?: string | null;
+  main_sku?: string | null;
+  sub_sku?: string | null;
+  product_name?: string | null;
+  plm_salesperson_name?: string | null;
+  latest_storage_time?: string | null;
+  first_listing_time?: string | null;
+  match_status: string;
+  existing_opportunity_count: number;
+  assigned_salesperson_name?: string | null;
+  claim_record_id?: string | null;
+  opportunity_id?: string | null;
+  note?: string | null;
 };
 
 export type ProductBoardChildSku = {
@@ -472,12 +560,15 @@ export type ProductBoardFilter = {
   arrival_date_to?: string;
   site?: string;
   query?: string;
+  limit?: number;
 };
 
 export type DashboardCounts = {
   waiting_listing: number;
   waiting_secondary_research: number;
   pending_review_periods: number;
+  pending_claim_reviews: number;
+  pending_not_claim_reviews: number;
 };
 
 export type ListingWorkbenchView = "pending_listing" | "pending_data" | "pending_review" | "first_round_completed" | "all";
@@ -505,6 +596,7 @@ export type ListingRecord = {
   task_key: string;
   main_sku: string;
   main_sku_name?: string | null;
+  image_url?: string | null;
   country?: string | null;
   site?: string | null;
   salesperson_name: string;
@@ -527,6 +619,7 @@ export type ObservationPeriodRow = {
   listing_record_id: string;
   main_sku: string;
   main_sku_name?: string | null;
+  image_url?: string | null;
   country?: string | null;
   salesperson_name: string;
   shop: string;
@@ -688,7 +781,7 @@ function secondaryResearchQuery(
 function productBoardQuery(params: ProductBoardFilter = {}) {
   const search = new URLSearchParams();
   for (const [key, value] of Object.entries(params)) {
-    if (value) search.set(key, value);
+    if (value !== undefined && value !== null && value !== "") search.set(key, String(value));
   }
   const value = search.toString();
   return value ? `?${value}` : "";
@@ -712,7 +805,7 @@ export const api = {
   me: () => request<AuthSession>("/auth/me"),
   changePassword: (payload: { old_password: string; new_password: string }) =>
     request<{ status: string }>("/auth/password", { method: "POST", body: JSON.stringify(payload) }),
-  opportunities: (limit = 5000, filter?: PeriodFilter, includeDisabled = false) =>
+  opportunities: (limit = 300, filter?: PeriodFilter, includeDisabled = false) =>
     request<Opportunity[]>(`/opportunities?limit=${limit}${query(filter).replace("?", "&")}${includeDisabled ? "&include_disabled=true" : ""}`),
   opportunity: (id: string) => request<Opportunity>(`/opportunities/${encodeURIComponent(id)}`),
   updateOpportunity: (id: string, payload: unknown) =>
@@ -740,6 +833,13 @@ export const api = {
     form.append("file", file);
     return request<Selection1ImportResponse>("/opportunities/import/selection1/upload", { method: "POST", body: form });
   },
+  importSelection1FileAsync: (source_sheet: string, business_period: string, file: File) => {
+    const form = new FormData();
+    form.append("source_sheet", source_sheet);
+    form.append("business_period", business_period);
+    form.append("file", file);
+    return request<ImportJob>("/opportunities/import/selection1/upload-async", { method: "POST", body: form });
+  },
   excelSheets: (file: File) => {
     const form = new FormData();
     form.append("file", file);
@@ -756,6 +856,13 @@ export const api = {
     form.append("file", file);
     return request<Selection2ImportResponse>("/opportunities/import/selection2/upload", { method: "POST", body: form });
   },
+  importSelection2FileAsync: (source_sheet: string, file: File) => {
+    const form = new FormData();
+    form.append("source_sheet", source_sheet);
+    form.append("file", file);
+    return request<ImportJob>("/opportunities/import/selection2/upload-async", { method: "POST", body: form });
+  },
+  importJob: (id: string) => request<ImportJob>(`/opportunities/import-jobs/${encodeURIComponent(id)}`),
   assignmentPreview: (opportunity_ids: string[], candidates: string[]) =>
     request<{ items: AssignmentPreviewItem[] }>("/assignments/preview", {
       method: "POST",
@@ -768,6 +875,11 @@ export const api = {
   assignmentReassign: (payload: { task_id: string; assignee_name: string; reason: string }) =>
     request<Task>("/assignments/reassign", { method: "POST", body: JSON.stringify(payload) }),
   tasks: (assigneeName = "") => request<Task[]>(`/tasks/my${assigneeName ? `?assignee_name=${encodeURIComponent(assigneeName)}` : ""}`),
+  joinClaimPool: (opportunity_ids: string[], assignee_name?: string) =>
+    request<Task[]>("/claims/pool/join", {
+      method: "POST",
+      body: JSON.stringify({ opportunity_ids, assignee_name: assignee_name || undefined })
+    }),
   claim: (payload: unknown) => request<{ message: string; id: string }>("/claims", { method: "POST", body: JSON.stringify(payload) }),
   uploadClaimEvidence: (opportunityId: string, file: File) => {
     const form = new FormData();
@@ -781,7 +893,21 @@ export const api = {
     ),
   secondaryResearchExport: (filter?: { scenario?: string; salesperson_name?: string; business_period?: string; country?: string; query?: string }) =>
     download(`/secondary-research/export${query(filter)}`, "二次调研导出.xlsx"),
+  createManualSecondaryResearch: (payload: ManualSecondaryResearchPayload) =>
+    request<SecondaryResearchItem>("/secondary-research/manual", { method: "POST", body: JSON.stringify(payload) }),
+  plmArrivalAssignments: () => request<PlmArrivalAssignment[]>("/secondary-research/plm-arrival-assignments"),
+  assignPlmArrival: (plmArrivalItemId: string, salespersonName: string) =>
+    request<PlmArrivalAssignment>(`/secondary-research/plm-arrival-assignments/${plmArrivalItemId}/assign`, {
+      method: "POST",
+      body: JSON.stringify({ salesperson_name: salespersonName })
+    }),
+  closePlmArrivalAssignment: (plmArrivalItemId: string, reason: string) =>
+    request<PlmArrivalAssignment>(`/secondary-research/plm-arrival-assignments/${plmArrivalItemId}/close`, {
+      method: "POST",
+      body: JSON.stringify({ reason })
+    }),
   productBoard: (filter?: ProductBoardFilter) => request<ProductBoardGroup[]>(`/product-board${productBoardQuery(filter)}`),
+  productBoardPeriods: () => request<string[]>("/product-board/business-periods"),
   dashboardCounts: (salespersonName = "") =>
     request<DashboardCounts>(`/dashboard/counts${query({ salesperson_name: salespersonName })}`),
   updateSecondaryResearch: (claimRecordId: string, salespersonName: string, payload: unknown) =>
@@ -814,10 +940,12 @@ export const api = {
   volumePreview: (skus: string[]) =>
     request<VolumePreviewItem[]>("/stocking/volume-preview", { method: "POST", body: JSON.stringify({ skus }) }),
   availableStocking: (filter?: PeriodFilter) => request<AvailableStockingItem[]>(`/stocking/available-list${query(filter)}`),
+  traceabilityList: (filter?: PeriodFilter) => request<TraceabilityItem[]>(`/stocking/traceability-list${query(filter)}`),
   exportPeriods: () => request<ExportPeriodSummary[]>("/stocking/export-periods"),
   availableStockingExport: (payload: { request_ids: string[] }) =>
     download("/stocking/available-list/export", "海外仓备货申请表.xlsx", { method: "POST", body: JSON.stringify(payload) }),
-  traceabilityExport: (filter?: PeriodFilter) => download(`/stocking/traceability/export${query(filter)}`, "新品中央字段导出.xlsx"),
+  traceabilityExport: (filter?: PeriodFilter) => download(`/stocking/traceability/export${query(filter)}`, "认领情况表导出.xlsx"),
+  centralTraceabilityExport: (filter?: PeriodFilter) => download(`/stocking/traceability/central-export${query(filter)}`, "中央表导出.xlsx"),
   arrival: (payload: unknown) => request<unknown>("/arrival/records", { method: "POST", body: JSON.stringify(payload) }),
   plmArrivalPreview: (date: string) => request<PlmArrivalPreview>(`/arrival/plm-preview?date=${encodeURIComponent(date)}`),
   listingWorkbench: (filters: ListingWorkbenchFilter = {}) =>

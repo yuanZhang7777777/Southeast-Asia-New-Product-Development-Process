@@ -8,6 +8,7 @@ import {
   ObservationPeriodRow,
   PendingListingTask
 } from "./api";
+import { productThumbSrc } from "./imageSource";
 import {
   buildListingWorkbenchGroups,
   canEditObservationPeriod,
@@ -51,6 +52,7 @@ import {
   WorkbenchBusinessStatus
 } from "./listingObservation";
 import { normalizeSiteText } from "./opportunityGroups";
+import { cachedValue, setCachedValue } from "./pageDataCache";
 
 const EMPTY_DATA: ListingWorkbenchResponse = { pending_listing_tasks: [], listing_records: [], period_rows: [] };
 type WorkbenchFilters = ObservationFilters & { business_status: WorkbenchBusinessStatus; business_period: string };
@@ -107,8 +109,6 @@ export function ListingObservationView(props: {
 }) {
   const [data, setData] = useState<ListingWorkbenchResponse>(EMPTY_DATA);
   const [filters, setFilters] = useState<WorkbenchFilters>(DEFAULT_FILTERS);
-  // 默认展示历史档案：上线初期平台自产刊登少，历史 Item（含负责销售员/周指标）是工作台主体（2026-07-27 用户要求）。
-  const [includeHistory, setIncludeHistory] = useState(true);
   const [scenario, setScenario] = useState<"listing" | "observation">("observation");
   const [correctingPeriods, setCorrectingPeriods] = useState<string[]>([]);
   const [expandedGroups, setExpandedGroups] = useState<string[]>([]);
@@ -130,6 +130,7 @@ export function ListingObservationView(props: {
   const workbenchScopeKeyRef = useRef(workbenchScopeKey);
   workbenchScopeKeyRef.current = workbenchScopeKey;
   const requestGate = useRef(createRequestGate());
+  const forceWorkbenchReload = useRef(false);
   const submittedListingDraftKeys = useRef(new Set<string>());
   const submittedPeriodDraftKeys = useRef(new Set<string>());
   const workbenchRoot = useRef<HTMLDivElement | null>(null);
@@ -139,6 +140,42 @@ export function ListingObservationView(props: {
   const newPeriodDialog = useRef<HTMLDivElement | null>(null);
   const editDialog = useRef<HTMLDivElement | null>(null);
   const voidDialog = useRef<HTMLDivElement | null>(null);
+
+  function applyWorkbenchResponse(response: ListingWorkbenchResponse) {
+    const storage = browserStorage();
+    const taskKeys = unique([
+      ...response.pending_listing_tasks.map((task) => task.task_key),
+      ...response.listing_records.map((listing) => listing.task_key)
+    ]);
+    const defaultListingDrafts = new Map(response.pending_listing_tasks.map((task) => [
+      task.task_key,
+      [{ shop: "", item: "", listing_strategy: "", first_period_start: task.default_first_period_start }]
+    ]));
+    setData(response);
+    setSelectedPeriods([]);
+    setListingDrafts(Object.fromEntries(taskKeys.map((taskKey) => {
+      const fallback = defaultListingDrafts.get(taskKey) || [];
+      return [
+        taskKey,
+        storage ? restoreListingDrafts(
+          storage,
+          props.draftUserId,
+          taskKey,
+          fallback,
+          submittedListingDraftKeys.current.has(taskKey)
+        ) : fallback
+      ];
+    })));
+    setReviewDrafts(Object.fromEntries(response.period_rows.map((row) => [
+      row.id,
+      storage ? restoreObservationReviewDraft(
+        storage,
+        props.draftUserId,
+        row,
+        submittedPeriodDraftKeys.current.has(row.id)
+      ) : createObservationReviewDraft(row)
+    ])));
+  }
 
   async function loadWorkbench() {
     if (workbenchScopeKey !== workbenchScopeKeyRef.current) return;
@@ -152,50 +189,24 @@ export function ListingObservationView(props: {
       setLoading(false);
       return;
     }
-    setLoading(true);
+    const cacheKey = `listing-workbench:${workbenchScopeKey}:${filters.business_period}`;
+    const force = forceWorkbenchReload.current;
+    forceWorkbenchReload.current = false;
+    const cached = force ? undefined : cachedValue<ListingWorkbenchResponse>(cacheKey);
+    if (cached) applyWorkbenchResponse(cached);
+    setLoading(!cached);
     try {
       const response = await api.listingWorkbench({
         view: "all",
-        ...(includeHistory && { include_history: true }),
+        include_history: true,
         ...(filters.business_period && { business_period: filters.business_period }),
         ...scope
       });
       if (!isCurrent()) return;
-      const storage = browserStorage();
-      const taskKeys = unique([
-        ...response.pending_listing_tasks.map((task) => task.task_key),
-        ...response.listing_records.map((listing) => listing.task_key)
-      ]);
-      const defaultListingDrafts = new Map(response.pending_listing_tasks.map((task) => [
-        task.task_key,
-        [{ shop: "", item: "", listing_strategy: "", first_period_start: task.default_first_period_start }]
-      ]));
-      setData(response);
-      setSelectedPeriods([]);
-      setListingDrafts(Object.fromEntries(taskKeys.map((taskKey) => {
-        const fallback = defaultListingDrafts.get(taskKey) || [];
-        return [
-          taskKey,
-          storage ? restoreListingDrafts(
-            storage,
-            props.draftUserId,
-            taskKey,
-            fallback,
-            submittedListingDraftKeys.current.has(taskKey)
-          ) : fallback
-        ];
-      })));
-      setReviewDrafts(Object.fromEntries(response.period_rows.map((row) => [
-        row.id,
-        storage ? restoreObservationReviewDraft(
-          storage,
-          props.draftUserId,
-          row,
-          submittedPeriodDraftKeys.current.has(row.id)
-        ) : createObservationReviewDraft(row)
-      ])));
+      setCachedValue(cacheKey, response);
+      applyWorkbenchResponse(response);
     } catch (error) {
-      if (isCurrent()) props.onStatus(errorMessage(error, "刊登与观察工作台加载失败"));
+      if (isCurrent() && !cached) props.onStatus(errorMessage(error, "刊登与观察工作台加载失败"));
     } finally {
       if (isCurrent()) setLoading(false);
     }
@@ -203,7 +214,12 @@ export function ListingObservationView(props: {
 
   useEffect(() => {
     void loadWorkbench();
-  }, [props.role, props.canManage, props.operatorName, props.draftUserId, includeHistory, filters.business_period]);
+  }, [props.role, props.canManage, props.operatorName, props.draftUserId, filters.business_period]);
+
+  function reloadWorkbench() {
+    forceWorkbenchReload.current = true;
+    return loadWorkbench();
+  }
 
   useEffect(() => {
     const preset = props.preset;
@@ -224,7 +240,7 @@ export function ListingObservationView(props: {
     ...(scenario === "listing" && { shop: "", period_start: "", status: "", week_number: "" as const, product_positioning: "", tracking_status: "" })
   }), [filters, props.role, scenario]);
   // 筛选或场景变化后回到第一屏，避免沿用上一组条件的展开数量。
-  useEffect(() => { setCardLimit(CARD_RENDER_STEP); }, [effectiveFilters, includeHistory]);
+  useEffect(() => { setCardLimit(CARD_RENDER_STEP); }, [effectiveFilters]);
   const groups = useMemo(() => buildListingWorkbenchGroups(
     data.pending_listing_tasks,
     data.listing_records,
@@ -460,6 +476,7 @@ export function ListingObservationView(props: {
       setScenario("observation");
       setFilter("business_status", "all");
       props.onStatus(`${mainSku} 已新增刊登 Item`);
+      forceWorkbenchReload.current = true;
       await loadWorkbench();
     } catch (error) {
       if (!isCurrentScope()) return;
@@ -541,6 +558,7 @@ export function ListingObservationView(props: {
       setEditingListing(null);
       restoreDialogFocus();
       props.onStatus(`${editingListing.record.item} 刊登信息已更新`);
+      forceWorkbenchReload.current = true;
       await loadWorkbench();
     } catch (error) {
       if (!isCurrentScope()) return;
@@ -565,6 +583,7 @@ export function ListingObservationView(props: {
       setVoidingListing(null);
       restoreDialogFocus();
       props.onStatus(`${voidingListing.record.item} 已作废并保留历史`);
+      forceWorkbenchReload.current = true;
       await loadWorkbench();
     } catch (error) {
       if (!isCurrentScope()) return;
@@ -612,6 +631,7 @@ export function ListingObservationView(props: {
         return next;
       });
       props.onStatus(`${task.main_sku} 刊登记录已提交`);
+      forceWorkbenchReload.current = true;
       await loadWorkbench();
     } catch (error) {
       if (!isCurrentScope()) return;
@@ -690,6 +710,7 @@ export function ListingObservationView(props: {
       setSelectedPeriods([]);
       props.onStatus(`已提交 ${rows.length} 条周期复盘`);
       setCorrectingPeriods((current) => current.filter((id) => !rows.some((row) => row.period_id === id)));
+      forceWorkbenchReload.current = true;
       await loadWorkbench();
     } catch (error) {
       if (!isCurrentScope()) return;
@@ -716,6 +737,7 @@ export function ListingObservationView(props: {
       await api.updateListing(record.id, { tracking_status: next });
       if (!isCurrentScope()) return;
       props.onStatus(next === "stopped" ? `${record.item} 已停止跟踪` : `${record.item} 已恢复跟踪`);
+      forceWorkbenchReload.current = true;
       await loadWorkbench();
     } catch (error) {
       if (!isCurrentScope()) return;
@@ -738,6 +760,7 @@ export function ListingObservationView(props: {
       if (!isCurrentScope()) return;
       closeNewPeriod();
       props.onStatus("后续周期已新增");
+      forceWorkbenchReload.current = true;
       await loadWorkbench();
     } catch (error) {
       if (!isCurrentScope()) return;
@@ -829,18 +852,10 @@ export function ListingObservationView(props: {
                   <option value="stopped">停止跟踪</option>
                 </select>
               </label>
-              <label className="listing-include-history">
-                <input
-                  type="checkbox"
-                  checked={includeHistory}
-                  onChange={(event) => setIncludeHistory(event.target.checked)}
-                />
-                含历史档案
-              </label>
             </>
           )}
           <button className="btn" type="button" onClick={() => setFilters({ ...DEFAULT_FILTERS, business_status: scenario === "observation" ? "all" : "pending_listing" })}>清空筛选</button>
-          <button className="btn" type="button" onClick={() => void loadWorkbench()} disabled={loading}>
+          <button className="btn" type="button" onClick={() => void reloadWorkbench()} disabled={loading}>
             <RefreshCw size={14} />刷新
           </button>
           {scenario === "listing" && (
@@ -877,6 +892,7 @@ export function ListingObservationView(props: {
             productLinkIndex.get(`${group.context.main_sku}|${normalizeSiteText(group.context.country)}`) || [],
             group.context.business_period
           );
+          const imageUrl = productLink?.image_url || group.listings.find((listing) => listing.image_url)?.image_url;
           const itemSummaries = group.listings.map((listing) => {
             const rows = sortStartedObservationPeriods(group.periodRows.filter((row) => row.listing_record_id === listing.id));
             const itemStatusRows = sortStartedObservationPeriods(periodRowsByListing.get(listing.id) || []);
@@ -902,7 +918,7 @@ export function ListingObservationView(props: {
                     {expanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
                   </button>
                   <span className="listing-product-thumb">
-                    {productLink?.image_url ? <img src={productLink.image_url} alt={group.context.main_sku_name || group.context.main_sku} /> : "图"}
+                    {imageUrl ? <img src={productThumbSrc(imageUrl)} alt={group.context.main_sku_name || group.context.main_sku} /> : "图"}
                   </span>
                   <button
                     type="button"
@@ -980,7 +996,6 @@ export function ListingObservationView(props: {
                           <div className="listing-item-meta">
                             <span>首周 {listing.first_period_start}</span>
                             <span className="pill gray">{itemStatus}</span>
-                            {listing.is_history && <span className="pill gray listing-history-pill">历史档案</span>}
                             {listing.is_shared_item && <span className="pill blue">共享·{(listing.bound_main_skus || []).length} SKU</span>}
                             <span>已复盘 {periodSummary.completedWeeks} / {periodSummary.totalWeeks} 周</span>
                           </div>
@@ -1319,7 +1334,6 @@ export function ListingObservationSummary(props: {
                       <span>负责人 {listing.salesperson_name}</span>
                       <span>首周 {listing.first_period_start}</span>
                       <span className="pill gray">{itemStatus}</span>
-                      {listing.is_history && <span className="pill gray listing-history-pill">历史档案</span>}
                       {listing.is_shared_item && <span className="pill blue">共享·{(listing.bound_main_skus || []).length} SKU</span>}
                     </div>
                   </header>

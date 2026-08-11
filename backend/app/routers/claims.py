@@ -15,6 +15,32 @@ from app.oss_storage import read_oss_object_by_public_url, upload_claim_evidence
 router = APIRouter(prefix="/claims", tags=["claims"])
 
 
+@router.post("/pool/join", response_model=list[schemas.TaskRead])
+def join_claim_pool(
+    payload: schemas.ClaimPoolJoinRequest,
+    db: Session = Depends(get_db),
+    auth: AuthContext | None = Depends(require_roles("operator")),
+) -> list[models.FlowTask]:
+    assignee_name = auth.operator_name if auth else payload.assignee_name
+    if not assignee_name:
+        raise HTTPException(status_code=400, detail="assignee_name is required")
+    try:
+        tasks = services.join_selection2_claim_pool(
+            db,
+            payload.opportunity_ids,
+            assignee_name=assignee_name,
+            assignee_user_id=auth.user.id if auth else None,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    db.commit()
+    return tasks
+
+
 @router.post("", response_model=schemas.MessageResponse)
 def submit_claim(
     payload: schemas.ClaimCreate,

@@ -31,6 +31,21 @@ test("刷新后的轻量列表能贴回已缓存快照且不覆盖已有快照",
   assert.equal(merged[2], items[2]);
 });
 
+test("刷新后的轻量列表能贴回已缓存历史认领且不覆盖列表状态", () => {
+  const cached = {
+    snapshot: { cells: { A: "缓存" } },
+    historical_claims: [{ salesperson_name: "冯卓宏", claim_result: "claim", claim_daily_sales: 1 }]
+  };
+  const items = [
+    { id: "a", current_status: "claim_submitted", latest_claim_salesperson: "列表最新" }
+  ];
+  const merged = attachCachedSnapshots(items, new Map([["a", cached]]));
+
+  assert.equal(merged[0].current_status, "claim_submitted");
+  assert.equal(merged[0].latest_claim_salesperson, "列表最新");
+  assert.deepEqual(merged[0].historical_claims, cached.historical_claims);
+});
+
 test("hasFullDetail 以 snapshot 是否取回为准（空对象也算已取回）", () => {
   assert.equal(hasFullDetail({ id: "a" }), false);
   assert.equal(hasFullDetail(null), false);

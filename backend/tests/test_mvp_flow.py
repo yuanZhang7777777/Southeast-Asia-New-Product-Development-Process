@@ -227,7 +227,7 @@ def test_mvp_flow_and_notification_dedupe() -> None:
         "main_sku": "MAIN-001",
         "sub_sku_count": 2,
         "suggested_assignee": "销售A",
-        "match_reason": "重点站点匹配；品类未匹配；负载均衡",
+        "match_reason": "无类目-均衡分配",
     }
     assert set(preview_item["opportunity_ids"]) == set(opportunity_ids)
 

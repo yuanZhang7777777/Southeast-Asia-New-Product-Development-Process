@@ -9,9 +9,11 @@ from urllib.request import Request, urlopen
 from app.config import Settings
 
 DINGTALK_NEW_PRODUCT_TODO_TEMPLATE_ID = "a428e864-5416-4ea6-ad29-36e19e0615e2.schema"
-DINGTALK_ARRIVAL_CARD_TEMPLATE_ID = "a4053068-a70c-4ec8-a5b7-293d38a67a84.schema"
+DINGTALK_ARRIVAL_CARD_TEMPLATE_ID = "3f30ff56-8a72-4392-a888-974b3c9a2883.schema"
 DINGTALK_ACCESS_TOKEN_URL = "https://api.dingtalk.com/v1.0/oauth2/accessToken"
 DINGTALK_CREATE_AND_DELIVER_URL = "https://api.dingtalk.com/v1.0/card/instances/createAndDeliver"
+ARRIVAL_CARD_VISIBLE_SKU_LIMIT = 8
+CLICK_SAFE_ARRIVAL_TEMPLATE_IDS = {DINGTALK_ARRIVAL_CARD_TEMPLATE_ID}
 
 HttpPost = Callable[[str, dict[str, str], dict[str, Any]], dict[str, Any]]
 
@@ -145,16 +147,41 @@ def build_arrival_card_params(
     action_text: str = "进入系统查看",
     sku_markdown: str | None = None,
 ) -> dict[str, str]:
-    total = len(new_items) + len(old_items)
+    items = new_items + old_items
+    total = len(items)
+    child_total = sum(max(item.child_sku_count, 0) for item in items)
+    line_count = min(total + 1, ARRIVAL_CARD_VISIBLE_SKU_LIMIT + 2)
+    tip_text = "点击按钮进入二次调研处理"
+    if total > ARRIVAL_CARD_VISIBLE_SKU_LIMIT:
+        tip_text = f"卡片最多展示前{ARRIVAL_CARD_VISIBLE_SKU_LIMIT}个主SKU，点击按钮查看全部"
+    detail_markdown = sku_markdown or arrival_card_sku_markdown(new_items, old_items)
     return {
         "card_title": card_title,
-        "summary_text": summary_text or f"{arrival_date} 到货 {total} 个主 SKU",
+        "summary_text": summary_text or arrival_card_summary(arrival_date, new_items, old_items),
         "left_label": left_label,
         "left_count": str(total if left_count is None else left_count),
-        "sku_markdown": sku_markdown or arrival_card_sku_markdown(new_items, old_items),
+        "right_label": "子SKU",
+        "right_count": str(child_total),
+        "tip_text": sku_markdown or tip_text,
+        "length": str(line_count),
+        "md": detail_markdown,
+        "sku_markdown": detail_markdown,
         "action_text": action_text,
         "action_url": action_url,
+        "actionyrl": action_url,
     }
+
+
+def arrival_card_summary(arrival_date: str, new_items: list[ArrivalCardItem], old_items: list[ArrivalCardItem]) -> str:
+    items = new_items + old_items
+    total = len(items)
+    lines = [f"{arrival_date} 到货待二调 {total} 个主 SKU"]
+    for index, item in enumerate(items[:ARRIVAL_CARD_VISIBLE_SKU_LIMIT], start=1):
+        lines.append(f"{index}. {item.main_sku}（{item.child_sku_count}子SKU）")
+    extra = total - ARRIVAL_CARD_VISIBLE_SKU_LIMIT
+    if extra > 0:
+        lines.append(f"还有 {extra} 个，点“去二次调研”查看全部")
+    return "\n".join(lines)
 
 
 def arrival_card_sku_markdown(new_items: list[ArrivalCardItem], old_items: list[ArrivalCardItem]) -> str:
@@ -169,8 +196,7 @@ def arrival_card_sku_markdown(new_items: list[ArrivalCardItem], old_items: list[
 def _arrival_card_section(title: str, items: list[ArrivalCardItem]) -> str:
     lines = [f"**{title}**"]
     for index, item in enumerate(items, start=1):
-        name = f"｜{item.product_name}" if item.product_name else ""
-        lines.append(f"{index}. {item.main_sku}｜{item.child_sku_count} 个子 SKU{name}")
+        lines.append(f"{index}. {item.main_sku}（{item.child_sku_count}子SKU）")
     return "\n".join(lines)
 
 
@@ -178,6 +204,18 @@ def masked_dingtalk_user_id(value: str | None) -> str:
     if not value or len(value) < 8:
         return "***"
     return f"{value[:3]}***{value[-3:]}"
+
+
+def dingtalk_button_url(target_url: str) -> str:
+    return target_url.strip()
+
+
+def append_plain_system_entry(text: str, action_url: str) -> str:
+    target = action_url.strip()
+    if not target or target.startswith("dingtalk://") or target in text:
+        return text
+    entry = f"系统入口：{target}"
+    return f"{text}\n{entry}" if text else entry
 
 
 class DingTalkCardSender:
@@ -239,6 +277,8 @@ class DingTalkCardSender:
             right_label=card.right_label,
             tip_text=card.tip_text,
         )
+        card_params["tip_text"] = append_plain_system_entry(card_params["tip_text"], card_params["action_url"])
+        card_params["action_url"] = dingtalk_button_url(card_params["action_url"])
         robot_code = self.config.robot_code or self.config.client_id
         last_message = card_params["summary_text"]
         search_desc = f'{card_params["card_title"]} {last_message}'[:200]
@@ -267,6 +307,11 @@ class DingTalkCardSender:
             action_text=card.action_text,
             sku_markdown=card.sku_markdown,
         )
+        card_params["action_url"] = dingtalk_button_url(card_params["action_url"])
+        if self.config.arrival_card_template_id in CLICK_SAFE_ARRIVAL_TEMPLATE_IDS:
+            card_params["button_url"] = card_params["action_url"]
+            card_params["action_url"] = ""
+            card_params["actionyrl"] = ""
         last_message = card_params["summary_text"]
         return self._build_create_and_deliver_payload(
             receiver_dingtalk_user_id=card.receiver_dingtalk_user_id,

@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app import admin_console, finebi_auto_pull, models, schemas, services
+from app import admin_console, models, schemas, services
 from app.auth import AuthContext, require_roles
 from app.company_category_importer import import_company_categories as import_company_category_workbook
 from app.config import Settings, get_settings
@@ -299,27 +299,12 @@ def delete_operator_profile(profile_id: str, db: Session = Depends(get_db)) -> R
 def finebi_pull(
     payload: schemas.FineBIPullRequest,
     db: Session = Depends(get_db),
-    settings: Settings = Depends(get_settings),
     auth: AuthContext | None = Depends(require_roles("super_admin")),
 ) -> dict[str, object]:
-    if not settings.finebi_auto_pull_enabled:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="FineBI 自动拉取未开启：请在部署环境设置 FINEBI_AUTO_PULL_ENABLED=true 后重启服务",
-        )
-    try:
-        report = finebi_auto_pull.pull_and_import(
-            db,
-            payload.week_label,
-            imported_by=auth.user.name if auth else None,
-            settings=settings,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-    except finebi_auto_pull.FineBIPullError as exc:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
-    db.commit()
-    return report
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="FineBI/Item 周数据已改为每周四自动拉取；禁止手工触发。",
+    )
 
 
 @router.post("/dingtalk-user-ids/sync")
@@ -339,6 +324,7 @@ def _assignable_operators(db: Session) -> list[schemas.AssignableOperatorRead]:
         .where(
             models.User.enabled.is_(True),
             models.RoleMapping.enabled.is_(True),
+            models.RoleMapping.notification_enabled.is_(True),
             models.RoleMapping.role == "operator",
         )
         .order_by(models.User.name)

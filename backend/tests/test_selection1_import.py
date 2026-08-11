@@ -12,6 +12,7 @@ from openpyxl.drawing.image import Image  # noqa: E402
 
 from app import models  # noqa: E402
 from app.db import Base, SessionLocal, engine  # noqa: E402
+from app import import_jobs  # noqa: E402
 from app.main import app  # noqa: E402
 from app.routers import opportunities as opportunities_router  # noqa: E402
 
@@ -213,6 +214,33 @@ def test_selection1_upload_import_uses_browser_file(tmp_path: Path) -> None:
     assert "selection1" in body["source_file"]
 
 
+def test_selection1_upload_async_returns_job_and_worker_completes_it(tmp_path: Path) -> None:
+    workbook_path = tmp_path / "selection1_upload_async.xlsx"
+    build_selection1_fixture(workbook_path)
+
+    with workbook_path.open("rb") as handle:
+        response = client.post(
+            "/opportunities/import/selection1/upload-async",
+            data={"source_sheet": "W27", "business_period": "开发0804期"},
+            files={"file": ("selection1.xlsx", handle, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+        )
+
+    assert response.status_code == 202
+    job = response.json()
+    assert job["status"] == "pending"
+    assert job["kind"] == "selection1"
+
+    import_jobs.run_pending_import_jobs_once()
+
+    status = client.get(f"/opportunities/import-jobs/{job['id']}")
+    assert status.status_code == 200
+    body = status.json()
+    assert body["status"] == "completed"
+    assert body["result"]["imported_count"] == 1
+    with SessionLocal() as db:
+        assert db.query(models.NewProductOpportunity).count() == 1
+
+
 def test_selection1_uploads_are_saved_in_backend_persistent_volume() -> None:
     backend_root = Path(__file__).resolve().parents[1]
 
@@ -402,8 +430,8 @@ def build_selection1_fixture(
     headers = [None] * 86
     for column_index, title in {
         1: "site",
-        8: "main_sku",
-        10: "sub_sku",
+        9: "main_sku",
+        11: "sub_sku",
         82: "salesperson",
         83: "claim_result",
         84: "claim_daily_sales",
@@ -413,8 +441,8 @@ def build_selection1_fixture(
     row = [None] * 86
     for column_index, value in {
         1: "TH",
-        8: "MAIN-001",
-        10: "SUB-001",
+        9: "MAIN-001",
+        11: "SUB-001",
         13: "箱规 62*42*25cm",
         49: 107.98,
         76: 20,
@@ -423,27 +451,27 @@ def build_selection1_fixture(
         84: 1,
     }.items():
         row[column_index - 1] = value
-    row[9] = sub_sku
-    row[8] = sub_sku_name
+    row[10] = sub_sku
+    row[9] = sub_sku_name
     row[11] = reason
     while worksheet.max_row < row_index - 1:
         worksheet.append([None] * 86)
     worksheet.append(row)
     for extra in extra_rows or []:
         extra_row = list(row)
-        extra_row[9] = extra["sub_sku"]
-        extra_row[8] = extra.get("sub_sku_name")
+        extra_row[10] = extra["sub_sku"]
+        extra_row[9] = extra.get("sub_sku_name")
         target_row = int(extra.get("row_index", worksheet.max_row + 1))
         while worksheet.max_row < target_row - 1:
             worksheet.append([None] * 86)
         worksheet.append(extra_row)
     if include_repeated_header:
         repeated = [None] * 86
-        repeated[7] = "MainSKU"
-        repeated[9] = "SubSKU"
+        repeated[8] = "MainSKU"
+        repeated[10] = "SubSKU"
         worksheet.append(repeated)
     if image_path:
-        worksheet.add_image(Image(str(image_path)), "F3")
+        worksheet.add_image(Image(str(image_path)), "G3")
     workbook.save(path)
 
 

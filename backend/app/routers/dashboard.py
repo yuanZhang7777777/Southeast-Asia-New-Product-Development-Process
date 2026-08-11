@@ -25,4 +25,6 @@ def dashboard_counts(
         "waiting_listing": services.count_waiting_listing_groups(db, owner),
         "waiting_secondary_research": services.count_waiting_secondary_research_claims(db, owner),
         "pending_review_periods": services.count_pending_review_observation_periods(db, owner),
+        "pending_claim_reviews": services.count_pending_claim_reviews(db),
+        "pending_not_claim_reviews": services.count_pending_not_claim_reviews(db),
     }

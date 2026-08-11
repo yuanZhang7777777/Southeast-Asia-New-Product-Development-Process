@@ -69,7 +69,7 @@ def test_first_token_prefers_access_token_over_short_token() -> None:
     assert token == "long-access-token"
 
 
-def test_download_plm_export_uses_group_eight_and_reuses_valid_cache(monkeypatch, tmp_path) -> None:
+def test_download_plm_export_uses_login_scope_and_reuses_valid_cache(monkeypatch, tmp_path) -> None:
     calls: list[tuple[str, dict, dict]] = []
 
     def fake_post_json(url: str, body: dict, headers: dict | None = None) -> dict:
@@ -108,7 +108,7 @@ def test_download_plm_export_uses_group_eight_and_reuses_valid_cache(monkeypatch
     )
 
     export_call = next(call for call in calls if call[0].endswith("/exportSummaryExcel"))
-    assert export_call[1]["blocNameList"] == ["集团八部"]
+    assert "blocNameList" not in export_call[1]
     assert export_call[1]["latestStorageTimeStart"] == 1783440000000
     assert export_call[1]["latestStorageTimeEnd"] == 1783526399000
     assert export_call[2] == {"authorization": "test-token"}

@@ -193,6 +193,131 @@ def test_sender_builds_create_and_deliver_payload() -> None:
     assert json.dumps(deliver_call[2], ensure_ascii=False).find("secret") == -1
 
 
+def test_sender_keeps_plain_http_todo_button_url() -> None:
+    sender = DingTalkCardSender(DingTalkCardConfig(client_id="cid", client_secret="secret"))
+
+    payload = sender.build_create_and_deliver_payload(
+        NewProductTodoCard(
+            receiver_dingtalk_user_id="receiver-user-id",
+            receiver_role="operator",
+            left_count=1,
+            right_count=0,
+            action_url="http://101.132.26.138:8080/",
+            out_track_id="todo-link-test",
+        )
+    )
+
+    action_url = payload["cardData"]["cardParamMap"]["action_url"]
+    assert action_url == "http://101.132.26.138:8080/"
+
+
+def test_sender_puts_plain_system_url_in_todo_card_body() -> None:
+    sender = DingTalkCardSender(DingTalkCardConfig(client_id="cid", client_secret="secret"))
+
+    payload = sender.build_create_and_deliver_payload(
+        NewProductTodoCard(
+            receiver_dingtalk_user_id="receiver-user-id",
+            receiver_role="operator",
+            left_count=1,
+            right_count=0,
+            action_url="http://101.132.26.138:8080/",
+            out_track_id="todo-link-test",
+            tip_text="请处理新品事项",
+        )
+    )
+
+    assert "系统入口：http://101.132.26.138:8080/" in payload["cardData"]["cardParamMap"]["tip_text"]
+
+
+def test_sender_keeps_plain_http_arrival_button_url() -> None:
+    sender = DingTalkCardSender(
+        DingTalkCardConfig(
+            client_id="cid",
+            client_secret="secret",
+            arrival_card_template_id="legacy-arrival-template",
+        )
+    )
+
+    payload = sender.build_arrival_create_and_deliver_payload(
+        ArrivalCard(
+            receiver_dingtalk_user_id="receiver-user-id",
+            arrival_date="2026-08-04",
+            salesperson_name="销售A",
+            new_items=[ArrivalCardItem(main_sku="MAIN-1", child_sku_count=1)],
+            old_items=[],
+            action_url="http://101.132.26.138:8080/",
+            out_track_id="arrival-link-test",
+        )
+    )
+
+    action_url = payload["cardData"]["cardParamMap"]["action_url"]
+    assert action_url == "http://101.132.26.138:8080/"
+
+
+def test_sender_uses_button_url_for_click_safe_arrival_template() -> None:
+    action_url = "http://101.132.26.138:8080/?from=ding&role=operator&view=research"
+    sender = DingTalkCardSender(
+        DingTalkCardConfig(
+            client_id="cid",
+            client_secret="secret",
+            arrival_card_template_id="3f30ff56-8a72-4392-a888-974b3c9a2883.schema",
+        )
+    )
+
+    payload = sender.build_arrival_create_and_deliver_payload(
+        ArrivalCard(
+            receiver_dingtalk_user_id="receiver-user-id",
+            arrival_date="2026-08-04",
+            salesperson_name="销售A",
+            new_items=[ArrivalCardItem(main_sku="MAIN-1", child_sku_count=1)],
+            old_items=[],
+            action_url=action_url,
+            out_track_id="arrival-link-test",
+        )
+    )
+
+    params = payload["cardData"]["cardParamMap"]
+    assert payload["cardTemplateId"] == "3f30ff56-8a72-4392-a888-974b3c9a2883.schema"
+    assert params["action_url"] == ""
+    assert params["button_url"] == action_url
+
+
+def test_arrival_card_summary_is_short_and_skus_are_line_based_for_mobile() -> None:
+    params = build_arrival_card_params(
+        arrival_date="2026-08-07",
+        salesperson_name="陆俊全",
+        new_items=[
+            ArrivalCardItem(main_sku="XS085", child_sku_count=1, product_name="充电应急灯"),
+            ArrivalCardItem(main_sku="GZMO086", child_sku_count=5, product_name="本田座桶保护垫"),
+        ],
+        old_items=[],
+        action_url="http://101.132.26.138:8080/?from=ding&role=operator&view=research",
+    )
+
+    assert params["summary_text"] == "2026-08-07 到货待二调 2 个主 SKU\n1. XS085（1子SKU）\n2. GZMO086（5子SKU）"
+    assert "1. XS085（1子SKU）\n2. GZMO086（5子SKU）" in params["sku_markdown"]
+
+
+def test_sender_keeps_arrival_card_body_sku_only_without_plain_url() -> None:
+    sender = DingTalkCardSender(DingTalkCardConfig(client_id="cid", client_secret="secret"))
+
+    payload = sender.build_arrival_create_and_deliver_payload(
+        ArrivalCard(
+            receiver_dingtalk_user_id="receiver-user-id",
+            arrival_date="2026-08-04",
+            salesperson_name="销售A",
+            new_items=[ArrivalCardItem(main_sku="MAIN-1", child_sku_count=1)],
+            old_items=[],
+            action_url="http://101.132.26.138:8080/",
+            out_track_id="arrival-link-test",
+        )
+    )
+
+    params = payload["cardData"]["cardParamMap"]
+    assert "MAIN-1（1子SKU）" in params["sku_markdown"]
+    assert "系统入口：" not in params["sku_markdown"]
+
+
 def test_arrival_card_params_group_new_and_old_sections() -> None:
     params = build_arrival_card_params(
         arrival_date="2026-07-12",
@@ -202,15 +327,35 @@ def test_arrival_card_params_group_new_and_old_sections() -> None:
         action_url="https://example.com/?from=ding&role=operator",
     )
 
-    assert set(params) == {"card_title", "summary_text", "left_label", "left_count", "sku_markdown", "action_text", "action_url"}
+    assert set(params) == {
+        "card_title",
+        "summary_text",
+        "left_label",
+        "left_count",
+        "right_label",
+        "right_count",
+        "tip_text",
+        "length",
+        "md",
+        "sku_markdown",
+        "action_text",
+        "action_url",
+        "actionyrl",
+    }
     assert params["card_title"] == "到货通知"
-    assert params["summary_text"] == "2026-07-12 到货 2 个主 SKU"
+    assert params["summary_text"] == "2026-07-12 到货待二调 2 个主 SKU\n1. MAIN-1（2子SKU）\n2. MAIN-2（1子SKU）"
     assert params["left_label"] == "主SKU数"
     assert params["left_count"] == "2"
+    assert params["right_label"] == "子SKU"
+    assert params["right_count"] == "3"
+    assert params["tip_text"] == "点击按钮进入二次调研处理"
+    assert params["length"] == "3"
+    assert "MAIN-1（2子SKU）" in params["md"]
     assert "**新品**" in params["sku_markdown"]
-    assert "MAIN-1｜2 个子 SKU｜新品一" in params["sku_markdown"]
+    assert "MAIN-1（2子SKU）" in params["sku_markdown"]
     assert "**老品**" in params["sku_markdown"]
-    assert "MAIN-2｜1 个子 SKU｜老品二" in params["sku_markdown"]
+    assert "MAIN-2（1子SKU）" in params["sku_markdown"]
+    assert params["actionyrl"] == params["action_url"]
 
 
 def test_sender_builds_arrival_card_with_confirmed_template() -> None:

@@ -17,6 +17,7 @@ export type ProductBoardRow = ProductBoardGroup & {
 };
 
 export const PRODUCT_BOARD_RENDER_STEP = 50;
+const HISTORICAL_ARCHIVE_STATUS = "historical_archive";
 
 export const productBoardStatusMeta: Record<string, { label: string; klass: string }> = {
   pending_assignment: { label: "待分配", klass: "amber" },
@@ -31,19 +32,24 @@ export const productBoardStatusMeta: Record<string, { label: string; klass: stri
   stocking_paused: { label: "暂不推进", klass: "gray" },
   waiting_arrival: { label: "待到货", klass: "blue" },
   waiting_secondary_research: { label: "待二次调研", klass: "amber" },
+  historical_secondary_submitted: { label: "历史已二调", klass: "green" },
   waiting_listing: { label: "待刊登", klass: "blue" },
   listing_observation: { label: "刊登观察中", klass: "blue" },
   confirmed_not_claim: { label: "已确认不认领", klass: "gray" },
+  historical_claimed: { label: "认领", klass: "green" },
+  historical_not_claimed: { label: "不认领", klass: "gray" },
+  historical_unclaimed: { label: "未认领", klass: "gray" },
   disabled: { label: "已停用", klass: "gray" }
 };
 
 export function buildProductBoardRows(groups: ProductBoardGroup[]): ProductBoardRow[] {
   return groups.map((group) => {
     const owners = unique(group.responsibilities.map((item) => item.salesperson_name).filter(Boolean) as string[]);
-    const statuses = unique([
-      ...group.child_skus.map((item) => item.visible_status),
-      ...group.responsibilities.map((item) => item.visible_status)
-    ].filter(Boolean));
+    const statuses = unique(
+      group.child_skus.flatMap((child) =>
+        productBoardChildStatuses(child, group.responsibilities.filter((item) => item.opportunity_id === child.opportunity_id))
+      )
+    );
     return {
       ...group,
       childCount: group.child_skus.length,
@@ -61,13 +67,14 @@ export function filterProductBoardRows(rows: ProductBoardRow[], filters: Product
     .map((row) => {
       let responsibilities = row.responsibilities;
       if (filters.owner) responsibilities = responsibilities.filter((item) => item.salesperson_name === filters.owner);
-      if (filters.status) responsibilities = responsibilities.filter((item) => item.visible_status === filters.status);
+      if (filters.status) responsibilities = responsibilities.filter((item) => productBoardResponsibilityStatus(item) === filters.status);
       return { ...row, responsibilities, responsibilityCount: responsibilities.length };
     })
     .filter((row) => {
       if (filters.businessPeriod && row.business_period !== filters.businessPeriod) return false;
       if (filters.site && (row.site || row.country || "") !== filters.site) return false;
-      if ((filters.owner || filters.status) && !row.responsibilities.length) return false;
+      if (filters.status && !row.statuses.includes(filters.status)) return false;
+      if (filters.owner && !row.responsibilities.length) return false;
       if (!needle) return true;
       return normalize([
         row.business_period,
@@ -76,7 +83,8 @@ export function filterProductBoardRows(rows: ProductBoardRow[], filters: Product
         row.main_sku,
         row.main_sku_name,
         row.child_skus.map((item) => `${item.sub_sku} ${item.sub_sku_name || ""}`).join(" "),
-        row.responsibilities.map((item) => `${item.salesperson_name || ""} ${productBoardStatusLabel(item.visible_status)}`).join(" ")
+        row.statuses.map(productBoardStatusLabel).join(" "),
+        row.responsibilities.map((item) => `${item.salesperson_name || ""} ${productBoardStatusLabel(productBoardResponsibilityStatus(item))}`).join(" ")
       ].join(" ")).includes(needle);
     });
 }
@@ -91,6 +99,20 @@ export function hasMultipleOwners(group: Pick<ProductBoardGroup, "responsibiliti
 
 export function productBoardStatusLabel(status: string) {
   return productBoardStatusMeta[status]?.label || status;
+}
+
+export function productBoardResponsibilityStatus(item: ProductBoardGroup["responsibilities"][number]) {
+  if (item.visible_status !== HISTORICAL_ARCHIVE_STATUS) return item.visible_status;
+  return item.claim_daily_sales != null ? "historical_claimed" : "historical_not_claimed";
+}
+
+export function productBoardChildStatuses(
+  child: ProductBoardGroup["child_skus"][number],
+  responsibilities: ProductBoardGroup["responsibilities"]
+) {
+  if (responsibilities.length) return unique(responsibilities.map(productBoardResponsibilityStatus));
+  if (child.visible_status === HISTORICAL_ARCHIVE_STATUS) return ["historical_unclaimed"];
+  return [child.visible_status];
 }
 
 export function unique(values: string[]) {

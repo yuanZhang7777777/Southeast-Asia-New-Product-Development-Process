@@ -11,8 +11,7 @@ from io import BytesIO
 import base64
 
 from fastapi.testclient import TestClient  # noqa: E402
-from openpyxl import Workbook, load_workbook  # noqa: E402
-from openpyxl.utils import column_index_from_string  # noqa: E402
+from openpyxl import load_workbook  # noqa: E402
 
 from app import models, schemas, services  # noqa: E402
 from app.db import Base, SessionLocal, engine  # noqa: E402
@@ -24,6 +23,7 @@ client = TestClient(app)
 TINY_PNG = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII="
 )
+TRACEABILITY_HEADERS = ["站点", "主SKU", "子SKU", "销售员", "认领结果", "认领单销", "不认领理由", "主管复核状态（中文）", "主管复核意见"]
 
 
 def setup_function() -> None:
@@ -38,6 +38,7 @@ def test_export_periods_list_every_imported_period_with_current_counts() -> None
                 models.ImportBatch(source_type="selection1", source_sheet="S29", business_period="2026年第29期", imported_at=datetime(2026, 7, 1, tzinfo=timezone.utc)),
                 models.ImportBatch(source_type="selection1", source_sheet="S30", business_period="2026年第30期", imported_at=datetime(2026, 7, 8, tzinfo=timezone.utc)),
                 models.ImportBatch(source_type="selection1", source_sheet="S31", business_period="2026年第31期", imported_at=datetime(2026, 7, 15, tzinfo=timezone.utc)),
+                models.ImportBatch(source_type="history_cleanup", source_sheet="历史归档", business_period="历史归档", imported_at=datetime(2026, 7, 16, tzinfo=timezone.utc)),
             ]
         )
         db.commit()
@@ -45,6 +46,7 @@ def test_export_periods_list_every_imported_period_with_current_counts() -> None
     prepare_approved_claim(business_period="2026年第29期", source_row=1, main_sku="MAIN-29", sub_sku="SUB-29")
     prepare_reject_claim(source_sheet="S29", business_period="2026年第29期", source_row=2, main_sku="REJECT-29", review_status="confirmed_not_claim")
     prepare_approved_claim(business_period="2026年第30期", source_row=3, main_sku="MAIN-30", sub_sku="SUB-30")
+    prepare_approved_claim(business_period="历史归档", source_row=4, main_sku="MAIN-HIDDEN", sub_sku="SUB-HIDDEN")
 
     response = client.get("/stocking/export-periods")
 
@@ -59,53 +61,59 @@ def test_export_periods_list_every_imported_period_with_current_counts() -> None
     ]
 
 
-def test_traceability_export_contains_central_fields_and_internal_review_fields() -> None:
-    prepare_approved_claim()
+def test_traceability_export_contains_only_claim_review_columns_for_claim_and_reject() -> None:
+    prepare_approved_claim_without_stocking()
+    prepare_reject_claim(source_sheet="开发0623期", business_period="BATCH-TRACE", source_row=2, main_sku="MAIN-REJECT", review_status="confirmed_not_claim")
 
     response = client.get("/stocking/traceability/export")
 
     assert response.status_code == 200
     workbook = load_workbook(BytesIO(response.content), data_only=True)
-    assert workbook.sheetnames == ["TH"]
-    sheet = workbook["TH"]
+    assert workbook.sheetnames == ["认领复核明细"]
+    sheet = workbook["认领复核明细"]
     headers = [cell.value for cell in sheet[1]]
-    row = dict(zip(headers, [cell.value for cell in sheet[2]]))
+    rows = [dict(zip(headers, [cell.value for cell in row])) for row in sheet.iter_rows(min_row=2)]
 
+    assert headers == TRACEABILITY_HEADERS
+    assert [(row["主SKU"], row["认领结果"], row["主管复核状态（中文）"]) for row in rows] == [
+        ("MAIN-TRACE", "认领", "认领通过"),
+        ("MAIN-REJECT", "不认领", "确认不认领"),
+    ]
+    assert rows[0]["站点"] == "泰国"
+    assert rows[0]["销售员"] == "销售A"
+    assert rows[0]["认领单销"] == 2
+    assert rows[1]["不认领理由"] == "市场容量不足"
+
+
+def test_central_traceability_export_is_kept_as_separate_export_type() -> None:
+    prepare_approved_claim_without_stocking()
+    prepare_reject_claim(source_sheet="开发0623期", business_period="BATCH-TRACE", source_row=2, main_sku="MAIN-REJECT", review_status="confirmed_not_claim")
+
+    response = client.get("/stocking/traceability/central-export?business_period=BATCH-TRACE")
+
+    assert response.status_code == 200
+    workbook = load_workbook(BytesIO(response.content), data_only=True)
+    sheet = workbook["中央字段导出"]
+    headers = [cell.value for cell in sheet[1]]
+    rows = [dict(zip(headers, [cell.value for cell in row])) for row in sheet.iter_rows(min_row=2)]
     assert headers[: len(services.CENTRAL_TRACEABILITY_HEADERS)] == services.CENTRAL_TRACEABILITY_HEADERS
-    assert len(services.CENTRAL_TRACEABILITY_HEADERS) == 80
-    assert services.CENTRAL_TRACEABILITY_HEADERS[-1] == "开发是否接受核价结果"
-    assert row["站点"] == "泰国"
-    assert row["主SKU"] == "MAIN-TRACE"
-    assert row["子SKU"] == "SUB-TRACE"
-    assert row["开发询价 / 产品规格"] == "规格A"
-    assert row["产品外包装"] == "彩盒"
-    assert row["商品成本-含税（元）"] == 12.5
-    assert row["包装后体积"] == 0.08
-    assert row["Shopee菲律宾成本 / 稳定期总成本（PHP）（含头程+平台费+基础设施）"] == 88.8
-    assert row["稳定期利润率"] == 0.22
-    assert row["平台佣金率"] == 0.191
-    assert row["开发是否接受核价结果"] == "接受"
-    assert row["销售员"] == "销售A"
-    assert row["认领单销"] == 2
-    assert row["主管复核状态"] == "approved"
-    assert row["导出范围"] == "traceability"
+    assert "图片附件" not in headers
+    assert [row["认领结果"] for row in rows] == ["认领", "不认领"]
+    assert len(sheet._images) == 0
 
 
-def test_traceability_export_embeds_product_image_instead_of_address_text() -> None:
+def test_traceability_export_does_not_embed_product_images() -> None:
     prepare_approved_claim()
 
     response = client.get("/stocking/traceability/export")
 
     assert response.status_code == 200
     workbook = load_workbook(BytesIO(response.content), data_only=True)
-    sheet = workbook["TH"]
-    assert sheet["F2"].value is None
-    assert len(sheet._images) == 1
-    marker = sheet._images[0].anchor._from
-    assert (marker.row, marker.col) == (1, 5)
+    sheet = workbook["认领复核明细"]
+    assert len(sheet._images) == 0
 
 
-def test_traceability_export_does_not_treat_selection2_column_letters_as_central_fields() -> None:
+def test_traceability_export_does_not_include_central_source_fields() -> None:
     with SessionLocal() as db:
         opportunity = models.NewProductOpportunity(
             source_type="selection2_caigen_claim_feedback",
@@ -125,7 +133,6 @@ def test_traceability_export_does_not_treat_selection2_column_letters_as_central
                 salesperson_name="销售B",
                 claim_result="claim",
                 claim_daily_sales=1,
-                claim_source="caigen_self_claim",
             ),
         )
         services.submit_review(
@@ -142,83 +149,12 @@ def test_traceability_export_does_not_treat_selection2_column_letters_as_central
     response = client.get("/stocking/traceability/export")
 
     workbook = load_workbook(BytesIO(response.content), data_only=True)
-    sheet = workbook["未填国家"]
-    rows = [dict(zip([cell.value for cell in sheet[1]], [cell.value for cell in row])) for row in sheet.iter_rows(min_row=2)]
+    sheet = workbook["认领复核明细"]
+    headers = [cell.value for cell in sheet[1]]
+    rows = [dict(zip(headers, [cell.value for cell in row])) for row in sheet.iter_rows(min_row=2)]
     row = next(row for row in rows if row["子SKU"] == "SUB-S2")
-    assert row["商品成本-含税（元）"] is None
-
-
-def test_traceability_export_preserves_selection1_duplicate_headers_by_column(tmp_path: Path) -> None:
-    workbook_path = tmp_path / "selection1_duplicate_headers.xlsx"
-    source_workbook = Workbook()
-    source_sheet = source_workbook.active
-    source_sheet.title = "开发0623期"
-    source_sheet.append([None] * column_index_from_string("CH"))
-    header_row = [None] * column_index_from_string("CH")
-    for column, value in {
-        "A": "站点",
-        "H": "主SKU",
-        "J": "子SKU",
-        "AG": "售价(PHP）",
-        "AH": "月销",
-        "AJ": "售价(PHP）",
-        "AK": "月销",
-    }.items():
-        header_row[column_index_from_string(column) - 1] = value
-    source_sheet.append(header_row)
-    data_row = [None] * column_index_from_string("CH")
-    for column, value in {
-        "A": "菲律宾",
-        "H": "MAIN-DUP",
-        "J": "SUB-DUP",
-        "AG": 77,
-        "AH": 777,
-        "AJ": 88,
-        "AK": 888,
-    }.items():
-        data_row[column_index_from_string(column) - 1] = value
-    source_sheet.append(data_row)
-    source_workbook.save(workbook_path)
-
-    import_response = client.post(
-        "/opportunities/import/selection1",
-        json={"source_file": str(workbook_path), "source_sheet": "开发0623期"},
-    )
-    assert import_response.status_code == 200
-
-    with SessionLocal() as db:
-        opportunity = db.query(models.NewProductOpportunity).filter_by(sub_sku="SUB-DUP").one()
-        assert opportunity.snapshot["fields_by_column"]["AG"] == 77
-        assert opportunity.snapshot["fields_by_column"]["AJ"] == 88
-        services.submit_claim(
-            db,
-            schemas.ClaimCreate(
-                opportunity_id=opportunity.id,
-                salesperson_name="销售C",
-                claim_result="claim",
-                claim_daily_sales=1,
-            ),
-        )
-        services.submit_review(
-            db,
-            schemas.ReviewCreate(
-                opportunity_id=opportunity.id,
-                reviewer_name="练玉君",
-                review_status="approved",
-            ),
-        )
-        submit_latest_stocking_request(db, opportunity.id)
-        db.commit()
-
-    response = client.get("/stocking/traceability/export")
-    assert response.status_code == 200
-    workbook = load_workbook(BytesIO(response.content), data_only=True)
-    sheet = next(sheet for sheet in workbook.worksheets if sheet["J2"].value == "SUB-DUP")
-
-    assert sheet.cell(row=2, column=column_index_from_string("AG")).value == 77
-    assert sheet.cell(row=2, column=column_index_from_string("AH")).value == 777
-    assert sheet.cell(row=2, column=column_index_from_string("AJ")).value == 88
-    assert sheet.cell(row=2, column=column_index_from_string("AK")).value == 888
+    assert headers == TRACEABILITY_HEADERS
+    assert row["主SKU"] == "MAIN-S2"
 
 
 def test_traceability_export_adds_not_claim_sheet_with_feedback_and_images() -> None:
@@ -272,21 +208,19 @@ def test_traceability_export_adds_not_claim_sheet_with_feedback_and_images() -> 
 
     assert response.status_code == 200
     workbook = load_workbook(BytesIO(response.content), data_only=True)
-    assert "不认领结果" in workbook.sheetnames
-    sheet = workbook["不认领结果"]
+    assert workbook.sheetnames == ["认领复核明细"]
+    sheet = workbook["认领复核明细"]
     headers = [cell.value for cell in sheet[1]]
     row = dict(zip(headers, [cell.value for cell in sheet[2]]))
 
     assert row["主SKU"] == "MAIN-REJECT"
     assert row["子SKU"] == "SUB-REJECT"
     assert row["销售员"] == "销售C"
-    assert row["认领结果"] == "reject"
+    assert row["认领结果"] == "不认领"
     assert row["不认领理由"] == "市场调研销量不足"
-    assert row["销售反馈总结"] == "竞品价格压得太低"
-    assert row["主管复核状态"] == "confirmed_not_claim"
+    assert row["主管复核状态（中文）"] == "确认不认领"
     assert row["主管复核意见"] == "同意不认领"
-    assert row["导出范围"] == "traceability_not_claim"
-    assert "reject-proof.png" in row["图片附件"]
+    assert "图片附件" not in headers
 
 
 def test_traceability_export_filters_by_period_and_excludes_unconfirmed_not_claim() -> None:
@@ -300,15 +234,10 @@ def test_traceability_export_filters_by_period_and_excludes_unconfirmed_not_clai
 
     assert response.status_code == 200
     workbook = load_workbook(BytesIO(response.content), data_only=True)
-    assert "TH" in workbook.sheetnames
-    approved_sheet = workbook["TH"]
-    approved_values = [row[7].value for row in approved_sheet.iter_rows(min_row=2)]
-    assert approved_values == ["MAIN-W27"]
-
-    assert "不认领结果" in workbook.sheetnames
-    reject_sheet = workbook["不认领结果"]
-    reject_values = [row[7].value for row in reject_sheet.iter_rows(min_row=2)]
-    assert reject_values == ["MAIN-REJECT-CONFIRMED"]
+    sheet = workbook["认领复核明细"]
+    headers = [cell.value for cell in sheet[1]]
+    rows = [dict(zip(headers, [cell.value for cell in row])) for row in sheet.iter_rows(min_row=2)]
+    assert [row["主SKU"] for row in rows] == ["MAIN-W27", "MAIN-REJECT-CONFIRMED"]
 
 
 def test_traceability_export_excludes_disabled_not_claim_opportunities() -> None:
@@ -378,7 +307,7 @@ def test_traceability_export_requires_confirmation_for_each_not_claim_claim() ->
 
     assert response.status_code == 200
     workbook = load_workbook(BytesIO(response.content), data_only=True)
-    sheet = workbook["不认领结果"]
+    sheet = workbook["认领复核明细"]
     headers = [cell.value for cell in sheet[1]]
     rows = [dict(zip(headers, [cell.value for cell in row])) for row in sheet.iter_rows(min_row=2)]
     assert {row["销售员"] for row in rows} == {"销售已确认"}
@@ -413,7 +342,7 @@ def test_historical_null_not_claim_confirmation_exports_only_latest_existing_sub
 
     assert response.status_code == 200
     workbook = load_workbook(BytesIO(response.content), data_only=True)
-    sheet = workbook["不认领结果"]
+    sheet = workbook["认领复核明细"]
     headers = [cell.value for cell in sheet[1]]
     rows = [dict(zip(headers, [cell.value for cell in row])) for row in sheet.iter_rows(min_row=2)]
     assert [row["销售员"] for row in rows] == ["销售最新提交"]
@@ -522,6 +451,47 @@ def prepare_approved_claim(
             ),
         )
         submit_latest_stocking_request(db, opportunity.id)
+        db.commit()
+        return opportunity.id
+
+
+def prepare_approved_claim_without_stocking() -> str:
+    with SessionLocal() as db:
+        opportunity = models.NewProductOpportunity(
+            source_type="selection1_developer_claim_feedback",
+            source_file="选品1.xlsx",
+            source_sheet="开发0623期",
+            source_row=1,
+            batch="BATCH-TRACE",
+            country="TH",
+            site="泰国",
+            main_sku="MAIN-TRACE",
+            sub_sku="SUB-TRACE",
+        )
+        db.add(opportunity)
+        db.flush()
+        claim = services.submit_claim(
+            db,
+            schemas.ClaimCreate(
+                opportunity_id=opportunity.id,
+                salesperson_name="销售A",
+                claim_result="claim",
+                claim_daily_sales=2,
+                note=json.dumps(
+                    {"evidence_images": [{"name": "claim-proof.png", "type": "image/png", "size": 2048}]},
+                    ensure_ascii=False,
+                ),
+            ),
+        )
+        services.submit_review(
+            db,
+            schemas.ReviewCreate(
+                opportunity_id=opportunity.id,
+                claim_record_id=claim.id,
+                reviewer_name="练玉君",
+                review_status="approved",
+            ),
+        )
         db.commit()
         return opportunity.id
 

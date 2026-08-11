@@ -58,6 +58,20 @@ def _add_opportunity(db, *, sheet: str, sub_sku: str, source_row: int, cells: di
     )
 
 
+def test_claim_flag_value_is_not_accepted_as_salesperson() -> None:
+    outcome, payload = claim_backfill.decide_claim(
+        {
+            "salesperson": "否",
+            "claim_flag": None,
+            "daily_sales": None,
+            "reject_reason": "陆伟豪",
+        }
+    )
+
+    assert outcome == "no_claim_info"
+    assert payload is None
+
+
 def seed_archive_rows() -> None:
     """两种列位变体（0428~0519 的 BT~BX 风格与 0526+ 的 BW~BZ 风格）各四种认领事实。"""
     with SessionLocal() as db:

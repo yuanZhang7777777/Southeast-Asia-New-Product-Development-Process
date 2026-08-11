@@ -117,6 +117,7 @@ def delete_user(
     actor_name: str | None = None,
     actor_user_id: str | None = None,
 ) -> None:
+    user.enabled = False
     mappings = list(
         db.scalars(
             select(models.RoleMapping).where(
@@ -127,15 +128,12 @@ def delete_user(
     for mapping in db.scalars(select(models.RoleMapping).where(models.RoleMapping.manager_user_id == user.id)):
         mapping.manager_user_id = None
     for mapping in mappings:
-        db.delete(mapping)
-    password = db.scalar(select(models.UserPassword).where(models.UserPassword.user_id == user.id))
-    if password is not None:
-        db.delete(password)
+        mapping.user_id = user.id
+        mapping.enabled = False
     profile = db.scalar(select(models.OperatorAssignmentProfile).where(models.OperatorAssignmentProfile.operator_name == user.name))
     if profile is not None:
-        db.delete(profile)
-    audit(db, "user.deleted", "user", user.id, {}, actor_name, actor_user_id)
-    db.delete(user)
+        profile.enabled = False
+    audit(db, "user.deleted", "user", user.id, {"mode": "disabled"}, actor_name, actor_user_id)
 
 
 def _user_read(user: models.User, password_user_ids: set[str]) -> schemas.AdminUserRead:

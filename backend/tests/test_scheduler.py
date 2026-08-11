@@ -14,6 +14,8 @@ from app.db import Base, SessionLocal, engine
 from app.scheduler import (
     daily_notification_due,
     dingtalk_user_sync_due,
+    finebi_pull_due,
+    latest_completed_finebi_week_label,
     listing_reminder_due,
     manager_notification_due,
     plm_sync_due,
@@ -34,6 +36,21 @@ def test_dingtalk_user_sync_no_longer_runs_weekly() -> None:
 
     assert not dingtalk_user_sync_due(now, None)
     assert not dingtalk_user_sync_due(now, datetime(2026, 7, 6, 9, 0, tzinfo=ZoneInfo("Asia/Shanghai")))
+
+
+def test_finebi_week_label_uses_last_completed_thursday_to_wednesday_period() -> None:
+    assert latest_completed_finebi_week_label(datetime(2026, 8, 4, 9, 0, tzinfo=ZoneInfo("Asia/Shanghai"))) == "0723-0729"
+    assert latest_completed_finebi_week_label(datetime(2026, 8, 5, 23, 0, tzinfo=ZoneInfo("Asia/Shanghai"))) == "0723-0729"
+    assert latest_completed_finebi_week_label(datetime(2026, 8, 6, 8, 0, tzinfo=ZoneInfo("Asia/Shanghai"))) == "0730-0805"
+
+
+def test_finebi_pull_due_runs_once_after_0800_for_latest_completed_week() -> None:
+    before = datetime(2026, 8, 6, 7, 59, tzinfo=ZoneInfo("Asia/Shanghai"))
+    due = datetime(2026, 8, 6, 8, 0, tzinfo=ZoneInfo("Asia/Shanghai"))
+
+    assert not finebi_pull_due(before, None)
+    assert finebi_pull_due(due, None)
+    assert not finebi_pull_due(due, "0730-0805")
 
 
 def test_daily_notification_due_runs_once_after_0900_beijing() -> None:
@@ -190,3 +207,27 @@ def test_plm_sync_processes_downloaded_workbook(monkeypatch) -> None:
     assert calls["date_text"] == "2026-07-26"
     assert calls["source_file"] == workbook.name
     assert calls["workflow_automation_enabled"] is True
+
+
+def test_finebi_pull_imports_week_and_commits(monkeypatch) -> None:
+    calls: list[str] = []
+
+    class FakeSession:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def commit(self) -> None:
+            calls.append("commit")
+
+    def fake_pull_and_import(db, week_label, *, imported_by, settings):
+        calls.append(f"pull:{week_label}:{imported_by}:{settings.app_env}:{db is not None}")
+        return {"week_label": week_label}
+
+    monkeypatch.setattr(scheduler, "SessionLocal", lambda: FakeSession())
+    monkeypatch.setattr(scheduler.finebi_auto_pull, "pull_and_import", fake_pull_and_import)
+
+    assert scheduler.run_finebi_pull(Settings(app_env="test"), "0723-0729") == {"week_label": "0723-0729"}
+    assert calls == ["pull:0723-0729:scheduler:test:True", "commit"]

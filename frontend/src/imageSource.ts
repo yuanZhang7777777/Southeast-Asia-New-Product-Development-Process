@@ -1,6 +1,6 @@
 // 商品图统一取源：私有 OSS 桶直链改走后端公开只读代理 /media/oss-image。
 // 认领/调研证据图有独立的 /claims/evidence-images/proxy（带 token），不走本函数。
-const FALLBACK_API_BASE = "http://localhost:8000";
+const FALLBACK_API_BASE = "/api";
 
 function apiBase(): string {
   // node --test 下无 window 也无 import.meta.env，直接回落默认值；

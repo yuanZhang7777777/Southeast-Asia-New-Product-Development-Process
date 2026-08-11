@@ -111,7 +111,6 @@ def download_plm_export(
             "sort": None,
             "pageNum": 1,
             "pageSize": 10,
-            "blocNameList": [bloc_name],
             "queryType": "1",
             "bindType": 1,
             "mergeSaleName": 0,

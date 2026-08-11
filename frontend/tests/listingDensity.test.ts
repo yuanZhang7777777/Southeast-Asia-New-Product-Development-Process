@@ -32,7 +32,8 @@ test("workbench scenarios keep only useful filters and recover from empty result
   assert.match(researchSource, /const controls = \(/);
   assert.match(researchSource, /if \(!group\)[\s\S]*?\{controls\}/);
   assert.match(researchSource, /当前筛选下没有已提交记录/);
-  assert.match(researchSource, /latestSecondaryResearchPeriod\(allGroups, scenario/);
+  assert.doesNotMatch(researchSource, /最新期数/);
+  assert.doesNotMatch(researchSource, /latestSecondaryResearchPeriod\(allGroups, scenario/);
   assert.match(listingSource, /useState<"listing" \| "observation">\("observation"\)/);
   assert.match(listingSource, /刊登任务（\{listingScenarioCount\}）/);
   assert.match(listingSource, /周期观察（\{observationScenarioCount\}）/);
@@ -122,8 +123,10 @@ test("二次调研主列表只留行内填写字段，SKU 名称打开模块化�
   assert.doesNotMatch(researchSource, /className="[^"]*research-inline-peers/);
   assert.doesNotMatch(researchSource, /<button className="btn small" type="button" onClick=\{\(\) => setDetailGroupKey\(group\.key\)\}>详情<\/button>/);
   assert.match(researchSource, /ResearchDetailDrawer/);
-  assert.match(researchSource, /drawerModules/);
+  assert.match(researchSource, /selection1DrawerModules/);
   assert.match(researchSource, /\{ key: "market", label: "市场调研" \}/);
+  assert.match(researchSource, /selection2DrawerModules[\s\S]*市场与采购[\s\S]*定价与利润[\s\S]*成本与包装[\s\S]*核价与首单/);
+  assert.match(researchSource, /selection2HeaderFields/);
   assert.doesNotMatch(researchSource, /\{ key: "secondary", label: "二次调研填写" \}/);
   assert.match(researchSource, /activeModule === "market"[\s\S]*?<SecondaryDraftMatrix/);
   assert.match(researchSource, /className="research-drawer-header-meta"/);
@@ -160,6 +163,18 @@ test("运营认领筛选和列表控制在桌面同一行", () => {
   assert.match(stylesSource, /\.claim-workflow-filters\s*\{[\s\S]*?flex-wrap:\s*nowrap;/);
   assert.match(stylesSource, /\.claim-workflow-filters select\s*\{[\s\S]*?width:\s*180px;[\s\S]*?max-width:\s*180px;/);
   assert.match(stylesSource, /@media \(max-width: 900px\)\s*\{[\s\S]*?\.claim-toolbar-row\s*\{[\s\S]*?flex-wrap:\s*wrap;/);
+});
+
+test("选品2公共池支持按规范化业务期筛选", () => {
+  const poolStart = appSource.indexOf("function PoolView");
+  const poolEnd = appSource.indexOf("function ProductGroupCard", poolStart);
+  const poolSource = appSource.slice(poolStart, poolEnd);
+
+  assert.ok(poolStart >= 0 && poolEnd > poolStart);
+  assert.match(poolSource, /label="期数"/);
+  assert.match(poolSource, /item\.batch \|\| item\.source_sheet/);
+  assert.match(poolSource, /setBusinessPeriod\(value\)/);
+  assert.match(poolSource, /page: 1/);
 });
 
 

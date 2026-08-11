@@ -27,7 +27,7 @@ def setup_function() -> None:
     Base.metadata.create_all(bind=engine)
 
 
-def test_selection2_import_is_idempotent_and_keeps_multi_sales_feedback(tmp_path: Path) -> None:
+def test_selection2_standard_import_ignores_historical_claim_columns_and_normalizes_period(tmp_path: Path) -> None:
     workbook_path = tmp_path / "selection2.xlsx"
     build_selection2_fixture(workbook_path)
     payload = {"source_file": str(workbook_path), "source_sheet": "5.26期"}
@@ -43,14 +43,15 @@ def test_selection2_import_is_idempotent_and_keeps_multi_sales_feedback(tmp_path
 
     with SessionLocal() as db:
         opportunity = db.query(models.NewProductOpportunity).one()
-        claims = db.query(models.SalesClaimForecast).order_by(models.SalesClaimForecast.source_column).all()
         snapshots = db.query(models.SourceRecordSnapshot).order_by(models.SourceRecordSnapshot.created_at).all()
 
     assert opportunity.source_type == "selection2_caigen_claim_feedback"
+    assert opportunity.batch == "选品2-财根0526期"
     assert opportunity.main_sku == "HXG15GD"
     assert opportunity.sub_sku == "HXG15GD"
     assert opportunity.site == "PH"
     assert opportunity.country == "PH"
+    assert opportunity.claim_pool_open is True
     assert opportunity.category_level1 is None
     assert opportunity.category_level2 is None
     assert opportunity.snapshot["headers_by_column"]["H"] == ["进价"]
@@ -58,11 +59,10 @@ def test_selection2_import_is_idempotent_and_keeps_multi_sales_feedback(tmp_path
         first.json()["import_batch_id"],
         second.json()["import_batch_id"],
     ]
-    assert [(claim.salesperson_name, claim.claim_result, claim.claim_daily_sales, claim.reject_reason) for claim in claims] == [
-        ("冯卓宏", "reject", None, None),
-        ("李桂敏", "reject", None, "市场销量不足"),
-        ("赵钰婷", "claim", 1.5, None),
-    ]
+    assert db_count(models.SalesClaimForecast) == 0
+    assert db_count(models.FlowTask) == 0
+    assert first.json()["prefill_claim_count"] == 0
+    assert first.json()["task_count"] == 0
 
 
 def test_selection2_reupload_with_new_file_name_updates_in_place(tmp_path: Path) -> None:
@@ -195,6 +195,12 @@ def test_selection2_standard_header_imports_spu_sku_as_ph_without_claim_task(tmp
     assert opportunity.country == "PH"
     assert opportunity.category_level1 is None
     assert opportunity.category_level2 is None
+    assert opportunity.batch == "选品2-财根0711期"
+
+
+def db_count(model) -> int:
+    with SessionLocal() as db:
+        return db.query(model).count()
 
 
 def test_selection2_import_tolerates_datetime_cells(tmp_path: Path) -> None:

@@ -28,7 +28,7 @@ import os
 import re
 import uuid
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 from http.cookiejar import CookieJar
 from io import BytesIO
 from pathlib import Path
@@ -163,7 +163,7 @@ def pull_week(
     content = _download_export(session, base, report_id, operation_id, session_id)
     _validate_headers(content, label)
 
-    directory = Path(target_dir) if target_dir else DEFAULT_TARGET_DIR
+    directory = Path(target_dir) if target_dir else Path(settings.finebi_cache_dir or DEFAULT_TARGET_DIR)
     directory.mkdir(parents=True, exist_ok=True)
     target = directory / f"{label}.xlsx"
     if target.exists():
@@ -186,7 +186,7 @@ def pull_and_import(
 ) -> dict[str, object]:
     settings = settings or get_settings()
     year = year or date.today().year
-    directory = Path(target_dir) if target_dir else DEFAULT_TARGET_DIR
+    directory = Path(target_dir) if target_dir else Path(settings.finebi_cache_dir or DEFAULT_TARGET_DIR)
     path = pull_week(week_label, settings=settings, target_dir=directory, session=session, year=year)
     label = path.stem
     finebi, periods, skipped = read_finebi_periods(directory, year, include_period=label)
@@ -206,6 +206,16 @@ def _require_configuration(settings: Settings) -> None:
     missing = [name for name, attribute in REQUIRED_SETTINGS if not str(getattr(settings, attribute)).strip()]
     if missing:
         raise ValueError(f"FineBI 拉取配置不完整，缺少：{', '.join(missing)}")
+
+
+def latest_completed_week_label(today: date | None = None) -> str:
+    current = today or date.today()
+    days_since_wednesday = (current.weekday() - 2) % 7
+    period_end = current - timedelta(days=days_since_wednesday)
+    if current.weekday() == 2:
+        period_end -= timedelta(days=7)
+    period_start = period_end - timedelta(days=6)
+    return f"{period_start:%m%d}-{period_end:%m%d}"
 
 
 def _load_payload(payload_file: str) -> bytes:
@@ -418,7 +428,7 @@ def _validate_headers(content: bytes, week_label: str) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="FineBI 周数据自动拉取（默认仅下载，不入库）")
-    parser.add_argument("--week-label", required=True, help="周标签，形如 0723-0729")
+    parser.add_argument("--week-label", default="", help="周标签，形如 0723-0729；不填则取最近一个完整周四至周三周期")
     parser.add_argument("--import-db", action="store_true", help="下载后解析并写入数据库")
     parser.add_argument("--imported-by", default="finebi_auto_pull")
     args = parser.parse_args()
@@ -426,14 +436,15 @@ def main() -> None:
     settings = get_settings()
     if not settings.finebi_auto_pull_enabled:
         raise SystemExit("FINEBI_AUTO_PULL_ENABLED=false，请先在部署环境开启")
+    week_label = args.week_label or latest_completed_week_label()
     if args.import_db:
         from app.db import SessionLocal
 
         with SessionLocal() as db:
-            report = pull_and_import(db, args.week_label, imported_by=args.imported_by, settings=settings)
+            report = pull_and_import(db, week_label, imported_by=args.imported_by, settings=settings)
             db.commit()
     else:
-        report = {"week_label": args.week_label, "file": str(pull_week(args.week_label, settings=settings))}
+        report = {"week_label": week_label, "file": str(pull_week(week_label, settings=settings))}
     print(json.dumps(report, ensure_ascii=False, indent=2, default=str))
 
 

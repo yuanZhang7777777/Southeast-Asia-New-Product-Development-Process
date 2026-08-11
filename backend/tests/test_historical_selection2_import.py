@@ -8,8 +8,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from openpyxl import Workbook  # noqa: E402
 from openpyxl.utils import get_column_letter  # noqa: E402
 
+from app import models  # noqa: E402
+from app.db import Base, SessionLocal, engine  # noqa: E402
 from app.historical_selection2_import import (  # noqa: E402
     SOURCE_TYPE,
+    apply_selection2_rows,
     inspect_selection2_workbook,
     normalize_selection2_history_rows,
     parse_historical_selection2_row,
@@ -17,6 +20,11 @@ from app.historical_selection2_import import (  # noqa: E402
 )
 
 OUTPUT_DIR = Path(__file__).resolve().parents[1] / ".test_outputs" / "historical_selection2_import"
+
+
+def setup_function() -> None:
+    Base.metadata.drop_all(bind=engine)
+    Base.metadata.create_all(bind=engine)
 
 
 
@@ -117,6 +125,87 @@ def test_parse_row_with_infringement_marker_keeps_archive_only() -> None:
     assert parsed["snapshot"]["fields_by_cell"]["AS"]["value"] == "侵权商品"
 
 
+def test_parse_row_with_ip_infringement_marker_does_not_create_numeric_owner() -> None:
+    parsed = parse_historical_selection2_row(
+        _row({1: "SPU-IP", 2: "SKU-IP", 43: 0, 45: "IP侵权"}),
+        headers=_headers(
+            {
+                1: "SPU",
+                2: "SKU",
+                43: "主认领销售1",
+                44: "认领单销",
+                45: "不认领原因",
+            }
+        ),
+        source_file="selection2.xlsx",
+        source_sheet="6.22期",
+        source_row=11,
+    )
+
+    assert parsed is not None
+    assert parsed["claims"] == []
+    assert parsed["rejected_sources"] == []
+    assert parsed["operator_match_policy"] == "skip"
+    assert parsed["archive_only_reason"] == "infringing_product"
+
+
+def test_parse_row_repairs_shifted_primary_salesperson_and_rejection_reason() -> None:
+    parsed = parse_historical_selection2_row(
+        _row({1: "SPU-SHIFT", 2: "SKU-SHIFT", 44: "李干", 46: "需要资质"}),
+        headers=_headers(
+            {
+                1: "SPU",
+                2: "SKU",
+                43: "主认领销售1",
+                44: "认领单销",
+                45: "不认领原因",
+                46: "认领销售2",
+                47: "认领单销",
+            }
+        ),
+        source_file="selection2.xlsx",
+        source_sheet="6.30期",
+        source_row=52,
+    )
+
+    assert parsed is not None
+    assert parsed["claims"] == []
+    assert parsed["rejected_sources"] == [
+        {"salesperson_name": "李干", "raw_value": "需要资质", "source_column": "AR:AT"}
+    ]
+
+
+def test_parse_row_repairs_shifted_primary_salesperson_and_positive_daily_sales() -> None:
+    parsed = parse_historical_selection2_row(
+        _row({1: "SPU-SHIFT", 2: "SKU-SHIFT", 44: "冯卓宏", 45: 0.5}),
+        headers=_headers(
+            {
+                1: "SPU",
+                2: "SKU",
+                43: "主认领销售1",
+                44: "认领单销",
+                45: "不认领原因",
+                46: "认领销售2",
+                47: "认领单销",
+            }
+        ),
+        source_file="selection2.xlsx",
+        source_sheet="6.30期",
+        source_row=58,
+    )
+
+    assert parsed is not None
+    assert parsed["claims"] == [
+        {
+            "salesperson_name": "冯卓宏",
+            "claim_result": "claim",
+            "claim_daily_sales": 0.5,
+            "source_column": "AR:AS",
+        }
+    ]
+    assert parsed["rejected_sources"] == []
+
+
 def test_parse_empty_claim_area_is_historical_unclaimed_not_pending_task() -> None:
     parsed = parse_historical_selection2_row(
         _row({2: "SPU-3", 3: "SKU-3", 5: "商品C"}),
@@ -163,7 +252,7 @@ def test_parse_row_deduplicates_same_claimant_and_daily_sales() -> None:
     ]
 
 
-def test_parse_row_treats_zero_as_unclaimed_and_flags_conflicting_claim_values() -> None:
+def test_parse_row_treats_zero_as_rejection_and_flags_conflicting_claim_values() -> None:
     parsed = parse_historical_selection2_row(
         _row(
             {1: "SPU-5", 2: "SKU-5", 43: "冯卓宏", 44: 1, 46: "冯卓宏", 47: 2, 48: "李干", 49: 0},
@@ -188,8 +277,10 @@ def test_parse_row_treats_zero_as_unclaimed_and_flags_conflicting_claim_values()
 
     assert parsed is not None
     assert parsed["claims"] == []
-    assert parsed["rejected_sources"] == []
-    assert parsed["archive_only_reason"] == "historical_claim_quality_issue"
+    assert parsed["rejected_sources"] == [
+        {"salesperson_name": "李干", "raw_value": 0, "source_column": "AV:AW"}
+    ]
+    assert parsed["archive_only_reason"] is None
     assert parsed["quality_issues"] == [
         {
             "code": "conflicting_claim_values",
@@ -197,6 +288,22 @@ def test_parse_row_treats_zero_as_unclaimed_and_flags_conflicting_claim_values()
             "raw_values": [1, 2],
             "source_columns": ["AQ:AR", "AT:AU"],
         }
+    ]
+
+
+def test_parse_row_treats_named_blank_slot_as_rejection() -> None:
+    parsed = parse_historical_selection2_row(
+        _row({1: "SPU-BLANK", 2: "SKU-BLANK", 43: "销售A", 44: None}),
+        headers=_headers({1: "SPU", 2: "SKU", 43: "主认领销售1", 44: "认领单销"}),
+        source_file="selection2.xlsx",
+        source_sheet="7.11期",
+        source_row=7,
+    )
+
+    assert parsed is not None
+    assert parsed["claims"] == []
+    assert parsed["rejected_sources"] == [
+        {"salesperson_name": "销售A", "raw_value": None, "source_column": "AQ:AR"}
     ]
 
 
@@ -415,3 +522,82 @@ def test_normalize_keeps_variants_under_one_main_sku_as_independent_rows() -> No
 
     assert report["business_repair_rows"] == []
     assert [row["sub_sku"] for row in report["unified_rows"]] == ["SKU-S", "SKU-L"]
+
+
+def test_apply_rows_is_idempotent_and_creates_no_workflow_tasks() -> None:
+    parsed = parse_historical_selection2_row(
+        _row({1: "SPU-APPLY", 2: "SKU-APPLY", 4: "商品", 43: "销售A", 44: 1.5, 46: "销售B", 47: 0}),
+        headers=_headers(
+            {
+                1: "SPU",
+                2: "SKU",
+                4: "产品名称",
+                43: "主认领销售1",
+                44: "认领单销",
+                46: "认领销售2",
+                47: "认领单销",
+            }
+        ),
+        source_file="selection2.xlsx",
+        source_sheet="7.11期",
+        source_row=2,
+    )
+    assert parsed is not None
+
+    with SessionLocal() as db:
+        first = apply_selection2_rows(db, [parsed], source_label="selection2.xlsx")
+        db.commit()
+        second = apply_selection2_rows(db, [parsed], source_label="selection2.xlsx")
+        db.commit()
+
+        opportunity = db.query(models.NewProductOpportunity).one()
+        claims = db.query(models.SalesClaimForecast).order_by(models.SalesClaimForecast.salesperson_name).all()
+        assert opportunity.current_status == "historical_archive"
+        assert opportunity.claim_pool_open is False
+        assert [(claim.salesperson_name, claim.claim_result, claim.claim_daily_sales, claim.reject_reason) for claim in claims] == [
+            ("销售A", "claim", 1.5, None),
+            ("销售B", "reject", None, "来源认领单销为 0"),
+        ]
+        assert db.query(models.FlowInstance).count() == 0
+        assert db.query(models.FlowTask).count() == 0
+        assert db.query(models.ReviewRecord).count() == 0
+        assert db.query(models.StockingRequest).count() == 0
+        assert db.query(models.ListingRecord).count() == 0
+
+    assert first["created_opportunities"] == 1
+    assert first["created_claims"] == 2
+    assert second["created_opportunities"] == 0
+    assert second["updated_opportunities"] == 1
+    assert second["created_claims"] == 0
+    assert second["updated_claims"] == 2
+
+
+def test_normalize_reparses_stale_payload_claims_from_raw_snapshot() -> None:
+    parsed = parse_historical_selection2_row(
+        _row({1: "SPU-CLEAN", 2: "SKU-CLEAN", 44: "李干", 46: "需要资质"}),
+        headers=_headers(
+            {
+                1: "SPU",
+                2: "SKU",
+                43: "主认领销售1",
+                44: "认领单销",
+                45: "不认领原因",
+                46: "认领销售2",
+                47: "认领单销",
+            }
+        ),
+        source_file="selection2.xlsx",
+        source_sheet="6.30期",
+        source_row=52,
+    )
+    assert parsed is not None
+    parsed["rejected_sources"] = [
+        {"salesperson_name": "需要资质", "raw_value": None, "source_column": "AT:AU"}
+    ]
+    parsed["snapshot"]["rejected_sources"] = parsed["rejected_sources"]
+
+    normalized = normalize_selection2_history_rows([parsed])
+
+    assert normalized["unified_rows"][0]["rejected_sources"] == [
+        {"salesperson_name": "李干", "raw_value": "需要资质", "source_column": "AR:AT"}
+    ]

@@ -1,11 +1,13 @@
 import { ClipboardEvent, CSSProperties, DragEvent, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { ChevronLeft, ChevronRight, ExternalLink, ImagePlus, Send, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, ExternalLink, ImagePlus, Plus, Send, X } from "lucide-react";
 
 import {
   API_BASE,
   api,
+  AssignableOperator,
   getAuthToken,
+  PlmArrivalAssignment,
   SecondaryResearchGroup,
   SecondaryResearchItem,
   UploadedEvidenceImage
@@ -14,28 +16,47 @@ import {
   filterSecondaryResearchGroups,
   createSecondaryResearchDraft,
   incompleteSecondaryResearchItems,
-  latestSecondaryResearchPeriod,
   patchSecondaryResearchDraft,
+  researchLinkLabels,
   SECONDARY_RESEARCH_POSITIONINGS,
   SECONDARY_RESEARCH_SKIP_LISTING,
   syncSecondaryResearchDraftPatch,
   SecondaryResearchDraft
 } from "./secondaryResearchDrafts";
 import { productImageSrc, productThumbSrc } from "./imageSource";
+import { formatBeijingDateTime } from "./dateTime";
 import { isSourceClaimInputLabel, selection1ColumnLabel } from "./selection1Columns";
 import { formatBusinessNumber } from "./businessFormat";
 import { createKeyedSaveQueue, imageFiles } from "./imageUploads";
+import { isSelection2Item, selection2HeaderFields, Selection2SectionKey } from "./historicalSnapshot";
+import { cachedValue, setCachedValue } from "./pageDataCache";
 
 type SourceModuleKey = "market" | "pricing" | "development" | "cost";
 type DrawerModuleKey = SourceModuleKey | "claims";
+type ResearchScenario = "pending" | "submitted" | "arrival_assignment";
 
-const drawerModules: { key: DrawerModuleKey; label: string }[] = [
+const selection1DrawerModules: { key: DrawerModuleKey; label: string }[] = [
   { key: "market", label: "市场调研" },
   { key: "pricing", label: "价格 / 毛利" },
   { key: "development", label: "开发 / 包装" },
   { key: "cost", label: "成本 / 备货" },
   { key: "claims", label: "其他运营" }
 ];
+
+const selection2DrawerModules: { key: DrawerModuleKey; label: string }[] = [
+  { key: "market", label: "市场与采购" },
+  { key: "pricing", label: "定价与利润" },
+  { key: "development", label: "成本与包装" },
+  { key: "cost", label: "核价与首单" },
+  { key: "claims", label: "其他运营" }
+];
+
+const selection2ModuleSections: Record<SourceModuleKey, Selection2SectionKey> = {
+  market: "market",
+  pricing: "pricing",
+  development: "cost",
+  cost: "valuation"
+};
 
 const syncedDraftFields = ["competitorUrl", "conclusion", "positioning", "targetDailySales", "sellingPoints"] as const;
 
@@ -46,6 +67,19 @@ const moduleColumns: Record<SourceModuleKey, string[]> = {
   cost: columnsBetween("AW", "BX")
 };
 type DraftMap = Record<string, SecondaryResearchDraft<UploadedEvidenceImage>>;
+const MANUAL_SECONDARY_COUNTRIES = ["菲律宾", "泰国", "越南", "马来西亚"];
+
+type ManualSecondaryDraft = {
+  country: string;
+  salesperson_name: string;
+  business_period: string;
+  main_sku: string;
+  main_sku_name: string;
+  sub_sku: string;
+  sub_sku_name: string;
+  secondary_competitor_url: string;
+};
+type ManualSecondaryErrors = Partial<Record<keyof ManualSecondaryDraft, string>>;
 
 export function SecondaryResearchView(props: {
   salespersonName: string;
@@ -54,12 +88,12 @@ export function SecondaryResearchView(props: {
   preset?: { scenario: "pending"; periodFilter: "__all__"; nonce: number } | null;
   onStatus: (message: string) => void;
 }) {
-  const [scenario, setScenario] = useState<"pending" | "submitted">("pending");
+  const [scenario, setScenario] = useState<ResearchScenario>("pending");
   const [query, setQuery] = useState("");
   const [countryFilter, setCountryFilter] = useState("");
   const [ownerFilter, setOwnerFilter] = useState("");
   const [allGroups, setAllGroups] = useState<SecondaryResearchGroup[]>([]);
-  const [periodFilter, setPeriodFilter] = useState("latest");
+  const [periodFilter, setPeriodFilter] = useState("__all__");
   const [activeIndex, setActiveIndex] = useState(0);
   const [drafts, setDrafts] = useState<DraftMap>({});
   const draftsRef = useRef<DraftMap>({});
@@ -74,15 +108,43 @@ export function SecondaryResearchView(props: {
   const uploadCounts = useRef<Record<string, number>>({});
   const [, setUploadRevision] = useState(0);
   const [loading, setLoading] = useState(false);
+  const [manualSecondary, setManualSecondary] = useState<ManualSecondaryDraft | null>(null);
+  const [manualSecondaryErrors, setManualSecondaryErrors] = useState<ManualSecondaryErrors>({});
+  const manualSecondaryDialog = useRef<HTMLDivElement | null>(null);
+  const [plmAssignments, setPlmAssignments] = useState<PlmArrivalAssignment[]>([]);
+  const [assignableOperators, setAssignableOperators] = useState<AssignableOperator[]>([]);
+  const [assignmentOwners, setAssignmentOwners] = useState<Record<string, string>>({});
+  const [assignmentCloseReasons, setAssignmentCloseReasons] = useState<Record<string, string>>({});
   const periods = useMemo(
     () => Array.from(new Set(allGroups.map((entry) => entry.business_period || "").filter(Boolean))).sort().reverse(),
     [allGroups]
   );
-  const latestPeriod = latestSecondaryResearchPeriod(allGroups, scenario, { country: countryFilter, salespersonName: props.editable ? "" : ownerFilter });
+  const countryOptions = useMemo(
+    () => Array.from(new Set([
+      ...allGroups.map((entry) => entry.country).filter(Boolean),
+      ...plmAssignments.map((entry) => entry.country).filter(Boolean),
+    ])).sort(),
+    [allGroups, plmAssignments]
+  );
+  const researchScenario = scenario === "submitted" ? "submitted" : "pending";
   const groups = useMemo(() => filterSecondaryResearchGroups(allGroups, {
-    scenario, query, country: countryFilter, businessPeriod: periodFilter === "latest" ? latestPeriod : periodFilter === "__all__" ? "" : periodFilter,
+    scenario: researchScenario, query, country: countryFilter, businessPeriod: periodFilter === "__all__" ? "" : periodFilter,
     salespersonName: props.editable ? "" : ownerFilter
-  }), [allGroups, countryFilter, latestPeriod, ownerFilter, periodFilter, props.editable, query, scenario]);
+  }), [allGroups, countryFilter, ownerFilter, periodFilter, props.editable, query, researchScenario]);
+  const visiblePlmAssignments = useMemo(() => {
+    const keyword = query.trim().toLowerCase();
+    return plmAssignments.filter((item) => {
+      if (countryFilter && item.country !== countryFilter) return false;
+      if (!keyword) return true;
+      return [
+        item.main_sku,
+        item.sub_sku,
+        item.product_name,
+        item.plm_salesperson_name,
+        item.source_file,
+      ].some((value) => String(value || "").toLowerCase().includes(keyword));
+    });
+  }, [countryFilter, plmAssignments, query]);
   const group = groups[activeIndex];
   const [detailGroupKey, setDetailGroupKey] = useState<string | null>(null);
   const detailGroup = detailGroupKey ? groups.find((entry) => entry.key === detailGroupKey) || null : null;
@@ -92,17 +154,46 @@ export function SecondaryResearchView(props: {
     setDrafts(next);
   }
 
-  async function loadGroups() {
+  function applyGroups(result: SecondaryResearchGroup[]) {
+    setAllGroups(result);
+    replaceDrafts(
+      Object.fromEntries(result.flatMap((entry) => entry.items.map((item) => [item.claim_record_id, createSecondaryResearchDraft(item)])))
+    );
+  }
+
+  async function loadGroups(options: { force?: boolean } = {}) {
     if (props.editable && !props.salespersonName) return;
-    setLoading(true);
+    const cacheKey = `secondary-research:${props.editable ? "operator" : "manager"}:${props.salespersonName || ""}`;
+    const cached = options.force ? undefined : cachedValue<SecondaryResearchGroup[]>(cacheKey);
+    if (cached) applyGroups(cached);
+    setLoading(!cached);
     try {
       const result = await api.secondaryResearch(props.editable ? props.salespersonName : "", "__all__", "");
-      setAllGroups(result);
-      replaceDrafts(
-        Object.fromEntries(result.flatMap((entry) => entry.items.map((item) => [item.claim_record_id, createSecondaryResearchDraft(item)])))
-      );
+      setCachedValue(cacheKey, result);
+      applyGroups(result);
     } catch (error) {
-      props.onStatus(error instanceof Error ? error.message : "二次调研加载失败");
+      if (!cached) props.onStatus(error instanceof Error ? error.message : "二次调研加载失败");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function loadPlmAssignments(options: { force?: boolean } = {}) {
+    if (!props.canManage) return;
+    const cacheKey = "secondary-research:plm-arrival-assignments";
+    const cached = options.force ? undefined : cachedValue<PlmArrivalAssignment[]>(cacheKey);
+    if (cached) setPlmAssignments(cached);
+    setLoading(!cached);
+    try {
+      const [assignments, operators] = await Promise.all([
+        api.plmArrivalAssignments(),
+        api.assignableOperators(),
+      ]);
+      setCachedValue(cacheKey, assignments);
+      setPlmAssignments(assignments);
+      setAssignableOperators(operators);
+    } catch (error) {
+      if (!cached) props.onStatus(error instanceof Error ? error.message : "PLM到货待分配加载失败");
     } finally {
       setLoading(false);
     }
@@ -111,6 +202,10 @@ export function SecondaryResearchView(props: {
   useEffect(() => {
     void loadGroups();
   }, [props.salespersonName, props.editable]);
+
+  useEffect(() => {
+    if (props.canManage) void loadPlmAssignments();
+  }, [props.canManage]);
 
   useEffect(() => {
     const preset = props.preset;
@@ -127,6 +222,10 @@ export function SecondaryResearchView(props: {
   useEffect(() => {
     if (detailGroupKey && !groups.some((entry) => entry.key === detailGroupKey)) setDetailGroupKey(null);
   }, [detailGroupKey, groups]);
+
+  useEffect(() => {
+    if (manualSecondary) manualSecondaryDialog.current?.focus();
+  }, [manualSecondary]);
 
   const groupProgress = useMemo(() => {
     if (!group) return { complete: 0, total: 0 };
@@ -267,7 +366,7 @@ export function SecondaryResearchView(props: {
       delete correctionOriginal.current[item.claim_record_id];
       setCorrectionClaimId(null);
       props.onStatus(`${item.sub_sku} 纠错已保存，原提交时间及后续记录均保留`);
-      await loadGroups();
+      await loadGroups({ force: true });
     } catch (error) {
       setSaveState((current) => ({ ...current, [item.claim_record_id]: "纠错保存失败" }));
       props.onStatus(error instanceof Error ? error.message : `${item.sub_sku} 纠错保存失败`);
@@ -291,7 +390,7 @@ export function SecondaryResearchView(props: {
         group.items.map((item) => item.claim_record_id)
       );
       props.onStatus(`${group.main_sku} 二次调研已提交`);
-      await loadGroups();
+      await loadGroups({ force: true });
     } catch (error) {
       props.onStatus(error instanceof Error ? error.message : "整组提交失败");
     } finally {
@@ -303,12 +402,80 @@ export function SecondaryResearchView(props: {
     setActiveIndex((current) => Math.min(groups.length - 1, Math.max(0, current + direction)));
   }
 
-  async function exportResearch() {
+  function openManualSecondary() {
+    setManualSecondaryErrors({});
+    setManualSecondary({
+      country: countryFilter || "菲律宾",
+      salesperson_name: props.editable ? props.salespersonName : ownerFilter,
+      business_period: "",
+      main_sku: "",
+      main_sku_name: "",
+      sub_sku: "",
+      sub_sku_name: "",
+      secondary_competitor_url: ""
+    });
+  }
+
+  function closeManualSecondary() {
+    setManualSecondary(null);
+    setManualSecondaryErrors({});
+  }
+
+  function updateManualSecondary(field: keyof ManualSecondaryDraft, value: string) {
+    setManualSecondary((current) => current ? { ...current, [field]: value } : current);
+    setManualSecondaryErrors((current) => ({ ...current, [field]: undefined }));
+  }
+
+  function validateManualSecondary(draft: ManualSecondaryDraft) {
+    const errors: ManualSecondaryErrors = {};
+    if (!draft.country.trim()) errors.country = "请填写国家";
+    if (!draft.main_sku.trim()) errors.main_sku = "请填写主 SKU";
+    if (!draft.sub_sku.trim()) errors.sub_sku = "请填写子 SKU";
+    if (!draft.salesperson_name.trim()) errors.salesperson_name = "请填写负责人";
+    return errors;
+  }
+
+  async function submitManualSecondary() {
+    if (!manualSecondary) return;
+    const errors = validateManualSecondary(manualSecondary);
+    setManualSecondaryErrors(errors);
+    if (Object.keys(errors).length) {
+      props.onStatus("请补全新增二调 SKU 信息");
+      return;
+    }
+    const mainSku = manualSecondary.main_sku.trim();
     setLoading(true);
     try {
-      const businessPeriod = periodFilter === "latest" ? latestPeriod : periodFilter === "__all__" ? "" : periodFilter;
+      await api.createManualSecondaryResearch({
+        country: manualSecondary.country.trim(),
+        salesperson_name: manualSecondary.salesperson_name.trim(),
+        business_period: manualSecondary.business_period.trim() || null,
+        main_sku: mainSku,
+        main_sku_name: manualSecondary.main_sku_name.trim() || null,
+        sub_sku: manualSecondary.sub_sku.trim(),
+        sub_sku_name: manualSecondary.sub_sku_name.trim() || null,
+        secondary_competitor_url: manualSecondary.secondary_competitor_url.trim() || null
+      });
+      closeManualSecondary();
+      setScenario("pending");
+      setPeriodFilter("__all__");
+      setQuery(mainSku);
+      props.onStatus(`${mainSku} 已新增到二次调研待处理`);
+      await loadGroups({ force: true });
+    } catch (error) {
+      props.onStatus(error instanceof Error ? error.message : "新增二调 SKU 失败");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function exportResearch() {
+    if (scenario === "arrival_assignment") return;
+    setLoading(true);
+    try {
+      const businessPeriod = periodFilter === "__all__" ? "" : periodFilter;
       await api.secondaryResearchExport({
-        scenario,
+        scenario: researchScenario,
         salesperson_name: props.editable ? props.salespersonName : ownerFilter,
         business_period: businessPeriod,
         country: countryFilter,
@@ -324,24 +491,141 @@ export function SecondaryResearchView(props: {
 
   const controls = (
     <div className={`research-workbench-controls${group ? "" : " research-empty-controls"}`}>
-      <div className="research-scenarios"><button className={`btn small ${scenario === "pending" ? "primary" : ""}`} type="button" onClick={() => setScenario("pending")}>待处理</button><button className={`btn small ${scenario === "submitted" ? "primary" : ""}`} type="button" onClick={() => setScenario("submitted")}>我已提交</button></div>
+      <div className="research-scenarios"><button className={`btn small ${scenario === "pending" ? "primary" : ""}`} type="button" onClick={() => setScenario("pending")}>待处理</button><button className={`btn small ${scenario === "submitted" ? "primary" : ""}`} type="button" onClick={() => setScenario("submitted")}>我已提交</button>{props.canManage && <button className={`btn small ${scenario === "arrival_assignment" ? "primary" : ""}`} type="button" onClick={() => setScenario("arrival_assignment")}>到货待分配</button>}</div>
       <label>关键词<input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="主 / 子 SKU、名称" /></label>
-      <label>国家<select value={countryFilter} onChange={(event) => setCountryFilter(event.target.value)}><option value="">全部</option>{Array.from(new Set(allGroups.map((entry) => entry.country).filter(Boolean))).sort().map((country) => <option value={country!} key={country}>{country}</option>)}</select></label>
-      <label>业务期<select value={periodFilter} onChange={(event) => setPeriodFilter(event.target.value)}><option value="latest">最新期数</option><option value="__all__">全部期数</option>{periods.map((period) => <option value={period} key={period}>{period}</option>)}</select></label>
-      {!props.editable && <label>负责人<select value={ownerFilter} onChange={(event) => setOwnerFilter(event.target.value)}><option value="">全部</option>{Array.from(new Set(allGroups.map((entry) => entry.salesperson_name))).sort().map((owner) => <option value={owner} key={owner}>{owner}</option>)}</select></label>}
-      <button className="btn small" type="button" onClick={() => { setQuery(""); setCountryFilter(""); setOwnerFilter(""); setPeriodFilter("latest"); }}>清空</button>
-      <button className="btn small" type="button" disabled={loading} onClick={() => void exportResearch()}>导出二次调研</button>
+      <label>国家<select value={countryFilter} onChange={(event) => setCountryFilter(event.target.value)}><option value="">全部</option>{countryOptions.map((country) => <option value={country!} key={country}>{country}</option>)}</select></label>
+      {scenario !== "arrival_assignment" && <label>业务期<select value={periodFilter} onChange={(event) => setPeriodFilter(event.target.value)}><option value="__all__">全部期数</option>{periods.map((period) => <option value={period} key={period}>{period}</option>)}</select></label>}
+      {!props.editable && scenario !== "arrival_assignment" && <label>负责人<select value={ownerFilter} onChange={(event) => setOwnerFilter(event.target.value)}><option value="">全部</option>{Array.from(new Set(allGroups.map((entry) => entry.salesperson_name))).sort().map((owner) => <option value={owner} key={owner}>{owner}</option>)}</select></label>}
+      <button className="btn small" type="button" onClick={() => { setQuery(""); setCountryFilter(""); setOwnerFilter(""); setPeriodFilter("__all__"); }}>清空</button>
+      <button className="btn small" type="button" disabled={loading} onClick={() => void (scenario === "arrival_assignment" ? loadPlmAssignments({ force: true }) : loadGroups({ force: true }))}>刷新</button>
+      {scenario !== "arrival_assignment" && <button className="btn small" type="button" disabled={loading} onClick={() => void exportResearch()}>导出二次调研</button>}
+      {scenario !== "arrival_assignment" && <button className="btn small primary" type="button" disabled={loading || (props.editable && !props.salespersonName)} onClick={openManualSecondary}><Plus size={13} />新增二调 SKU</button>}
     </div>
   );
 
-  if (loading && !group) return <div className="research-empty">正在加载二次调研任务...</div>;
-  if (!group) return <div className="secondary-workbench">{controls}<div className="research-empty"><b>{scenario === "submitted" ? "当前筛选下没有已提交记录" : "当前筛选下没有待处理记录"}</b></div></div>;
+  const manualSecondaryDialogNode = manualSecondary && (
+    <div className="listing-overlay" role="presentation">
+      <div
+        className="listing-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="manual-secondary-title"
+        tabIndex={-1}
+        ref={manualSecondaryDialog}
+      >
+        <button aria-label="关闭新增二调 SKU" className="listing-dialog-close" type="button" onClick={closeManualSecondary}><X size={18} /></button>
+        <h2 id="manual-secondary-title">新增二调 SKU</h2>
+        <p>用于承接原来商品看板里没有的 SKU。新增后进入二次调研待处理，不发钉钉、不跑 PLM。</p>
+        <div className="manual-listing-grid">
+          <label>国家 *<select className={manualSecondaryErrors.country ? "listing-error-input" : ""} value={manualSecondary.country} onChange={(event) => updateManualSecondary("country", event.target.value)}>{MANUAL_SECONDARY_COUNTRIES.map((country) => <option value={country} key={country}>{country}</option>)}</select><FieldError message={manualSecondaryErrors.country} /></label>
+          <label>负责人 *<input disabled={props.editable} className={manualSecondaryErrors.salesperson_name ? "listing-error-input" : ""} value={manualSecondary.salesperson_name} onChange={(event) => updateManualSecondary("salesperson_name", event.target.value)} /><FieldError message={manualSecondaryErrors.salesperson_name} /></label>
+          <label>业务期<input value={manualSecondary.business_period} onChange={(event) => updateManualSecondary("business_period", event.target.value)} placeholder="不填则为手工二调" /></label>
+          <label>主 SKU *<input className={manualSecondaryErrors.main_sku ? "listing-error-input" : ""} value={manualSecondary.main_sku} onChange={(event) => updateManualSecondary("main_sku", event.target.value)} /><FieldError message={manualSecondaryErrors.main_sku} /></label>
+          <label>主 SKU 名称<input value={manualSecondary.main_sku_name} onChange={(event) => updateManualSecondary("main_sku_name", event.target.value)} /></label>
+          <label>子 SKU *<input className={manualSecondaryErrors.sub_sku ? "listing-error-input" : ""} value={manualSecondary.sub_sku} onChange={(event) => updateManualSecondary("sub_sku", event.target.value)} /><FieldError message={manualSecondaryErrors.sub_sku} /></label>
+          <label>子 SKU 名称<input value={manualSecondary.sub_sku_name} onChange={(event) => updateManualSecondary("sub_sku_name", event.target.value)} /></label>
+          <label>锚定链接<input value={manualSecondary.secondary_competitor_url} onChange={(event) => updateManualSecondary("secondary_competitor_url", event.target.value)} placeholder="可选" /></label>
+        </div>
+        <div className="listing-dialog-actions">
+          <button className="btn" type="button" onClick={closeManualSecondary}>取消</button>
+          <button className="btn primary" type="button" disabled={loading} onClick={() => void submitManualSecondary()}>确认新增</button>
+        </div>
+      </div>
+    </div>
+  );
+
+  async function assignPlmArrival(row: PlmArrivalAssignment) {
+    const owner = assignmentOwners[row.plm_arrival_item_id] || assignableOperators[0]?.name || "";
+    if (!owner) {
+      props.onStatus("请选择要承接二调的运营");
+      return;
+    }
+    setLoading(true);
+    try {
+      await api.assignPlmArrival(row.plm_arrival_item_id, owner);
+      props.onStatus(`${row.main_sku || row.sub_sku} 已指派给 ${owner}`);
+      await Promise.all([loadPlmAssignments({ force: true }), loadGroups({ force: true })]);
+    } catch (error) {
+      props.onStatus(error instanceof Error ? error.message : "PLM到货指派失败");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function closePlmArrival(row: PlmArrivalAssignment) {
+    const reason = (assignmentCloseReasons[row.plm_arrival_item_id] || "").trim();
+    if (!reason) {
+      props.onStatus("关闭到货待分配必须填写原因");
+      return;
+    }
+    setLoading(true);
+    try {
+      await api.closePlmArrivalAssignment(row.plm_arrival_item_id, reason);
+      props.onStatus(`${row.main_sku || row.sub_sku} 已关闭，不进入二调`);
+      await loadPlmAssignments({ force: true });
+    } catch (error) {
+      props.onStatus(error instanceof Error ? error.message : "PLM到货关闭失败");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  if (scenario === "arrival_assignment") {
+    return (
+      <div className="secondary-workbench">
+        {controls}
+        <div className="plm-assignment-panel">
+          <div className="research-meta-line">
+            <span>待分配 <b>{visiblePlmAssignments.length}</b></span>
+            <span>规则 <b>未指派前不分给 PLM 销售员</b></span>
+          </div>
+          {loading && !visiblePlmAssignments.length ? <div className="research-empty">正在加载 PLM 到货待分配...</div> : null}
+          {!loading && !visiblePlmAssignments.length ? <div className="research-empty"><b>当前筛选下没有到货待分配记录</b></div> : null}
+          {visiblePlmAssignments.map((row) => (
+            <div className="plm-assignment-row" key={row.plm_arrival_item_id}>
+              <div>
+                <b>{row.main_sku || "-"}</b> / {row.sub_sku || "-"}
+                <div className="muted">{row.product_name || "未填写商品名"}</div>
+                <div className="research-meta-line">
+                  <span>{row.country || "-"}</span>
+                  <span>PLM销售员：{row.plm_salesperson_name || "-"}</span>
+                  <span>首次上架：{formatDateTime(row.first_listing_time)}</span>
+                  <span>源：{row.source_file || "-"} 行 {row.source_row || "-"}</span>
+                  <span>当前商品命中：{row.existing_opportunity_count}</span>
+                </div>
+              </div>
+              <div className="plm-assignment-actions">
+                <select
+                  value={assignmentOwners[row.plm_arrival_item_id] || ""}
+                  onChange={(event) => setAssignmentOwners((current) => ({ ...current, [row.plm_arrival_item_id]: event.target.value }))}
+                >
+                  <option value="">选择承接运营</option>
+                  {assignableOperators.map((operator) => <option value={operator.name} key={operator.id}>{operator.name}</option>)}
+                </select>
+                <button className="btn small primary" type="button" disabled={loading} onClick={() => void assignPlmArrival(row)}>指派进二调</button>
+                <input
+                  value={assignmentCloseReasons[row.plm_arrival_item_id] || ""}
+                  placeholder="暂不推进原因"
+                  onChange={(event) => setAssignmentCloseReasons((current) => ({ ...current, [row.plm_arrival_item_id]: event.target.value }))}
+                />
+                <button className="btn small danger" type="button" disabled={loading} onClick={() => void closePlmArrival(row)}>关闭</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  if (loading && !group) return <div className="secondary-workbench">{controls}<div className="research-empty">正在加载二次调研任务...</div>{manualSecondaryDialogNode}</div>;
+  if (!group) return <div className="secondary-workbench">{controls}<div className="research-empty"><b>{scenario === "submitted" ? "当前筛选下没有已提交记录" : "当前筛选下没有待处理记录"}</b></div>{manualSecondaryDialogNode}</div>;
 
   const primaryImageItem = group.items.find((item) => item.image_url) || group.items[0];
 
   return (
     <div className="secondary-workbench">
       {controls}
+      {manualSecondaryDialogNode}
       <button
         className="research-side-nav previous"
         type="button"
@@ -590,6 +874,8 @@ function ResearchDetailDrawer(props: SecondaryDraftMatrixProps & { onClose: () =
   const [activeModule, setActiveModule] = useState<DrawerModuleKey>("market");
   const first = props.group.items[0];
   const primaryImageItem = props.group.items.find((item) => item.image_url) || first;
+  const isSelection2 = isSelection2Item({ source_type: props.group.source_type });
+  const drawerModules = isSelection2 ? selection2DrawerModules : selection1DrawerModules;
   const activeSourceModule = activeModule !== "claims" ? activeModule : null;
   const activeSourceLabel = drawerModules.find((entry) => entry.key === activeModule)?.label || "";
 
@@ -611,8 +897,8 @@ function ResearchDetailDrawer(props: SecondaryDraftMatrixProps & { onClose: () =
                 <h2>{props.group.main_sku}</h2>
                 <p>{props.group.main_sku_name || "未填写主 SKU 名称"} · {props.group.items.length} 个子 SKU</p>
                 <div className="research-drawer-header-meta">
-                  <span>类目 <b>{columnValue(first, "D") || "-"}</b></span>
-                  <span>关键词 <b>{columnValue(first, "E") || "-"}</b></span>
+                  <span>{isSelection2 ? "产品名称" : "类目"} <b>{columnValue(first, "D") || "-"}</b></span>
+                  <span>{isSelection2 ? "规格属性" : "关键词"} <b>{columnValue(first, "E") || "-"}</b></span>
                   {props.group.items.map((item) => (
                     <span className="research-source-reason" key={item.claim_record_id}>开品理由 · {item.sub_sku} <b>{item.reason || "-"}</b></span>
                   ))}
@@ -679,7 +965,7 @@ function SecondaryDraftMatrix(props: SecondaryDraftMatrixProps) {
               ))}
             </ResearchSkuCell>
             <label className="research-entry-cell research-conclusion-cell">
-              <span>AN 调研结论</span>
+              <span>调研结论</span>
               <textarea
                 value={draft.conclusion}
                 disabled={!rowEditable}
@@ -691,7 +977,7 @@ function SecondaryDraftMatrix(props: SecondaryDraftMatrixProps) {
             </label>
             <div className="research-task-side">
               <label className="research-entry-cell research-positioning-cell">
-                <span>AO 商品定位</span>
+                <span>商品定位</span>
                 <select
                   value={draft.positioning}
                   disabled={!rowEditable}
@@ -871,9 +1157,13 @@ function SourceModuleMatrix({
   group: SecondaryResearchGroup;
   moduleKey: SourceModuleKey;
 }) {
-  const columns = moduleColumns[moduleKey].filter(
-    (column) => !isSourceClaimInputLabel(columnHeader(group.items[0], column))
-  );
+  const columns = sourceModuleColumns(group, moduleKey);
+  const linkEntries = group.items.flatMap((item) => columns.map((column) => ({
+    key: `${item.claim_record_id}:${column}`,
+    value: columnValue(item, column)
+  })).filter((entry) => isUrl(entry.value)));
+  const linkLabels = researchLinkLabels(linkEntries.map((item) => item.value));
+  const linkLabelByKey = new Map(linkEntries.map((entry, index) => [entry.key, linkLabels[index]]));
   return (
     <div className="research-matrix source-module-matrix" style={{ "--research-column-count": columns.length } as CSSProperties}>
       <div className="research-matrix-head research-source-grid">
@@ -887,10 +1177,18 @@ function SourceModuleMatrix({
           <ResearchSkuCell item={item} hideThumb />
           {columns.map((column) => {
             const value = columnValue(item, column);
+            const linkLabel = linkLabelByKey.get(`${item.claim_record_id}:${column}`);
             return (
               <div className="research-source-value" key={column} title={value}>
-                {isUrl(value) ? (
-                  <a href={value} target="_blank" rel="noreferrer">打开链接 <ExternalLink size={13} /></a>
+                {isUrl(value) && linkLabel ? (
+                  <a
+                    className={`research-link-chip tone-${linkLabel.tone}${linkLabel.repeated ? " repeated" : ""}`}
+                    href={value}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    {linkLabel.label} <ExternalLink size={13} />
+                  </a>
                 ) : value || "-"}
               </div>
             );
@@ -914,7 +1212,7 @@ function PeerMatrix({ group }: { group: SecondaryResearchGroup }) {
         <div className="research-matrix-row research-peer-grid" key={item.claim_record_id}>
           <ResearchSkuCell item={item} hideThumb />
           <div className="research-source-value">{item.salesperson_name}</div>
-          <div className="research-source-value">{formatBusinessNumber(columnValue(item, "AJ")) || "-"}</div>
+          <div className="research-source-value">{formatBusinessNumber(item.claim_daily_sales) || "-"}</div>
           <div className="research-peer-list">
             {item.peer_records.length ? item.peer_records.map((peer) => (
               <div key={peer.claim_record_id}>
@@ -926,6 +1224,22 @@ function PeerMatrix({ group }: { group: SecondaryResearchGroup }) {
         </div>
       ))}
     </div>
+  );
+}
+
+function sourceModuleColumns(group: SecondaryResearchGroup, moduleKey: SourceModuleKey) {
+  if (isSelection2Item({ source_type: group.source_type })) {
+    return Array.from(new Set(
+      group.items.flatMap((item) =>
+        selection2HeaderFields(
+          { source_type: group.source_type, snapshot: item.snapshot },
+          selection2ModuleSections[moduleKey]
+        ).map((field) => field.column)
+      )
+    )).sort((left, right) => columnNumber(left) - columnNumber(right));
+  }
+  return moduleColumns[moduleKey].filter(
+    (column) => !isSourceClaimInputLabel(columnHeader(group.items[0], column))
   );
 }
 
@@ -949,7 +1263,7 @@ function columnValue(item: SecondaryResearchItem, column: string) {
 }
 
 function formatDateTime(value?: string | null) {
-  return value?.slice(0, 16).replace("T", " ") || "-";
+  return formatBeijingDateTime(value);
 }
 
 function columnHeader(item: SecondaryResearchItem, column: string) {
@@ -1002,4 +1316,8 @@ function columnName(index: number) {
     index = Math.floor(index / 26);
   }
   return value;
+}
+
+function FieldError({ message }: { message?: string }) {
+  return message ? <small className="listing-field-error">{message}</small> : null;
 }

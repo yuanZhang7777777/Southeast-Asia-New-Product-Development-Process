@@ -69,14 +69,16 @@ def _choose_profile(
     category = _first_text(items, "category_level1")
     category_level2 = _first_text(items, "category_level2")
     category_key = _category_key(items)
-    site_profiles = [profile for profile in profiles if _same_site(getattr(profile, "key_site", None), site)] or profiles
+    site_profiles = [profile for profile in profiles if _same_site(getattr(profile, "key_site", None), site)]
+    if not site_profiles:
+        return None, "无站点匹配"
     ranked_profiles = [(profile, _category_rank(profile, category, category_level2)) for profile in site_profiles]
     best_rank = min((rank for _profile, rank in ranked_profiles), default=2)
     if category and best_rank < 2:
         pool = [(profile, rank) for profile, rank in ranked_profiles if rank == best_rank]
         reason = _reason(best_rank)
     else:
-        pool = [(profile, 2) for profile in profiles]
+        pool = [(profile, 2) for profile in site_profiles]
         reason = "无类目-均衡分配"
 
     scored = []

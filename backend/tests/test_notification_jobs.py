@@ -52,6 +52,53 @@ class FakeSender:
         return {"ok": True}
 
 
+def _link_plm_item_to_pending_secondary(
+    db,
+    item: models.PlmArrivalItem,
+    *,
+    claim_id: str | None = None,
+    salesperson_name: str | None = None,
+    downstream_status: str = CLAIM_WAITING_SECONDARY_RESEARCH,
+    source_column: str = "platform",
+) -> None:
+    claim_id = claim_id or f"claim-{item.id}"
+    salesperson_name = salesperson_name or item.salesperson_name or "销售A"
+    opportunity = models.NewProductOpportunity(
+        id=f"op-{claim_id}",
+        source_type="selection1_developer_claim_feedback",
+        batch="开发0714期",
+        site=item.country,
+        country=item.country,
+        main_sku=item.main_sku or "",
+        sub_sku=item.sub_sku or item.main_sku or "",
+        main_sku_name=item.product_name,
+        current_status=downstream_status,
+    )
+    claim = models.SalesClaimForecast(
+        id=claim_id,
+        opportunity_id=opportunity.id,
+        salesperson_name=salesperson_name,
+        claim_result="claim",
+        source_column=source_column,
+        downstream_status=downstream_status,
+    )
+    db.add_all([opportunity, claim])
+    db.flush()
+    item.matched_claim_record_id = claim.id
+    db.add(
+        models.ArrivalRecord(
+            opportunity_id=opportunity.id,
+            claim_record_id=claim.id,
+            plm_arrival_batch_id=item.batch_id,
+            plm_arrival_item_id=item.id,
+            salesperson_name=salesperson_name,
+            country=item.country,
+            arrived_at=datetime(2026, 7, 12, 10, 0, tzinfo=timezone.utc),
+        )
+    )
+    db.flush()
+
+
 def test_arrival_daily_cards_group_by_date_and_salesperson_and_dedupe() -> None:
     settings = Settings(dingtalk_card_autosend_enabled=True, platform_base_url="https://np.example")
     sender = FakeSender()
@@ -60,35 +107,34 @@ def test_arrival_daily_cards_group_by_date_and_salesperson_and_dedupe() -> None:
         batch = models.PlmArrivalBatch(arrival_date="2026-07-12", source_hash="hash-1", bloc_name="集团八部", row_count=3)
         db.add(batch)
         db.flush()
-        db.add_all(
-            [
-                models.PlmArrivalItem(
-                    batch_id=batch.id,
-                    arrival_type="new_arrival",
-                    salesperson_name="销售A",
-                    main_sku="MAIN-1",
-                    sub_sku="S1",
-                    product_name="新品一",
-                ),
-                models.PlmArrivalItem(
-                    batch_id=batch.id,
-                    arrival_type="new_arrival",
-                    salesperson_name="销售A",
-                    main_sku="MAIN-1",
-                    sub_sku="S2",
-                    product_name="新品一",
-                ),
-                models.PlmArrivalItem(
-                    batch_id=batch.id,
-                    arrival_type="restock",
-                    salesperson_name="销售A",
-                    main_sku="MAIN-2",
-                    sub_sku="S3",
-                    product_name="老品二",
-                ),
-            ]
+        new_item_1 = models.PlmArrivalItem(
+            batch_id=batch.id,
+            arrival_type="new_arrival",
+            salesperson_name="销售A",
+            main_sku="MAIN-1",
+            sub_sku="S1",
+            product_name="新品一",
         )
+        new_item_2 = models.PlmArrivalItem(
+            batch_id=batch.id,
+            arrival_type="new_arrival",
+            salesperson_name="销售A",
+            main_sku="MAIN-1",
+            sub_sku="S2",
+            product_name="新品一",
+        )
+        old_item = models.PlmArrivalItem(
+            batch_id=batch.id,
+            arrival_type="restock",
+            salesperson_name="销售A",
+            main_sku="MAIN-2",
+            sub_sku="S3",
+            product_name="老品二",
+        )
+        db.add_all([new_item_1, new_item_2, old_item])
         db.flush()
+        _link_plm_item_to_pending_secondary(db, new_item_1, claim_id="claim-main-1-s1")
+        _link_plm_item_to_pending_secondary(db, new_item_2, claim_id="claim-main-1-s2")
 
         first = send_arrival_daily_cards(db, settings, sender, "2026-07-12")
         second = send_arrival_daily_cards(db, settings, sender, "2026-07-12")
@@ -104,6 +150,111 @@ def test_arrival_daily_cards_group_by_date_and_salesperson_and_dedupe() -> None:
         assert db.query(models.NotificationLog).count() == 1
 
 
+def test_arrival_daily_cards_do_not_send_raw_plm_rows_without_secondary_task() -> None:
+    settings = Settings(dingtalk_card_autosend_enabled=True, platform_base_url="https://np.example")
+    sender = FakeSender()
+    with SessionLocal() as db:
+        db.add(models.RoleMapping(name="销售A", role="operator", dingtalk_user_id="dt-sales-a", enabled=True))
+        batch = models.PlmArrivalBatch(arrival_date="2026-07-12", source_hash="hash-raw-only", bloc_name="集团八部", row_count=1)
+        db.add(batch)
+        db.flush()
+        db.add(
+            models.PlmArrivalItem(
+                batch_id=batch.id,
+                arrival_type="new_arrival",
+                salesperson_name="销售A",
+                main_sku="MAIN-RAW",
+                sub_sku="SUB-RAW",
+                product_name="PLM 原始行",
+            )
+        )
+        db.flush()
+
+        logs = send_arrival_daily_cards(db, settings, sender, "2026-07-12")
+
+        assert logs == []
+        assert sender.arrival_cards == []
+
+
+def test_arrival_daily_cards_include_history_selection1_pending_secondary_task() -> None:
+    settings = Settings(dingtalk_card_autosend_enabled=True, platform_base_url="https://np.example")
+    sender = FakeSender()
+    with SessionLocal() as db:
+        db.add(models.RoleMapping(name="陈丽妹", role="operator", dingtalk_user_id="dt-chen", enabled=True))
+        batch = models.PlmArrivalBatch(arrival_date="2026-08-07", source_hash="hash-hcd022", bloc_name="集团八部", row_count=1)
+        db.add(batch)
+        db.flush()
+        item = models.PlmArrivalItem(
+            batch_id=batch.id,
+            arrival_type="new_arrival",
+            salesperson_name="陈丽妹",
+            country="越南",
+            main_sku="HCD022",
+            sub_sku="HCD022PK",
+            product_name="到货新品",
+        )
+        db.add(item)
+        db.flush()
+        _link_plm_item_to_pending_secondary(
+            db,
+            item,
+            claim_id="claim-hcd022",
+            salesperson_name="陈丽妹",
+            source_column="history_selection1",
+        )
+
+        logs = send_arrival_daily_cards(db, settings, sender, "2026-08-07")
+
+        assert len(logs) == 1
+        assert len(sender.arrival_cards) == 1
+        assert sender.arrival_cards[0].receiver_dingtalk_user_id == "dt-chen"
+        assert [(row.main_sku, row.child_sku_count) for row in sender.arrival_cards[0].new_items] == [("HCD022", 1)]
+
+
+def test_arrival_daily_cards_include_manual_arrival_record_without_plm_item() -> None:
+    settings = Settings(dingtalk_card_autosend_enabled=True, platform_base_url="https://np.example")
+    sender = FakeSender()
+    with SessionLocal() as db:
+        db.add(models.RoleMapping(name="陈丽妹", role="operator", dingtalk_user_id="dt-chen", enabled=True))
+        opportunity = models.NewProductOpportunity(
+            id="op-hcd022-manual",
+            source_type="selection1_developer_claim_feedback",
+            batch="开发0714期",
+            site="越南",
+            country="越南",
+            main_sku="HCD022",
+            sub_sku="HCD022PK",
+            main_sku_name="HCD022 商品",
+            sub_sku_name="粉色",
+            current_status=CLAIM_WAITING_SECONDARY_RESEARCH,
+        )
+        claim = models.SalesClaimForecast(
+            id="claim-hcd022-manual",
+            opportunity_id=opportunity.id,
+            salesperson_name="陈丽妹",
+            claim_result="claim",
+            source_column="history_selection1",
+            downstream_status=CLAIM_WAITING_SECONDARY_RESEARCH,
+        )
+        record = models.ArrivalRecord(
+            opportunity_id=opportunity.id,
+            claim_record_id=claim.id,
+            salesperson_name="陈丽妹",
+            country="越南",
+            arrived_at=datetime(2026, 8, 7, 10, 0, tzinfo=timezone.utc),
+        )
+        db.add_all([opportunity, claim, record])
+        db.flush()
+
+        logs = send_arrival_daily_cards(db, settings, sender, "2026-08-07")
+
+        assert len(logs) == 1
+        assert len(sender.arrival_cards) == 1
+        assert [(row.main_sku, row.child_sku_count, row.product_name) for row in sender.arrival_cards[0].new_items] == [
+            ("HCD022", 1, "HCD022 商品")
+        ]
+
+
 def test_arrival_daily_cards_carry_handle_button_linking_to_platform() -> None:
     settings = Settings(dingtalk_card_autosend_enabled=True, platform_base_url="https://np.example")
     sender = FakeSender()
@@ -112,17 +263,17 @@ def test_arrival_daily_cards_carry_handle_button_linking_to_platform() -> None:
         batch = models.PlmArrivalBatch(arrival_date="2026-07-12", source_hash="hash-btn", bloc_name="集团八部", row_count=1)
         db.add(batch)
         db.flush()
-        db.add(
-            models.PlmArrivalItem(
-                batch_id=batch.id,
-                arrival_type="new_arrival",
-                salesperson_name="销售A",
-                main_sku="MAIN-1",
-                sub_sku="S1",
-                product_name="新品一",
-            )
+        item = models.PlmArrivalItem(
+            batch_id=batch.id,
+            arrival_type="new_arrival",
+            salesperson_name="销售A",
+            main_sku="MAIN-1",
+            sub_sku="S1",
+            product_name="新品一",
         )
+        db.add(item)
         db.flush()
+        _link_plm_item_to_pending_secondary(db, item, claim_id="claim-button")
 
         send_arrival_daily_cards(db, settings, sender, "2026-07-12")
 
@@ -136,7 +287,8 @@ def test_arrival_daily_cards_carry_handle_button_linking_to_platform() -> None:
     ).build_arrival_create_and_deliver_payload(card)
     card_params = payload["cardData"]["cardParamMap"]
     assert card_params["action_text"] == "去处理"
-    assert card_params["action_url"] == "https://np.example/?from=ding&role=operator&view=research"
+    assert card_params["action_url"] == ""
+    assert card_params["button_url"] == "https://np.example/?from=ding&role=operator&view=research"
 
 
 def test_arrival_daily_cards_send_every_salesperson_group_to_test_receiver() -> None:
@@ -162,15 +314,16 @@ def test_arrival_daily_cards_send_every_salesperson_group_to_test_receiver() -> 
         )
         db.add(batch)
         db.flush()
+        item_a = models.PlmArrivalItem(
+            batch_id=batch.id,
+            arrival_type="new_arrival",
+            salesperson_name="销售A",
+            main_sku="MAIN-A",
+            sub_sku="SUB-A",
+        )
         db.add_all(
             [
-                models.PlmArrivalItem(
-                    batch_id=batch.id,
-                    arrival_type="new_arrival",
-                    salesperson_name="销售A",
-                    main_sku="MAIN-A",
-                    sub_sku="SUB-A",
-                ),
+                item_a,
                 models.PlmArrivalItem(
                     batch_id=batch.id,
                     arrival_type="restock",
@@ -181,6 +334,7 @@ def test_arrival_daily_cards_send_every_salesperson_group_to_test_receiver() -> 
             ]
         )
         db.flush()
+        _link_plm_item_to_pending_secondary(db, item_a, claim_id="claim-test-receiver")
 
         logs = send_arrival_daily_cards(db, settings, sender, "2026-07-12")
 
@@ -208,17 +362,17 @@ def test_arrival_daily_cards_test_recipient_mode_redirects_and_keeps_original_in
         batch = models.PlmArrivalBatch(arrival_date="2026-07-12", source_hash="hash-test-mode", bloc_name="集团八部", row_count=1)
         db.add(batch)
         db.flush()
-        db.add(
-            models.PlmArrivalItem(
-                batch_id=batch.id,
-                arrival_type="new_arrival",
-                salesperson_name="销售A",
-                main_sku="MAIN-1",
-                sub_sku="S1",
-                product_name="新品一",
-            )
+        item = models.PlmArrivalItem(
+            batch_id=batch.id,
+            arrival_type="new_arrival",
+            salesperson_name="销售A",
+            main_sku="MAIN-1",
+            sub_sku="S1",
+            product_name="新品一",
         )
+        db.add(item)
         db.flush()
+        _link_plm_item_to_pending_secondary(db, item, claim_id="claim-test-mode")
 
         logs = send_arrival_daily_cards(db, settings, sender, "2026-07-12")
 
@@ -254,17 +408,17 @@ def test_arrival_daily_cards_without_test_recipient_write_no_redirect_audit() ->
         batch = models.PlmArrivalBatch(arrival_date="2026-07-12", source_hash="hash-no-test-mode", bloc_name="集团八部", row_count=1)
         db.add(batch)
         db.flush()
-        db.add(
-            models.PlmArrivalItem(
-                batch_id=batch.id,
-                arrival_type="new_arrival",
-                salesperson_name="销售A",
-                main_sku="MAIN-1",
-                sub_sku="S1",
-                product_name="新品一",
-            )
+        item = models.PlmArrivalItem(
+            batch_id=batch.id,
+            arrival_type="new_arrival",
+            salesperson_name="销售A",
+            main_sku="MAIN-1",
+            sub_sku="S1",
+            product_name="新品一",
         )
+        db.add(item)
         db.flush()
+        _link_plm_item_to_pending_secondary(db, item, claim_id="claim-no-test-mode")
 
         logs = send_arrival_daily_cards(db, settings, sender, "2026-07-12")
 
@@ -289,16 +443,16 @@ def test_arrival_daily_cards_do_not_fall_back_when_test_receiver_is_missing() ->
         )
         db.add(batch)
         db.flush()
-        db.add(
-            models.PlmArrivalItem(
-                batch_id=batch.id,
-                arrival_type="new_arrival",
-                salesperson_name="销售A",
-                main_sku="MAIN-A",
-                sub_sku="SUB-A",
-            )
+        item = models.PlmArrivalItem(
+            batch_id=batch.id,
+            arrival_type="new_arrival",
+            salesperson_name="销售A",
+            main_sku="MAIN-A",
+            sub_sku="SUB-A",
         )
+        db.add(item)
         db.flush()
+        _link_plm_item_to_pending_secondary(db, item, claim_id="claim-missing-test-receiver")
 
         with pytest.raises(RuntimeError, match="test receiver"):
             send_arrival_daily_cards(db, settings, sender, "2026-07-12")
@@ -313,17 +467,17 @@ def test_arrival_daily_cards_log_skip_when_salesperson_has_no_dingtalk_user_id()
         batch = models.PlmArrivalBatch(arrival_date="2026-07-12", source_hash="hash-2", bloc_name="集团八部", row_count=1)
         db.add(batch)
         db.flush()
-        db.add(
-            models.PlmArrivalItem(
-                batch_id=batch.id,
-                arrival_type="new_arrival",
-                salesperson_name="销售B",
-                main_sku="MAIN-3",
-                sub_sku="S4",
-                product_name="新品三",
-            )
+        item = models.PlmArrivalItem(
+            batch_id=batch.id,
+            arrival_type="new_arrival",
+            salesperson_name="销售B",
+            main_sku="MAIN-3",
+            sub_sku="S4",
+            product_name="新品三",
         )
+        db.add(item)
         db.flush()
+        _link_plm_item_to_pending_secondary(db, item, claim_id="claim-no-dingtalk")
 
         logs = send_arrival_daily_cards(db, settings, sender, "2026-07-12")
 
@@ -806,19 +960,33 @@ def test_daily_manager_review_summary_runs_on_any_day() -> None:
     wednesday = datetime(2026, 7, 15, 10, 0, tzinfo=ZoneInfo("Asia/Shanghai"))
     with SessionLocal() as db:
         db.add(models.RoleMapping(name="经理A", role="manager", dingtalk_user_id="dt-manager-a", enabled=True))
+        claimed = models.NewProductOpportunity(
+            source_type="test",
+            main_sku="MAIN-C",
+            sub_sku="S1",
+            current_status=OPPORTUNITY_CLAIM_SUBMITTED,
+        )
+        rejected = models.NewProductOpportunity(
+            source_type="test",
+            main_sku="MAIN-R",
+            sub_sku="S2",
+            current_status=OPPORTUNITY_CLAIM_REJECTED,
+        )
+        db.add_all([claimed, rejected])
+        db.flush()
         db.add_all(
             [
-                models.NewProductOpportunity(
-                    source_type="test",
-                    main_sku="MAIN-C",
-                    sub_sku="S1",
-                    current_status=OPPORTUNITY_CLAIM_SUBMITTED,
+                models.SalesClaimForecast(
+                    opportunity_id=claimed.id,
+                    salesperson_name="运营A",
+                    claim_result="claim",
+                    source_column="platform",
                 ),
-                models.NewProductOpportunity(
-                    source_type="test",
-                    main_sku="MAIN-R",
-                    sub_sku="S2",
-                    current_status=OPPORTUNITY_CLAIM_REJECTED,
+                models.SalesClaimForecast(
+                    opportunity_id=rejected.id,
+                    salesperson_name="运营B",
+                    claim_result="reject",
+                    source_column="platform",
                 ),
             ]
         )

@@ -3,6 +3,8 @@ import sys
 from datetime import date, datetime, timezone
 from pathlib import Path
 
+import pytest
+
 os.environ["DATABASE_URL"] = f"sqlite:///{Path(__file__).with_name('test_secondary_research.db')}"
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -96,8 +98,118 @@ def test_arrival_opens_secondary_research_for_the_matched_claim() -> None:
     assert response.json()["salesperson_name"] == "销售A"
     with SessionLocal() as db:
         saved_claim = db.get(models.SalesClaimForecast, claim_id)
+        saved_opportunity = db.get(models.NewProductOpportunity, opportunity_id)
     assert saved_claim.downstream_status == "waiting_secondary_research"
     assert saved_claim.arrival_detected_at is not None
+    assert saved_opportunity.current_status == "waiting_secondary_research"
+
+
+@pytest.mark.parametrize("source_type", ["history_selection2", "history_selection34"])
+def test_read_only_historical_claim_cannot_open_arrival_or_secondary_research(source_type: str) -> None:
+    opportunity = models.NewProductOpportunity(
+        id=models.new_id(),
+        source_type=source_type,
+        source_file="history.xlsx",
+        source_sheet="历史期",
+        source_row=2,
+        batch="历史期",
+        country="PH",
+        site="PH",
+        main_sku="MAIN-HISTORY",
+        sub_sku=f"SUB-{source_type}",
+        current_status="historical_archive",
+        claim_pool_open=False,
+        snapshot={},
+    )
+    claim = models.SalesClaimForecast(
+        opportunity_id=opportunity.id,
+        salesperson_name="历史运营",
+        claim_result="claim",
+        claim_daily_sales=1,
+        source_column=f"{source_type}:history",
+        claim_source=source_type,
+    )
+    with SessionLocal() as db:
+        db.add_all([opportunity, claim])
+        db.commit()
+        opportunity_id = opportunity.id
+        claim_id = claim.id
+        with pytest.raises(PermissionError, match="cannot enter secondary research"):
+            services.open_secondary_research(db, claim_id)
+        db.rollback()
+
+    response = client.post(
+        "/arrival/records",
+        json={
+            "opportunity_id": opportunity_id,
+            "claim_record_id": claim_id,
+            "warehouse": "PH仓",
+            "arrived_quantity": 1,
+            "arrived_at": "2026-07-30T08:00:00+08:00",
+        },
+    )
+
+    assert response.status_code == 403
+    with SessionLocal() as db:
+        saved_claim = db.get(models.SalesClaimForecast, claim_id)
+        assert saved_claim.downstream_status is None
+        assert saved_claim.arrival_detected_at is None
+        assert db.query(models.ArrivalRecord).count() == 0
+
+
+def test_historical_claim_already_waiting_secondary_research_can_be_filled() -> None:
+    opportunity = models.NewProductOpportunity(
+        id=models.new_id(),
+        source_type="history_selection34",
+        source_file="history.xlsx",
+        source_sheet="销售自选0608期",
+        source_row=60,
+        batch="销售自选0608期",
+        country="VN",
+        site="VN",
+        main_sku="HYWAC834",
+        sub_sku="HYWAC834-A3",
+        current_status="historical_archive",
+        claim_pool_open=False,
+        snapshot={},
+    )
+    claim = models.SalesClaimForecast(
+        opportunity_id=opportunity.id,
+        salesperson_name="赵钰婷",
+        claim_result="claim",
+        claim_daily_sales=1,
+        source_column="history_selection34:plm_arrival",
+        claim_source="history_selection34",
+        downstream_status="waiting_secondary_research",
+    )
+    with SessionLocal() as db:
+        db.add_all([opportunity, claim])
+        db.commit()
+        claim_id = claim.id
+
+    draft = client.patch(
+        f"/secondary-research/{claim_id}",
+        params={"salesperson_name": "赵钰婷"},
+        json={
+            "secondary_competitor_url": "https://shopee.vn/item/1",
+            "secondary_conclusion": "可继续",
+            "product_positioning": "利润款",
+            "secondary_target_daily_sales": 3,
+            "secondary_selling_points": "太阳镜款式明确",
+        },
+    )
+    assert draft.status_code == 200
+
+    submitted = client.post(
+        "/secondary-research/submit-group",
+        params={"salesperson_name": "赵钰婷"},
+        json={"claim_record_ids": [claim_id]},
+    )
+    assert submitted.status_code == 200
+    with SessionLocal() as db:
+        saved = db.get(models.SalesClaimForecast, claim_id)
+    assert saved.secondary_research_submitted_at is not None
+    assert saved.downstream_status == "waiting_listing"
 
 
 def test_secondary_research_list_groups_my_children_and_shows_peer_records() -> None:
@@ -130,7 +242,7 @@ def test_secondary_research_list_groups_my_children_and_shows_peer_records() -> 
     assert groups[0]["items"][0]["peer_records"][0]["secondary_conclusion"] == "其他运营结论"
 
 
-def test_secondary_research_defaults_latest_period_and_supports_history_and_all_periods() -> None:
+def test_secondary_research_defaults_all_periods_and_supports_period_filter() -> None:
     old_opportunity, old_claim = make_claim(
         "SUB-OLD",
         "销售A",
@@ -147,7 +259,7 @@ def test_secondary_research_defaults_latest_period_and_supports_history_and_all_
         db.add_all([old_opportunity, old_claim, new_opportunity, new_claim])
         db.commit()
 
-    latest = client.get("/secondary-research", params={"salesperson_name": "销售A"}).json()
+    default = client.get("/secondary-research", params={"salesperson_name": "销售A"}).json()
     history = client.get(
         "/secondary-research",
         params={"salesperson_name": "销售A", "business_period": "开发0703期"},
@@ -157,9 +269,34 @@ def test_secondary_research_defaults_latest_period_and_supports_history_and_all_
         params={"salesperson_name": "销售A", "business_period": "__all__"},
     ).json()
 
-    assert [group["business_period"] for group in latest] == ["开发0710期"]
+    assert sorted(group["business_period"] for group in default) == ["开发0703期", "开发0710期"]
     assert [group["business_period"] for group in history] == ["开发0703期"]
     assert sorted(group["business_period"] for group in all_periods) == ["开发0703期", "开发0710期"]
+
+
+def test_secondary_research_lists_visible_selection1_tasks_and_hides_discarded_periods() -> None:
+    hcd_opportunity, hcd_claim = make_claim(
+        "HCD022PK",
+        "陈丽妹",
+        downstream_status="waiting_secondary_research",
+        business_period="开发0714期",
+    )
+    hcd_opportunity.main_sku = "HCD022"
+    hcd_opportunity.main_sku_name = "广角睫毛夹烫睫毛器"
+    hidden_opportunity, hidden_claim = make_claim(
+        "HIST-OLD",
+        "陈丽妹",
+        downstream_status="waiting_secondary_research",
+        business_period="历史归档",
+    )
+    hidden_opportunity.main_sku = "HISTOLD"
+    with SessionLocal() as db:
+        db.add_all([hcd_opportunity, hcd_claim, hidden_opportunity, hidden_claim])
+        db.commit()
+
+    groups = client.get("/secondary-research", params={"salesperson_name": "陈丽妹"}).json()
+
+    assert [(group["business_period"], group["main_sku"]) for group in groups] == [("开发0714期", "HCD022")]
 
 
 def test_secondary_research_history_can_include_submitted_records_after_workflow_moves_on() -> None:
@@ -193,6 +330,202 @@ def test_secondary_research_history_can_include_submitted_records_after_workflow
     items = [item for group in response.json() for item in group["items"]]
     assert {item["sub_sku"] for item in items} == {"SUB-PENDING", "SUB-SUBMITTED"}
     assert next(item for item in items if item["sub_sku"] == "SUB-SUBMITTED")["secondary_conclusion"] == "已提交结论"
+
+
+def test_manual_secondary_research_creates_missing_sku_without_tasks_or_notifications() -> None:
+    response = client.post(
+        "/secondary-research/manual",
+        json={
+            "country": "菲律宾",
+            "main_sku": "MANUAL-MAIN",
+            "sub_sku": "MANUAL-SUB",
+            "salesperson_name": "销售A",
+            "business_period": "手工二调0803期",
+            "main_sku_name": "手工新增商品",
+            "sub_sku_name": "黑色",
+            "secondary_competitor_url": "https://shopee.ph/item/manual",
+        },
+    )
+
+    assert response.status_code == 200
+    item = response.json()
+    assert item["salesperson_name"] == "销售A"
+    assert item["sub_sku"] == "MANUAL-SUB"
+    assert item["downstream_status"] == "waiting_secondary_research"
+    assert item["secondary_competitor_url"] == "https://shopee.ph/item/manual"
+
+    listed = client.get(
+        "/secondary-research",
+        params={"salesperson_name": "销售A", "business_period": "手工二调0803期"},
+    )
+    assert listed.status_code == 200
+    group = listed.json()[0]
+    assert group["source_type"] == "manual_secondary"
+    assert group["country"] == "菲律宾"
+    assert group["main_sku"] == "MANUAL-MAIN"
+    assert [row["sub_sku"] for row in group["items"]] == ["MANUAL-SUB"]
+
+    with SessionLocal() as db:
+        opportunity = db.get(models.NewProductOpportunity, item["opportunity_id"])
+        claim = db.get(models.SalesClaimForecast, item["claim_record_id"])
+        snapshot = db.query(models.SourceRecordSnapshot).one()
+        assert opportunity.source_type == "manual_secondary"
+        assert opportunity.current_status == "waiting_secondary_research"
+        assert claim.claim_source == "manual_secondary"
+        assert db.query(models.FlowTask).count() == 0
+        assert db.query(models.NotificationLog).count() == 0
+        assert snapshot.payload["manual_secondary"]["main_sku"] == "MANUAL-MAIN"
+
+
+def test_manual_secondary_research_reuses_pending_exact_match_and_rejects_later_stage() -> None:
+    first = client.post(
+        "/secondary-research/manual",
+        json={
+            "country": "PH",
+            "main_sku": "MANUAL-MAIN",
+            "sub_sku": "MANUAL-SUB",
+            "salesperson_name": "销售A",
+        },
+    )
+    assert first.status_code == 200
+    claim_id = first.json()["claim_record_id"]
+
+    repeated = client.post(
+        "/secondary-research/manual",
+        json={
+            "country": "菲律宾",
+            "main_sku": "MANUAL-MAIN",
+            "sub_sku": "MANUAL-SUB",
+            "salesperson_name": "销售A",
+        },
+    )
+    assert repeated.status_code == 200
+    assert repeated.json()["claim_record_id"] == claim_id
+
+    with SessionLocal() as db:
+        claim = db.get(models.SalesClaimForecast, claim_id)
+        fill_research(claim, "利润款", "可以刊登")
+        db.commit()
+    submitted = client.post(
+        "/secondary-research/submit-group",
+        params={"salesperson_name": "销售A"},
+        json={"claim_record_ids": [claim_id]},
+    )
+    assert submitted.status_code == 200
+
+    blocked = client.post(
+        "/secondary-research/manual",
+        json={
+            "country": "PH",
+            "main_sku": "MANUAL-MAIN",
+            "sub_sku": "MANUAL-SUB",
+            "salesperson_name": "销售A",
+        },
+    )
+    assert blocked.status_code == 409
+    assert "已存在于后续阶段" in blocked.json()["detail"]
+
+
+def test_manager_assigns_plm_arrival_to_selected_operator_before_secondary_research() -> None:
+    with SessionLocal() as db:
+        add_operator(db, "销售B")
+        batch = models.PlmArrivalBatch(
+            arrival_date="2026-08-07",
+            source_file="plm-2026-08-07.xlsx",
+            source_hash="hash-plm-assign",
+            bloc_name="集团八部",
+            row_count=1,
+        )
+        db.add(batch)
+        db.flush()
+        item = models.PlmArrivalItem(
+            batch_id=batch.id,
+            source_sheet="汇总表格",
+            source_row=15,
+            arrival_type="new_arrival",
+            product_name="PLM待分配商品",
+            salesperson_name="PLM原销售",
+            country="菲律宾",
+            warehouse="菲律宾海外仓",
+            main_sku="PLM-MAIN",
+            sub_sku="PLM-SUB",
+            latest_storage_time=datetime(2026, 8, 7, 9, 30, tzinfo=timezone.utc),
+            first_listing_time=datetime(2026, 8, 7, 2, 0, tzinfo=timezone.utc),
+            match_status="pending_assignment",
+            raw_payload={"main_sku": "PLM-MAIN"},
+        )
+        db.add(item)
+        db.commit()
+        item_id = item.id
+
+    pending = client.get("/secondary-research/plm-arrival-assignments")
+    assert pending.status_code == 200
+    assert pending.json()[0]["plm_salesperson_name"] == "PLM原销售"
+    assert pending.json()[0]["main_sku"] == "PLM-MAIN"
+
+    assigned = client.post(
+        f"/secondary-research/plm-arrival-assignments/{item_id}/assign",
+        json={"salesperson_name": "销售B"},
+    )
+
+    assert assigned.status_code == 200
+    assert assigned.json()["assigned_salesperson_name"] == "销售B"
+    with SessionLocal() as db:
+        saved_item = db.get(models.PlmArrivalItem, item_id)
+        opportunity = db.query(models.NewProductOpportunity).filter_by(source_type="plm_arrival_discovery").one()
+        claim = db.query(models.SalesClaimForecast).one()
+        arrival = db.query(models.ArrivalRecord).one()
+        plm_original_owner_count = db.query(models.SalesClaimForecast).filter_by(salesperson_name="PLM原销售").count()
+    assert saved_item.match_status == "assigned"
+    assert saved_item.matched_claim_record_id == claim.id
+    assert opportunity.batch == "PLM新增到货"
+    assert opportunity.main_sku == "PLM-MAIN"
+    assert claim.salesperson_name == "销售B"
+    assert claim.downstream_status == "waiting_secondary_research"
+    assert arrival.salesperson_name == "销售B"
+    assert plm_original_owner_count == 0
+
+
+def test_manager_closes_plm_arrival_assignment_without_creating_secondary_task() -> None:
+    with SessionLocal() as db:
+        batch = models.PlmArrivalBatch(
+            arrival_date="2026-08-07",
+            source_file="plm-2026-08-07.xlsx",
+            source_hash="hash-plm-close",
+            bloc_name="集团八部",
+            row_count=1,
+        )
+        db.add(batch)
+        db.flush()
+        item = models.PlmArrivalItem(
+            batch_id=batch.id,
+            source_sheet="汇总表格",
+            source_row=16,
+            arrival_type="new_arrival",
+            product_name="不推进商品",
+            salesperson_name="PLM原销售",
+            country="菲律宾",
+            main_sku="PLM-CLOSE",
+            sub_sku="PLM-CLOSE-A1",
+            match_status="pending_assignment",
+            raw_payload={},
+        )
+        db.add(item)
+        db.commit()
+        item_id = item.id
+
+    response = client.post(
+        f"/secondary-research/plm-arrival-assignments/{item_id}/close",
+        json={"reason": "站点负责人已变更，本次暂不推进"},
+    )
+
+    assert response.status_code == 200
+    with SessionLocal() as db:
+        saved_item = db.get(models.PlmArrivalItem, item_id)
+        assert saved_item.match_status == "assignment_closed"
+        assert saved_item.raw_payload["_plm_assignment"]["close_reason"] == "站点负责人已变更，本次暂不推进"
+        assert db.query(models.SalesClaimForecast).count() == 0
+        assert db.query(models.ArrivalRecord).count() == 0
 
 
 def test_saving_draft_keeps_status_and_rejects_editing_another_operator() -> None:
@@ -378,6 +711,33 @@ def test_submitted_secondary_research_correction_preserves_submit_time_and_audit
     assert audit.detail["after"]["product_positioning"] == "稳定款"
 
 
+def test_historical_secondary_correction_allows_partial_fact_edit_without_rerouting() -> None:
+    opportunity, claim = make_claim("SUB-HIST", "销售A", downstream_status="historical_secondary_submitted")
+    claim.secondary_research_submitted_at = datetime(2026, 7, 31, 10, tzinfo=timezone.utc)
+    with SessionLocal() as db:
+        db.add_all([opportunity, claim])
+        db.commit()
+        claim_id = claim.id
+
+        result = services.correct_secondary_research(
+            db,
+            claim_id,
+            schemas.SecondaryResearchDraftUpdate(product_positioning="利润款"),
+            actor_name="销售A",
+            actor_user_id="user-a",
+            manager_access=False,
+            operator_name="销售A",
+        )
+        db.commit()
+
+        saved = db.get(models.SalesClaimForecast, claim_id)
+
+    assert result["product_positioning"] == "利润款"
+    assert saved.downstream_status == "historical_secondary_submitted"
+    assert saved.secondary_conclusion is None
+    assert saved.secondary_target_daily_sales is None
+
+
 def test_secondary_research_correction_locks_claim_before_rerouting(monkeypatch) -> None:
     opportunity, claim = make_claim("SUB-LOCK", "销售A", downstream_status="waiting_listing")
     fill_research(claim, "利润款", "原结论")
@@ -547,6 +907,22 @@ def make_claim(
         downstream_status=downstream_status,
     )
     return opportunity, claim
+
+
+def add_operator(db, name: str) -> models.User:
+    user = models.User(name=name, enabled=True)
+    db.add(user)
+    db.flush()
+    db.add(
+        models.RoleMapping(
+            user_id=user.id,
+            name=name,
+            role="operator",
+            enabled=True,
+            notification_enabled=True,
+        )
+    )
+    return user
 
 
 def fill_research(claim: models.SalesClaimForecast, positioning: str, conclusion: str) -> None:

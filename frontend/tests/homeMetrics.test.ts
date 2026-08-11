@@ -19,7 +19,9 @@ const stats = {
 const counts = {
   waiting_listing: 8,
   waiting_secondary_research: 9,
-  pending_review_periods: 10
+  pending_review_periods: 10,
+  pending_claim_reviews: 11,
+  pending_not_claim_reviews: 12
 };
 
 test("运营视角包含原有计数并追加下游三项，数值透传后端计数", () => {
@@ -47,7 +49,7 @@ test("主管视角包含原有计数并追加下游三项", () => {
     [
       ["待导入", 2],
       ["待分配", 6],
-      ["待复核", 7],
+      ["待复核", 23],
       ["可导出", 5],
       ["待二次调研", 9],
       ["待刊登", 8],
@@ -105,6 +107,8 @@ test("空计数常量兜底为 0", () => {
   assert.deepEqual(EMPTY_DASHBOARD_COUNTS, {
     waiting_listing: 0,
     waiting_secondary_research: 0,
-    pending_review_periods: 0
+    pending_review_periods: 0,
+    pending_claim_reviews: 0,
+    pending_not_claim_reviews: 0
   });
 });

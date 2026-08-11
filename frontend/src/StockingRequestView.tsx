@@ -7,7 +7,8 @@ import {
   ExportPeriodSummary,
   OperatorStockingItem,
   SalesSelfSelectionPayload,
-  StockingRequestUpdate
+  StockingRequestUpdate,
+  TraceabilityItem
 } from "./api";
 import {
   buildStockingDraftUpdate,
@@ -365,14 +366,41 @@ function OperatorStockingView({ operatorItems, onReload, onStatus }: Props) {
 
 function ManagerStockingView({ managerRows, periods, onReload, onStatus }: Props) {
   const [period, setPeriod] = useState("");
+  const [detailMode, setDetailMode] = useState<"stocking" | "traceability">("stocking");
   const [status, setStatus] = useState("");
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<string[]>([]);
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState("");
+  const [traceabilityRows, setTraceabilityRows] = useState<TraceabilityItem[]>([]);
+  const [traceabilityLoading, setTraceabilityLoading] = useState(false);
 
   useEffect(() => {
     setPeriod((current) => current && periods.some((item) => item.business_period === current) ? current : periods[0]?.business_period || "");
   }, [periods]);
+
+  useEffect(() => {
+    setSelected([]);
+    setStatus("");
+  }, [detailMode, period]);
+
+  useEffect(() => {
+    if (!period || detailMode !== "traceability") return;
+    let cancelled = false;
+    setTraceabilityLoading(true);
+    api.traceabilityList({ business_period: period })
+      .then((rows) => {
+        if (!cancelled) setTraceabilityRows(rows);
+      })
+      .catch((error) => {
+        if (!cancelled) onStatus(error instanceof Error ? error.message : "追溯明细加载失败");
+      })
+      .finally(() => {
+        if (!cancelled) setTraceabilityLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [detailMode, onStatus, period]);
 
   const filteredRows = useMemo(() => managerRows.filter((row) => {
     if (period && row.business_period !== period) return false;
@@ -380,9 +408,18 @@ function ManagerStockingView({ managerRows, periods, onReload, onStatus }: Props
     const needle = query.trim().toLowerCase();
     return !needle || `${row.main_sku} ${row.sub_sku} ${row.salesperson_name || ""}`.toLowerCase().includes(needle);
   }), [managerRows, period, query, status]);
-  const filteredIds = filteredRows.map((row) => row.request_id);
-  const visibleSelected = visibleStockingRequestIds(selected, filteredRows);
+  const filteredTraceabilityRows = useMemo(() => traceabilityRows.filter((row) => {
+    if (status && row.operation_status !== status) return false;
+    const needle = query.trim().toLowerCase();
+    return !needle || `${row.main_sku} ${row.sub_sku} ${row.salesperson_name || ""} ${row.reject_reason || ""} ${row.feedback_summary || ""}`.toLowerCase().includes(needle);
+  }), [query, status, traceabilityRows]);
+  const exportableRows = filteredRows.filter((row) => row.status === "submitted");
+  const filteredIds = exportableRows.map((row) => row.request_id);
+  const visibleSelected = visibleStockingRequestIds(selected, exportableRows);
   const allSelected = Boolean(filteredIds.length) && filteredIds.every((id) => visibleSelected.includes(id));
+  const statusOptions = detailMode === "stocking"
+    ? unique(managerRows.map((row) => row.status))
+    : unique(traceabilityRows.map((row) => row.operation_status));
 
   useEffect(() => {
     setSelected((current) => {
@@ -394,18 +431,32 @@ function ManagerStockingView({ managerRows, periods, onReload, onStatus }: Props
   async function exportTraceability() {
     if (!period) return;
     try {
-      setBusy(true);
+      setBusy("traceability");
+      onStatus(`正在生成 ${period} 认领情况表，数据多时需要十几秒`);
       await api.traceabilityExport({ business_period: period });
-      onStatus(`已导出 ${period} 中央字段追溯表`);
+      onStatus(`已导出 ${period} 认领情况表`);
     } catch (error) {
       onStatus(error instanceof Error ? error.message : "导出失败");
     } finally {
-      setBusy(false);
+      setBusy("");
+    }
+  }
+  async function exportCentralTraceability() {
+    if (!period) return;
+    try {
+      setBusy("central-traceability");
+      onStatus(`正在生成 ${period} 中央表，数据多时需要十几秒`);
+      await api.centralTraceabilityExport({ business_period: period });
+      onStatus(`已导出 ${period} 中央表`);
+    } catch (error) {
+      onStatus(error instanceof Error ? error.message : "导出失败");
+    } finally {
+      setBusy("");
     }
   }
   async function exportSelected() {
     try {
-      setBusy(true);
+      setBusy("stocking");
       await api.availableStockingExport(buildStockingExportPayload(visibleSelected));
       onStatus(`已导出 ${visibleSelected.length} 条申请`);
       setSelected([]);
@@ -413,7 +464,7 @@ function ManagerStockingView({ managerRows, periods, onReload, onStatus }: Props
     } catch (error) {
       onStatus(error instanceof Error ? error.message : "导出失败");
     } finally {
-      setBusy(false);
+      setBusy("");
     }
   }
 
@@ -422,32 +473,52 @@ function ManagerStockingView({ managerRows, periods, onReload, onStatus }: Props
       <div className="stocking-periods">
         {periods.map((item) => (
           <button className={item.business_period === period ? "stocking-period active" : "stocking-period"} key={item.business_period} onClick={() => { setPeriod(item.business_period); setSelected([]); }}>
-            <b>{item.business_period}</b><span>待导出 {item.stocking_count} · 追溯 {item.traceability_count}</span>
+            <b>{item.business_period}</b><span>待导出 {item.stocking_count} · 认领 {item.traceability_count}</span>
           </button>
         ))}
         {!periods.length && <span className="muted">暂无可导出的业务期数</span>}
-        {!!period && <button className="btn" disabled={busy || !periods.find((item) => item.business_period === period)?.traceability_count} onClick={() => void exportTraceability()}><Download size={14} />导出中央追溯表</button>}
+        {!!period && <button className="btn" disabled={Boolean(busy) || !periods.find((item) => item.business_period === period)?.traceability_count} onClick={() => void exportTraceability()}><Download size={14} />{busy === "traceability" ? "导出中…" : "导出认领情况表"}</button>}
+        {!!period && <button className="btn" disabled={Boolean(busy) || !periods.find((item) => item.business_period === period)?.traceability_count} onClick={() => void exportCentralTraceability()}><Download size={14} />{busy === "central-traceability" ? "导出中…" : "导出中央表"}</button>}
+      </div>
+      <div className="mode-tabs stocking-detail-tabs" aria-label="导出明细类型">
+        <button className={detailMode === "stocking" ? "mode-tab active" : "mode-tab"} type="button" onClick={() => setDetailMode("stocking")}>备货申请明细（{filteredRows.length}）</button>
+        <button className={detailMode === "traceability" ? "mode-tab active" : "mode-tab"} type="button" onClick={() => setDetailMode("traceability")}>认领情况明细（{filteredTraceabilityRows.length}）</button>
       </div>
       <div className="stocking-manager-toolbar">
-        <label className="stocking-select-all"><input type="checkbox" checked={allSelected} onChange={() => setSelected(allSelected ? [] : filteredIds)} />全选当前筛选</label>
-        <select value={status} onChange={(event) => setStatus(event.target.value)}><option value="">全部状态</option>{unique(managerRows.map((row) => row.status)).map((item) => <option key={item} value={item}>{stockingStatusLabel(item)}</option>)}</select>
+        {detailMode === "stocking" && <label className="stocking-select-all"><input type="checkbox" checked={allSelected} onChange={() => setSelected(allSelected ? [] : filteredIds)} />全选当前筛选</label>}
+        <select value={status} onChange={(event) => setStatus(event.target.value)}><option value="">全部状态</option>{statusOptions.map((item) => <option key={item} value={item}>{detailMode === "stocking" ? stockingStatusLabel(item) : item}</option>)}</select>
         <input placeholder="搜索 SKU / 运营" value={query} onChange={(event) => setQuery(event.target.value)} />
-        <span>已选 {visibleSelected.length} 条</span>
-        <button className="btn primary" disabled={!visibleSelected.length || busy} onClick={() => void exportSelected()}><Download size={14} />导出选中</button>
+        {detailMode === "stocking" && <span>已选 {visibleSelected.length} 条</span>}
+        {detailMode === "stocking" && <button className="btn primary" disabled={!visibleSelected.length || Boolean(busy)} onClick={() => void exportSelected()}><Download size={14} />{busy === "stocking" ? "导出中…" : "导出选中"}</button>}
+        {detailMode === "traceability" && <span>{traceabilityLoading ? "认领情况加载中…" : `共 ${filteredTraceabilityRows.length} 条认领情况`}</span>}
       </div>
       <div className="stocking-export-scroll">
-        <table className="stocking-export-table">
-          <thead><tr><th>操作状态</th><th>申请日期</th><th>备货类型</th><th>选品数据源</th><th>销售员</th><th>主 SKU</th><th>子 SKU</th><th>成本价</th><th>单个体积</th><th>备货单销</th><th>备货数量</th><th>备货国家</th><th>备货仓库</th><th>货值</th><th>体积</th><th>补货原因</th></tr></thead>
-          <tbody>
-            {!filteredRows.length && <tr><td colSpan={16}>{period ? "当前筛选下暂无待导出申请" : "请选择业务期数"}</td></tr>}
-            {filteredRows.map((row) => (
-              <tr key={row.request_id}>
-                <td><label className="stocking-row-check"><input type="checkbox" checked={visibleSelected.includes(row.request_id)} onChange={() => setSelected(visibleSelected.includes(row.request_id) ? visibleSelected.filter((id) => id !== row.request_id) : [...visibleSelected, row.request_id])} />{row.operation_status}</label></td>
-                <td>{row.application_date || ""}</td><td>{row.stocking_type}</td><td>{row.selection_source}</td><td>{row.salesperson_name || ""}</td><td>{row.main_sku}</td><td>{row.sub_sku}</td><td>{row.cost_price ?? ""}</td><td>{row.unit_volume ?? ""}</td><td>{row.claim_daily_sales}</td><td>{row.quantity}</td><td>{row.stocking_country || ""}</td><td>{row.warehouse || ""}</td><td>{row.amount ?? ""}</td><td>{row.volume ?? ""}</td><td>{row.replenishment_reason || ""}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        {detailMode === "stocking" ? (
+          <table className="stocking-export-table">
+            <thead><tr><th>操作状态</th><th>申请日期</th><th>备货类型</th><th>选品数据源</th><th>销售员</th><th>主 SKU</th><th>子 SKU</th><th>成本价</th><th>单个体积</th><th>备货单销</th><th>备货数量</th><th>备货国家</th><th>备货仓库</th><th>货值</th><th>体积</th><th>补货原因</th></tr></thead>
+            <tbody>
+              {!filteredRows.length && <tr><td colSpan={16}>{period ? "当前筛选下暂无备货申请记录" : "请选择业务期数"}</td></tr>}
+              {filteredRows.map((row) => (
+                <tr key={row.request_id}>
+                  <td><label className="stocking-row-check"><input type="checkbox" disabled={row.status !== "submitted"} checked={visibleSelected.includes(row.request_id)} onChange={() => setSelected(visibleSelected.includes(row.request_id) ? visibleSelected.filter((id) => id !== row.request_id) : [...visibleSelected, row.request_id])} />{row.operation_status}</label></td>
+                  <td>{row.application_date || ""}</td><td>{row.stocking_type}</td><td>{row.selection_source}</td><td>{row.salesperson_name || ""}</td><td>{row.main_sku}</td><td>{row.sub_sku}</td><td>{row.cost_price ?? ""}</td><td>{row.unit_volume ?? ""}</td><td>{row.claim_daily_sales}</td><td>{row.quantity}</td><td>{row.stocking_country || ""}</td><td>{row.warehouse || ""}</td><td>{row.amount ?? ""}</td><td>{row.volume ?? ""}</td><td>{row.replenishment_reason || ""}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : (
+          <table className="stocking-export-table">
+            <thead><tr><th>追溯类型</th><th>操作状态</th><th>销售员</th><th>主 SKU</th><th>子 SKU</th><th>站点</th><th>认领结果</th><th>认领单销</th><th>不认领理由</th><th>销售反馈总结</th><th>主管复核</th><th>来源</th></tr></thead>
+            <tbody>
+              {!filteredTraceabilityRows.length && <tr><td colSpan={12}>{traceabilityLoading ? "认领情况加载中…" : "当前筛选下暂无认领情况明细"}</td></tr>}
+              {filteredTraceabilityRows.map((row) => (
+                <tr key={`${row.traceability_type}:${row.claim_record_id}:${row.request_id || ""}`}>
+                  <td>{row.traceability_type}</td><td>{row.operation_status}</td><td>{row.salesperson_name || ""}</td><td>{row.main_sku}</td><td>{row.sub_sku}</td><td>{row.site || ""}</td><td>{claimResultLabel(row.claim_result)}</td><td>{row.claim_daily_sales ?? ""}</td><td>{row.reject_reason || ""}</td><td>{row.feedback_summary || ""}</td><td>{reviewStatusText(row.review_status, row.review_comment)}</td><td>{sourceText(row)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
       </div>
     </div>
   );
@@ -455,6 +526,25 @@ function ManagerStockingView({ managerRows, periods, onReload, onStatus }: Props
 
 function Field({ label, error, wide = false, children }: { label: string; error?: string; wide?: boolean; children: React.ReactNode }) {
   return <label className={wide ? "stocking-field wide" : "stocking-field"}><span>{label}</span>{children}{error && <small>{error}</small>}</label>;
+}
+
+function claimResultLabel(value?: string | null) {
+  if (value === "claim") return "认领";
+  if (value === "reject") return "不认领";
+  return value || "";
+}
+
+function reviewStatusText(status?: string | null, comment?: string | null) {
+  const label = ({
+    approved: "通过",
+    confirmed_not_claim: "确认不认领",
+    returned_for_supplement: "退回补充"
+  } as Record<string, string>)[status || ""] || status || "";
+  return [label, comment].filter(Boolean).join("：");
+}
+
+function sourceText(row: TraceabilityItem) {
+  return [row.source_sheet, row.source_row ? `行 ${row.source_row}` : ""].filter(Boolean).join(" · ");
 }
 
 function requestDraft(item: OperatorStockingItem): StockingDraft {

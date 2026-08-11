@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import { productImageSrc } from "../src/imageSource.ts";
 
-// node --test 下无 window，apiBase 回落默认值。
-const API_BASE = "http://localhost:8000";
+// node --test 下无 window，apiBase 回落同源代理。
+const API_BASE = "/api";
 
 test("空 url 返回空串", () => {
   assert.equal(productImageSrc(""), "");
@@ -30,4 +31,11 @@ test("本地 /uploaded-sources/ 前缀补 API base，其它 URL 原样返回", (
     productImageSrc("https://example.com/x.aliyuncs.com/pic.png"),
     "https://example.com/x.aliyuncs.com/pic.png"
   );
+});
+
+test("production bundles do not embed the localhost fallback literal", () => {
+  const imageSource = readFileSync(new URL("../src/imageSource.ts", import.meta.url), "utf8");
+  const apiSource = readFileSync(new URL("../src/api.ts", import.meta.url), "utf8");
+  assert.match(apiSource, /VITE_API_BASE_URL \|\| "\/api"/);
+  assert.equal(`${apiSource}\n${imageSource}`.includes("localhost:8000"), false);
 });

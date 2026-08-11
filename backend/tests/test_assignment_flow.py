@@ -112,11 +112,52 @@ def test_confirm_assignment_rejects_non_pending_opportunities() -> None:
         opportunity.current_status = "ready_for_stocking"
         db.commit()
 
-        with pytest.raises(ValueError, match="pending_assignment"):
+        with pytest.raises(ValueError, match="刷新分配台"):
             services.confirm_assignment(
                 db,
                 schemas.AssignmentConfirmRequest(opportunity_ids=[opportunity.id], assignee_name="Operator A"),
             )
+
+
+def test_confirm_assignment_skips_stale_non_pending_selection_ids() -> None:
+    with SessionLocal() as db:
+        pending = add_opportunity(db, "MAIN-MIXED", "SUB-001", "BATCH-1")
+        locked = add_opportunity(db, "MAIN-LOCKED", "SUB-002", "BATCH-1")
+        locked.current_status = "ready_for_stocking"
+        db.commit()
+
+        tasks = services.confirm_assignment(
+            db,
+            schemas.AssignmentConfirmRequest(opportunity_ids=[pending.id, locked.id], assignee_name="Operator A"),
+        )
+
+        flow_ids = [task.flow_instance_id for task in tasks]
+        assert [db.get(models.FlowInstance, flow_id).opportunity_id for flow_id in flow_ids] == [pending.id]
+        assert db.get(models.NewProductOpportunity, locked.id).current_status == "ready_for_stocking"
+
+
+@pytest.mark.parametrize("source_type", ["history_selection2", "history_selection34"])
+def test_confirm_assignment_rejects_read_only_historical_sources(source_type: str) -> None:
+    with SessionLocal() as db:
+        opportunity = models.NewProductOpportunity(
+            source_type=source_type,
+            main_sku=f"MAIN-{source_type}",
+            sub_sku=f"SUB-{source_type}",
+            current_status="pending_assignment",
+        )
+        db.add(opportunity)
+        db.commit()
+        opportunity_id = opportunity.id
+
+        with pytest.raises(ValueError, match="read-only"):
+            services.confirm_assignment(
+                db,
+                schemas.AssignmentConfirmRequest(opportunity_ids=[opportunity_id], assignee_name="Operator A"),
+            )
+
+        assert db.get(models.NewProductOpportunity, opportunity_id).current_status == "pending_assignment"
+        assert db.query(models.FlowInstance).count() == 0
+        assert db.query(models.FlowTask).count() == 0
 
 
 def test_reassign_rejects_completed_tasks() -> None:

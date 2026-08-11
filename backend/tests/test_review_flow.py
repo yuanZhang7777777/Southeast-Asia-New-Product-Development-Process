@@ -378,6 +378,80 @@ def test_review_payload_cannot_include_operator_fields() -> None:
     assert response.status_code == 422
 
 
+def test_multiple_operator_claims_are_listed_and_reviewed_independently() -> None:
+    with SessionLocal() as db:
+        opportunity = models.NewProductOpportunity(
+            source_type="selection2_caigen_claim_feedback",
+            source_file="选品2.xlsx",
+            source_sheet="选品2-财根0526期",
+            source_row=2,
+            batch="选品2-财根0526期",
+            country="PH",
+            site="PH",
+            main_sku="SPU-MULTI",
+            sub_sku="SKU-MULTI",
+            current_status="claim_submitted",
+            claim_pool_open=True,
+        )
+        db.add(opportunity)
+        db.flush()
+        claims = [
+            models.SalesClaimForecast(
+                opportunity_id=opportunity.id,
+                salesperson_name=name,
+                claim_result="claim",
+                claim_daily_sales=daily_sales,
+                source_column="platform",
+                claim_source="caigen_self_claim",
+            )
+            for name, daily_sales in (("销售A", 1), ("销售B", 2))
+        ]
+        db.add_all(claims)
+        services.create_review_task(db, opportunity.id, "测试")
+        db.commit()
+        opportunity_id = opportunity.id
+        claim_ids = [claim.id for claim in claims]
+
+    listed = next(item for item in client.get("/opportunities").json() if item["id"] == opportunity_id)
+    assert {
+        (item["claim_record_id"], item["salesperson_name"], item["claim_daily_sales"])
+        for item in listed["pending_review_claims"]
+    } == {(claim_ids[0], "销售A", 1), (claim_ids[1], "销售B", 2)}
+
+    first = client.post(
+        "/reviews",
+        json={
+            "opportunity_id": opportunity_id,
+            "claim_record_id": claim_ids[0],
+            "reviewer_name": "练玉君",
+            "review_status": "approved",
+        },
+    )
+    assert first.status_code == 200
+    with SessionLocal() as db:
+        assert db.get(models.NewProductOpportunity, opportunity_id).current_status == "claim_submitted"
+        assert len(pending_tasks(db, opportunity_id, "manager_review")) == 1
+        assert db.query(models.StockingRequest).filter_by(claim_record_id=claim_ids[0]).count() == 1
+
+    remaining = next(item for item in client.get("/opportunities").json() if item["id"] == opportunity_id)
+    assert [item["claim_record_id"] for item in remaining["pending_review_claims"]] == [claim_ids[1]]
+
+    second = client.post(
+        "/reviews",
+        json={
+            "opportunity_id": opportunity_id,
+            "claim_record_id": claim_ids[1],
+            "reviewer_name": "练玉君",
+            "review_status": "approved",
+        },
+    )
+    assert second.status_code == 200
+    with SessionLocal() as db:
+        assert db.get(models.NewProductOpportunity, opportunity_id).current_status == "ready_for_stocking"
+        assert pending_tasks(db, opportunity_id, "manager_review") == []
+        assert db.query(models.StockingRequest).filter(models.StockingRequest.claim_record_id.in_(claim_ids)).count() == 2
+
+
 def prepare_submission(
     claim_result: str,
     claim_daily_sales: float | None = None,

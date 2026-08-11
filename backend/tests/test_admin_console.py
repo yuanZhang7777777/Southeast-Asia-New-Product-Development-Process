@@ -117,6 +117,35 @@ def test_super_admin_can_disable_and_enable_user_but_not_self() -> None:
     assert client.patch(f"/admin/users/{self_id}", headers=admin, json={"enabled": False}).status_code == 400
 
 
+def test_super_admin_delete_user_safely_disables_referenced_account() -> None:
+    with SessionLocal() as db:
+        db.add(models.RoleMapping(name="Admin", role="super_admin", dingtalk_user_id="dt-admin", enabled=True))
+        user = models.User(name="销售A", dingtalk_user_id="dt-a", enabled=True)
+        db.add(user)
+        db.flush()
+        db.add_all(
+            [
+                models.UserPassword(user_id=user.id, password_hash="hash"),
+                models.RoleMapping(user_id=user.id, name="销售A", role="operator", dingtalk_user_id="dt-a", enabled=True),
+                models.OperatorAssignmentProfile(operator_name="销售A", enabled=True),
+            ]
+        )
+        db.commit()
+        user_id = user.id
+    admin = auth_headers("dt-admin")
+
+    deleted = client.delete(f"/admin/users/{user_id}", headers=admin)
+
+    assert deleted.status_code == 204
+    with SessionLocal() as db:
+        user = db.get(models.User, user_id)
+        assert user is not None
+        assert user.enabled is False
+        assert db.query(models.UserPassword).filter_by(user_id=user_id).one_or_none() is not None
+        assert db.query(models.RoleMapping).filter_by(user_id=user_id).one().enabled is False
+        assert db.query(models.OperatorAssignmentProfile).filter_by(operator_name="销售A").one().enabled is False
+
+
 def test_super_admin_can_create_edit_and_delete_user_with_role() -> None:
     with SessionLocal() as db:
         db.add(models.RoleMapping(name="Admin", role="super_admin", dingtalk_user_id="dt-admin", enabled=True))
@@ -170,9 +199,9 @@ def test_super_admin_can_create_edit_and_delete_user_with_role() -> None:
 
     assert deleted.status_code == 204
     with SessionLocal() as db:
-        assert db.get(models.User, user_id) is None
-        assert db.query(models.RoleMapping).filter_by(user_id=user_id).one_or_none() is None
-        assert db.query(models.UserPassword).filter_by(user_id=user_id).one_or_none() is None
+        assert db.get(models.User, user_id).enabled is False
+        assert db.query(models.RoleMapping).filter_by(user_id=user_id).one().enabled is False
+        assert db.query(models.UserPassword).filter_by(user_id=user_id).one_or_none() is not None
         assert db.query(models.AuditLog).filter_by(action="user.deleted").one_or_none() is not None
 
 

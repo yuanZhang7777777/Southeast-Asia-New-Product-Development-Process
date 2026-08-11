@@ -10,6 +10,14 @@ from app.db import get_db
 router = APIRouter(prefix="/product-board", tags=["product-board"])
 
 
+@router.get("/business-periods", response_model=list[str])
+def list_product_board_business_periods(
+    db: Session = Depends(get_db),
+    _: object = Depends(require_roles("operator", "manager")),
+) -> list[str]:
+    return services.list_product_board_business_periods(db)
+
+
 @router.get("", response_model=list[schemas.ProductBoardGroupRead])
 def list_product_board(
     owner: str | None = None,
@@ -19,6 +27,7 @@ def list_product_board(
     arrival_date_to: date | None = Query(default=None),
     site: str | None = None,
     query: str | None = None,
+    limit: int = Query(default=300, ge=1, le=300),
     db: Session = Depends(get_db),
     auth: AuthContext | None = Depends(require_roles("operator", "manager")),
 ) -> list[dict]:
@@ -33,4 +42,5 @@ def list_product_board(
         arrival_date_to=arrival_date_to,
         site=site,
         query=query,
+        limit=limit,
     )

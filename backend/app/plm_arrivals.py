@@ -38,21 +38,14 @@ def parse_plm_arrival_preview(workbook_path: str | Path, date_text: str, bloc_na
             values = {field: row[index] if index < len(row) else None for field, index in indexes.items()}
             if _text(values.get("bloc_name")) != bloc_name:
                 continue
-            latest_date = _date_value(values.get("latest_storage_time"))
-            if latest_date != target_date:
-                continue
             first_date = _date_value(values.get("first_listing_time"))
-            if first_date is None:
-                arrival_type = "unknown"
-            elif first_date == latest_date:
-                arrival_type = "new_arrival"
-            else:
-                arrival_type = "restock"
+            if first_date != target_date:
+                continue
             items.append(
                 {
                     "source_sheet": sheet_name,
                     "source_row": source_row,
-                    "arrival_type": arrival_type,
+                    "arrival_type": "new_arrival",
                     "product_name": _text(values.get("product_name")),
                     "salesperson_name": _text(values.get("salesperson_name")) or UNKNOWN_SALESPERSON,
                     "sub_sku": _text(values.get("sub_sku")),

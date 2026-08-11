@@ -77,13 +77,20 @@ test("普通待刊登任务继续使用既有刊登工作台", () => {
   assert.doesNotMatch(listingObservationViewSource, /stocking_paused/);
 });
 
-test("工作台提供含历史档案开关与业务周期期数下拉", () => {
+test("工作台默认包含过去记录且不再显示历史档案筛选", () => {
   assert.match(listingObservationViewSource, /include_history: true/);
-  assert.match(listingObservationViewSource, /含历史档案/);
+  assert.doesNotMatch(listingObservationViewSource, /含历史档案/);
+  assert.doesNotMatch(listingObservationViewSource, /listing-include-history/);
   assert.match(listingObservationViewSource, /data\.available_business_periods/);
   assert.match(listingObservationViewSource, /setFilter\("business_period", event\.target\.value\)/);
   assert.doesNotMatch(listingObservationViewSource, /type="date" value=\{filters\.period_start\}/);
 });
+
+test("刊登观察页面使用短期缓存避免切页重复全量拉取", () => {
+  assert.match(listingObservationViewSource, /cachedValue<ListingWorkbenchResponse>/);
+  assert.match(listingObservationViewSource, /setCachedValue\(cacheKey, response\)/);
+});
+
 const listingStylesSource = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");
 
 test("只有普通运营会被登录身份锁定当前运营", () => {

@@ -151,7 +151,7 @@ test("商品详情成本参数与开发询价模块接入 v2 段并标注三国�
   assert.match(appSource, /三国表·\{archiveSection\.businessPeriod\}/);
   assert.match(
     appSource,
-    /archiveSection \? \(\s*<ArchiveSegmentTable section=\{archiveSection\} \/>\s*\) : selection2Rows\.length \? \(\s*<ArchiveSegmentTable section=\{\{ businessPeriod: "", rows: selection2Rows \}\} \/>\s*\) : historyRows\.length \? \(\s*<ArchiveSegmentTable section=\{\{ businessPeriod: "", rows: historyRows \}\} \/>\s*\) : \(\s*<ColumnRangeTable item=\{activeChild\} columns=\{costParameterColumns\} \/>/
+    /archiveSection \? \(\s*<ArchiveSegmentTable section=\{archiveSection\} \/>\s*\) : historyRows\.length \? \(\s*<ArchiveSegmentTable section=\{\{ businessPeriod: "", rows: historyRows \}\} \/>\s*\) : \(\s*<ColumnRangeTable item=\{activeChild\} columns=\{costParameterColumns\} \/>/
   );
   assert.match(
     appSource,
@@ -215,6 +215,70 @@ test("选品1历史新世代 fields_by_cell 按 R1 分组归入板块且列序�
   assert.deepEqual(sections.development[0], { column: "N", label: "产品规格", group: "开发询价", value: "箱规：42*32*28CM 50pcs" });
 });
 
+test("选品1标准单层表头按固定列位完整进入四个详情分区", () => {
+  const item = {
+    source_type: "history_selection1",
+    snapshot: {
+      archive_type: "historical_selection1",
+      source_schema: "selection1_standard_v20260729",
+      fields_by_cell: {
+        A: { header: "开品周期", group: "开品周期", value: "7.8-7.14" },
+        N: { header: "产品规格", group: "产品规格", value: "黑色" },
+        Z: { header: "采购链接", group: "采购链接", value: "https://detail.1688.com/offer/1" },
+        AA: { header: "最低价链接", group: "最低价链接", value: "https://shopee.ph/lowest" },
+        AB: { header: "售价1", group: "售价1", value: 298 },
+        AC: { header: "月销1", group: "月销1", value: 543 },
+        AP: { header: "参考单销", group: "参考单销", value: 1 },
+        AW: { header: "推广期利润率", group: "推广期利润率", value: 0.21 },
+        AX: { header: "稳定期总成本", group: "稳定期总成本", value: 260 },
+        AY: { header: "包装重量", group: "包装重量", value: 1.2 },
+        BZ: { header: "不认领理由", group: "不认领理由", value: "需要资质" },
+        CE: { header: "备注", group: "备注", value: "认领证据" }
+      }
+    }
+  };
+
+  const sections = historyFieldsByCellSections(item);
+  assert.ok(sections);
+  assert.deepEqual(sections.development.map((field) => field.column), ["N", "Z"]);
+  assert.deepEqual(sections.market.map((field) => field.column), ["AA", "AB", "AC"]);
+  assert.deepEqual(sections.pricing.map((field) => field.column), ["AP", "AW"]);
+  assert.deepEqual(sections.cost.map((field) => field.column), ["AX", "AY"]);
+  assert.deepEqual(sections.other.map((field) => field.column), ["A"]);
+});
+
+test("历史选品3/4按选品1标准列完整分区，认领列只进认领模块", () => {
+  const item = {
+    source_type: "history_selection34",
+    snapshot: {
+      archive_type: "historical_selection34",
+      fields_by_cell: {
+        S: { header: "商品成本-含税（元）", value: 0.6729 },
+        U: { header: "长(cm)", value: 18 },
+        AA: { header: "最低价链接", value: "https://shopee.vn/lowest" },
+        AB: { header: "售价1", value: 24500 },
+        AC: { header: "月销1", value: 227 },
+        AP: { header: "参考单销", value: 1 },
+        AV: { header: "推广期定价", value: 28000 },
+        AX: { header: "稳定期总成本（含头程+平台费+基础设施）", value: 12000 },
+        CA: { header: "主销售员", value: "江琴" },
+        CC: { header: "认领单销", value: 1 }
+      }
+    }
+  };
+
+  assert.equal(isHistorySelection1Item(item), true);
+  const sections = historyFieldsByCellSections(item);
+  assert.ok(sections);
+  assert.deepEqual(sections.development.map((field) => field.column), ["S", "U"]);
+  assert.deepEqual(sections.market.map((field) => field.column), ["AA", "AB", "AC"]);
+  assert.deepEqual(sections.pricing.map((field) => field.column), ["AP", "AV"]);
+  assert.deepEqual(sections.cost.map((field) => field.column), ["AX"]);
+  assert.ok(!Object.values(sections).flat().some((field) => ["CA", "CC"].includes(field.column)));
+  assert.match(appSource, /fields_by_cell/);
+  assert.match(appSource, /activeChild\.source_type === "history_selection34"/);
+});
+
 test("现行选品1读取补回的历史字段快照", () => {
   const item = {
     source_type: "selection1_developer_claim_feedback",
@@ -226,11 +290,25 @@ test("现行选品1读取补回的历史字段快照", () => {
 test("商品详情把历史认领作为只读来源事实展示", () => {
   const claimPane = appSource.slice(appSource.indexOf('{activeSection === "claim"'), appSource.indexOf('{activeSection === "secondary"'));
   const claimTable = appSource.slice(appSource.indexOf("function ClaimReviewTable"), appSource.indexOf("function DetailFieldGrid"));
+  const submissionHelper = appSource.slice(appSource.indexOf("const readOnlyHistoricalSourceTypes"), appSource.indexOf("type SkuEditDraft"));
+  const detailView = appSource.slice(appSource.indexOf("function ProductDetailView"), appSource.indexOf("function lockedIdentitySourceColumns"));
+  const historicalStatus = appSource.slice(appSource.indexOf("function historicalClaimStatus"), appSource.indexOf("function primaryActionLabel"));
 
   assert.match(claimPane, /historical_claims/);
   assert.match(claimTable, /来源期/);
   assert.match(claimTable, /来源行/);
+  assert.match(claimTable, /<th>备注<\/th>/);
+  assert.match(claimTable, /claim\.source_note/);
   assert.match(claimTable, /来源表未提供主管复核/);
+  assert.match(submissionHelper, /history_selection2/);
+  assert.match(submissionHelper, /history_selection34/);
+  assert.match(submissionHelper, /isReadOnlyHistoricalItem\(item\)/);
+  assert.match(detailView, /!isReadOnlyHistoricalItem\(activeChild\)/);
+  assert.match(detailView, /detailOwnerText\(group\)/);
+  assert.match(historicalStatus, /historical_claims/);
+  assert.match(historicalStatus, /historical_unclaimed/);
+  assert.match(historicalStatus, /source_claimed/);
+  assert.match(historicalStatus, /source_not_claimed/);
   assert.doesNotMatch(claimTable, /latest_claim_record_id/);
   assert.doesNotMatch(claimTable, /api\.review/);
 });
@@ -368,8 +446,8 @@ test("选品2 不具备选品1列布局，Z-AN/AO-AX/AQ-BR 列位兜底一律禁
 
 test("选品2 市场调研按真实表头取 低价高消/最新低价/最低价链接，认领区 AL-AN 绝不出现在竞品行", () => {
   const rows = selection2HeaderFields(selection2Item, "market");
-  assert.deepEqual(rows.map((row) => row.column), ["Y", "AA"]);
-  assert.deepEqual(rows[0], { column: "Y", label: "低价高消链接", group: "", value: "https://shopee.ph/cheap-hot" });
+  assert.deepEqual(rows.map((row) => row.column), ["X", "Y", "AA"]);
+  assert.deepEqual(rows[1], { column: "Y", label: "低价高消链接", group: "", value: "https://shopee.ph/cheap-hot" });
   // AL=人名 / AM=是 / AN=0.5 的认领区单元格不进入市场调研板块。
   const values = rows.map((row) => row.value);
   assert.ok(!values.includes("陆伟豪"));
@@ -397,16 +475,17 @@ test("商品详情各板块以既有数据优先、fields_by_cell 派生补位�
   assert.match(appSource, /const historySections = historyFieldsByCellSections\(activeChild\);/);
   assert.match(appSource, /historyRows\.length > 0 && <span className="tag">选品1历史<\/span>/);
   assert.match(appSource, /historyMarket && <span className="tag">选品1历史<\/span>/);
-  // 选品2 表头派生在市场调研/价格参考/成本参数板块补位并带标注。
-  assert.match(appSource, /selection2Rows\.length > 0 && <span className="tag">选品2表头<\/span>/);
-  assert.match(appSource, /competitorRows\(activeChild\)\.length \? \[\] : selection2HeaderFields\(activeChild, "market"\)/);
-  assert.match(appSource, /pricingRows\(activeChild\)\.length \? \[\] : selection2HeaderFields\(activeChild, "pricing"\)/);
-  assert.match(appSource, /!archiveSection && !hasColumnRows \? selection2HeaderFields\(activeChild, "cost"\) : \[\]/);
+  // 选品2 直接按自己的五个语义分块展示，不再进入选品1列位兜底。
+  assert.match(appSource, /selection2HeaderFields\(activeChild, "core"\)/);
+  assert.match(appSource, /selection2HeaderFields\(activeChild, "market"\)/);
+  assert.match(appSource, /selection2HeaderFields\(activeChild, "pricing"\)/);
+  assert.match(appSource, /selection2HeaderFields\(activeChild, "cost"\)/);
+  assert.match(appSource, /selection2HeaderFields\(activeChild, "valuation"\)/);
   assert.match(appSource, /其他源表字段（\{historySections\.other\.length\}）<span className="tag">选品1历史<\/span>/);
-  // 已有结构化/表头数据的板块不再重复渲染派生数据。
-  assert.match(appSource, /!archiveSection && !detailFieldRows\(activeChild, developmentFieldSpecs\)\.length\s*\? historySections\?\.development \?\? \[\]/);
-  assert.match(appSource, /!competitorRows\(activeChild\)\.length && historySections\?\.market\.length/);
-  assert.match(appSource, /pricingRows\(activeChild\)\.length \? \[\] : historySections\?\.pricing \?\? \[\]/);
+  // 历史选品3/4必须优先走按真实列段生成的选品1式板块；其它来源仍以结构化/表头数据优先。
+  assert.match(appSource, /isSelection34Archive \|\| !detailFieldRows\(activeChild, developmentFieldSpecs\)\.length/);
+  assert.match(appSource, /isSelection34Archive \|\| !competitorRows\(activeChild\)\.length/);
+  assert.match(appSource, /isSelection34Archive \|\| !pricingRows\(activeChild\)\.length/);
   assert.match(appSource, /!archiveSection && !hasColumnRows \? historySections\?\.cost \?\? \[\] : \[\]/);
 });
 
@@ -436,4 +515,72 @@ test("read-only selection2 uses its native semantic headers", () => {
   assert.deepEqual(selection2HeaderFields(readonlyHistoricalSelection2Item, "market"), [
     { column: "AF", label: "\u4f4e\u4ef7\u9ad8\u6d88\u94fe\u63a5", group: "", value: "https://shopee.ph/cheap-hot" }
   ]);
+});
+
+const standardSelection2Item = {
+  source_type: "selection2_caigen_claim_feedback",
+  snapshot: {
+    headers_by_column: {
+      A: ["SPU"],
+      B: ["SKU"],
+      C: ["首单备货数量"],
+      D: ["产品名称"],
+      E: ["产品规格属性（材质、大小、颜色）"],
+      G: ["进价"],
+      K: ["海运"],
+      P: ["销售成本（比索）"],
+      S: ["推广期SP利润率"],
+      U: ["长(箱)"],
+      Z: ["体积(单)"],
+      AB: ["高价高消链接"],
+      AC: ["进货链接"],
+      AF: ["低价高消链接"],
+      AI: ["是否贴标包装及下单备注"],
+      AJ: ["首单备货金额"],
+      AK: ["首单备货体积"],
+      AL: ["供应链核价后采购链接"],
+      AN: ["核价意见"],
+      AO: ["核价人"],
+      AP: ["核价时间"]
+    },
+    cells: {
+      A: "CG-MAIN",
+      B: "CG-SUB",
+      C: 100,
+      D: "测试商品",
+      E: "蓝色",
+      G: 20,
+      K: 1.5,
+      P: 120,
+      S: 0.15,
+      U: 50,
+      Z: 0.001,
+      AB: "https://shopee.ph/high",
+      AC: "https://detail.1688.com/offer/1.html",
+      AF: "https://shopee.ph/low",
+      AI: "贴标",
+      AJ: 2000,
+      AK: 0.1,
+      AL: "https://detail.1688.com/offer/2.html",
+      AN: "价格可接受",
+      AO: "核价A",
+      AP: "2026-07-30"
+    }
+  }
+};
+
+test("选品2标准 A:AP 按五个业务分块展示且字段不跨块", () => {
+  assert.deepEqual(selection2HeaderFields(standardSelection2Item, "core").map((row) => row.column), ["A", "B", "C", "D", "E"]);
+  assert.deepEqual(selection2HeaderFields(standardSelection2Item, "pricing").map((row) => row.column), ["G", "P", "S"]);
+  assert.deepEqual(selection2HeaderFields(standardSelection2Item, "cost").map((row) => row.column), ["K", "U", "Z", "AI"]);
+  assert.deepEqual(selection2HeaderFields(standardSelection2Item, "market").map((row) => row.column), ["AB", "AC", "AF"]);
+  assert.deepEqual(selection2HeaderFields(standardSelection2Item, "valuation").map((row) => row.column), ["AJ", "AK", "AL", "AN", "AO", "AP"]);
+});
+
+test("商品详情为选品2切换五个专属分块名称", () => {
+  assert.match(appSource, /const selection2DetailSections/);
+  assert.match(appSource, /定价与利润/);
+  assert.match(appSource, /成本与包装/);
+  assert.match(appSource, /市场与采购/);
+  assert.match(appSource, /核价与首单/);
 });

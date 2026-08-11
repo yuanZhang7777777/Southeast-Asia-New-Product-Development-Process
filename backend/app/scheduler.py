@@ -1,9 +1,10 @@
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from sqlalchemy import select
 
 from app import models
+from app import finebi_auto_pull
 from app.config import Settings, get_settings
 from app.db import SessionLocal
 from app.dingtalk_card_sender import DingTalkCardConfig, DingTalkCardSender
@@ -21,10 +22,12 @@ from app.plm_processing import process_plm_arrival_workbook
 SYNC_HOUR = 8
 OPERATOR_NOTIFICATION_HOUR = 9
 MANAGER_NOTIFICATION_HOUR = 10
+FINEBI_PULL_HOUR = 8
 RETRY_SECONDS = 300
 CHECK_SECONDS = 30
 
 JOB_PLM_SYNC = "plm_sync"
+JOB_FINEBI_PULL = "finebi_pull"
 JOB_DAILY_NOTIFICATION = "daily_notification"
 JOB_MANAGER_NOTIFICATION = "manager_notification"
 JOB_LISTING_REMINDER = "listing_reminder"
@@ -67,6 +70,23 @@ def plm_sync_due(now: datetime, completed_date: str | None) -> bool:
     current = current.astimezone(BEIJING)
     target_date = previous_beijing_date(current)
     return current.hour >= SYNC_HOUR and completed_date != target_date
+
+
+def latest_completed_finebi_week_label(now: datetime) -> str:
+    current = now if now.tzinfo else now.replace(tzinfo=BEIJING)
+    current_date = current.astimezone(BEIJING).date()
+    days_since_wednesday = (current_date.weekday() - 2) % 7
+    period_end = current_date - timedelta(days=days_since_wednesday)
+    if current_date.weekday() == 2:
+        period_end -= timedelta(days=7)
+    period_start = period_end - timedelta(days=6)
+    return f"{period_start:%m%d}-{period_end:%m%d}"
+
+
+def finebi_pull_due(now: datetime, completed_week_label: str | None) -> bool:
+    current = now if now.tzinfo else now.replace(tzinfo=BEIJING)
+    current = current.astimezone(BEIJING)
+    return current.hour >= FINEBI_PULL_HOUR and completed_week_label != latest_completed_finebi_week_label(current)
 
 
 def dingtalk_user_sync_due(now: datetime, completed_at: datetime | None) -> bool:
@@ -114,6 +134,14 @@ def run_plm_sync(settings: Settings, date_text: str) -> dict[str, object]:
             workflow_automation_enabled=settings.workflow_automation_enabled,
         )
     return {"file": path.name, "arrival": arrival}
+
+
+def run_finebi_pull(settings: Settings, week_label: str) -> dict[str, object]:
+    with SessionLocal() as db:
+        report = finebi_auto_pull.pull_and_import(db, week_label, imported_by="scheduler", settings=settings)
+        db.commit()
+    return report
+
 
 def run_dingtalk_user_sync(settings: Settings) -> dict[str, object]:
     with SessionLocal() as db:
@@ -164,11 +192,13 @@ def main() -> None:
     settings = get_settings()
     print(f"scheduler started for {settings.app_env}; plm_sync={settings.plm_sync_enabled}", flush=True)
     completed_date: str | None = load_last_completed_date(JOB_PLM_SYNC)
+    finebi_completed_week: str | None = load_last_completed_date(JOB_FINEBI_PULL)
     daily_notification_completed_date: str | None = load_last_completed_date(JOB_DAILY_NOTIFICATION)
     listing_reminder_completed_date: str | None = load_last_completed_date(JOB_LISTING_REMINDER)
     manager_notification_completed_date: str | None = load_last_completed_date(JOB_MANAGER_NOTIFICATION)
     dingtalk_user_synced_at: datetime | None = None
     retry_after = 0.0
+    finebi_retry_after = 0.0
     while True:
         now = datetime.now(BEIJING)
         if settings.plm_sync_enabled and plm_sync_due(now, completed_date) and time.monotonic() >= retry_after:
@@ -182,6 +212,22 @@ def main() -> None:
             except Exception as exc:
                 retry_after = time.monotonic() + RETRY_SECONDS
                 print(f"plm_sync_failed date={date_text} error={exc}", flush=True)
+        if (
+            settings.finebi_scheduler_enabled
+            and settings.finebi_auto_pull_enabled
+            and finebi_pull_due(now, finebi_completed_week)
+            and time.monotonic() >= finebi_retry_after
+        ):
+            week_label = latest_completed_finebi_week_label(now)
+            try:
+                report = run_finebi_pull(settings, week_label)
+                finebi_completed_week = week_label
+                finebi_retry_after = 0.0
+                record_job_run(JOB_FINEBI_PULL, week_label, report)
+                print(f"finebi_pull_completed week={week_label} report={report}", flush=True)
+            except Exception as exc:
+                finebi_retry_after = time.monotonic() + RETRY_SECONDS
+                print(f"finebi_pull_failed week={week_label} error={exc}", flush=True)
         if settings.dingtalk_user_sync_enabled and dingtalk_user_sync_due(now, dingtalk_user_synced_at):
             try:
                 report = run_dingtalk_user_sync(settings)
@@ -189,7 +235,7 @@ def main() -> None:
                 print(f"dingtalk_user_sync_completed report={report}", flush=True)
             except Exception as exc:
                 print(f"dingtalk_user_sync_failed error={exc}", flush=True)
-        if daily_notification_due(now, daily_notification_completed_date):
+        if settings.dingtalk_card_autosend_enabled and daily_notification_due(now, daily_notification_completed_date):
             try:
                 report = run_daily_notification_jobs(settings, now)
                 daily_notification_completed_date = now.date().isoformat()
@@ -197,7 +243,7 @@ def main() -> None:
                 print(f"daily_notification_jobs_completed report={report}", flush=True)
             except Exception as exc:
                 print(f"daily_notification_jobs_failed error={exc}", flush=True)
-        if listing_reminder_due(now, listing_reminder_completed_date):
+        if settings.dingtalk_card_autosend_enabled and listing_reminder_due(now, listing_reminder_completed_date):
             try:
                 report = run_listing_reminder_jobs(settings, now)
                 listing_reminder_completed_date = now.date().isoformat()
@@ -205,7 +251,7 @@ def main() -> None:
                 print(f"listing_reminder_jobs_completed report={report}", flush=True)
             except Exception as exc:
                 print(f"listing_reminder_jobs_failed error={exc}", flush=True)
-        if manager_notification_due(now, manager_notification_completed_date):
+        if settings.dingtalk_card_autosend_enabled and manager_notification_due(now, manager_notification_completed_date):
             try:
                 report = run_manager_notification_jobs(settings, now)
                 manager_notification_completed_date = now.date().isoformat()

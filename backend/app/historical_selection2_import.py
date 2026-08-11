@@ -1,28 +1,44 @@
 ﻿"""选品2历史档案只读解析器。
 
-只解析来源事实，不写库、不匹配运营、不创建任务。工作簿的商品与认领列按每个
-sheet 的表头识别，避免把历史期的不同列布局误读为同一份业务数据。
+默认只解析或 dry-run；写库时也只恢复商品、历史认领/不认领和来源证据，不创建
+当前认领、复核、二调、刊登、观察或钉钉任务。
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
+import zipfile
 from pathlib import Path
 from typing import Any
+from xml.etree import ElementTree
 
 from openpyxl import load_workbook
 from openpyxl.utils import column_index_from_string, get_column_letter
+from sqlalchemy import select
+from sqlalchemy.orm import Session
 
+from app import models
 from app.field_mapping import json_safe_value, text_value
+from app.historical_archive_import import APPLY_ALLOWED_ENVS
+from app.historical_watchlist import sha256_file
+from app.services import audit
 
 SOURCE_TYPE = "history_selection2"
 ARCHIVE_STATUS = "historical_archive"
 PERIOD_PATTERN = re.compile(r"(?P<month>\d{1,2})\.(?P<day>\d{1,2})期|(?P<compact>\d{3,4})期")
-INFRINGEMENT_TEXT = "侵权商品"
+INFRINGEMENT_TEXT = "侵权"
 HEADER_SEARCH_ROWS = 5
 DEFAULT_COUNTRY = "PH"
+AUDIT_ACTION = "history_selection2.imported"
+DISPIMG_PATTERN = re.compile(r'DISPIMG\("(?P<id>ID_[A-F0-9]+)"', flags=re.IGNORECASE)
+XDR_NS = "{http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing}"
+A_NS = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
+R_NS = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
+REL_NS = "{http://schemas.openxmlformats.org/package/2006/relationships}"
+CELL_IMAGE_NS = "{http://www.wps.cn/officeDocument/2017/etCustomData}"
 
 # 7.11期是选品2历史清洗的主表。旧表仅在列名/列位上有差异；未列入这里的
 # 非空字段会进入历史补充字段，保留来源而不臆测业务含义。
@@ -99,7 +115,11 @@ def business_period_from_sheet(sheet_name: str) -> str | None:
     return f"选品2-财根{period}期" if period else None
 
 
-def parse_selection2_workbook(path: Path, max_rows_per_sheet: int | None = None) -> dict[str, Any]:
+def parse_selection2_workbook(
+    path: Path,
+    max_rows_per_sheet: int | None = None,
+    upload_images: bool = False,
+) -> dict[str, Any]:
     rows: list[dict[str, Any]] = []
     sheet_reports: list[dict[str, Any]] = []
     skipped_sheets: list[dict[str, str]] = []
@@ -151,16 +171,24 @@ def parse_selection2_workbook(path: Path, max_rows_per_sheet: int | None = None)
             sheet_reports.append({"sheet": sheet_name, "period": period, "rows": sheet_rows, "skipped": skipped})
     finally:
         workbook.close()
+    image_stats = attach_wps_cell_images(path, rows) if upload_images else {
+        "references": sum(bool(row["snapshot"].get("image_reference")) for row in rows),
+        "uploaded": 0,
+        "rows_with_image": sum(bool(row.get("image_url")) for row in rows),
+        "upload_failures": [],
+    }
     latest = max(periods, default=None)
     return {
         "source_type": SOURCE_TYPE,
         "source_file": path.name,
+        "source_sha256": sha256_file(path),
         "readable": True,
         "latest_sheet": latest[1] if latest else None,
         "latest_period": latest[2] if latest else None,
         "sheets": sheet_reports,
         "skipped_sheets": skipped_sheets,
         "row_count": len(rows),
+        "image_stats": image_stats,
         "rows": rows,
     }
 
@@ -181,6 +209,96 @@ def inspect_selection2_workbook(path: Path) -> dict[str, Any]:
             "error": f"could not open workbook: {exc}",
         }
     return {key: value for key, value in report.items() if key != "rows"}
+
+
+def dispimg_id(value: Any) -> str | None:
+    match = DISPIMG_PATTERN.search(text_value(value) or "")
+    return match.group("id").upper() if match else None
+
+
+def is_image_url(value: Any) -> bool:
+    return bool(re.match(r"^(?:https?://|/uploaded-sources/)", text_value(value) or "", flags=re.IGNORECASE))
+
+
+def wps_cell_images(archive: zipfile.ZipFile) -> dict[str, tuple[bytes, str]]:
+    image_xml = "xl/cellimages.xml"
+    rels_xml = "xl/_rels/cellimages.xml.rels"
+    if image_xml not in archive.namelist() or rels_xml not in archive.namelist():
+        return {}
+    relationships = ElementTree.fromstring(archive.read(rels_xml))
+    targets = {
+        relation.get("Id"): f"xl/{relation.get('Target', '').lstrip('/')}"
+        for relation in relationships.iter(f"{REL_NS}Relationship")
+    }
+    root = ElementTree.fromstring(archive.read(image_xml))
+    images: dict[str, tuple[bytes, str]] = {}
+    for cell_image in root.iter(f"{CELL_IMAGE_NS}cellImage"):
+        properties = cell_image.find(f".//{XDR_NS}cNvPr")
+        blip = cell_image.find(f".//{A_NS}blip")
+        if properties is None or blip is None:
+            continue
+        image_id = (properties.get("name") or "").upper()
+        media_path = targets.get(blip.get(f"{R_NS}embed", ""))
+        if not image_id or not media_path or media_path not in archive.namelist():
+            continue
+        images[image_id] = (archive.read(media_path), Path(media_path).suffix.lstrip(".") or "png")
+    return images
+
+
+def attach_wps_cell_images(path: Path, rows: list[dict[str, Any]]) -> dict[str, Any]:
+    from app.oss_storage import upload_product_image
+
+    failures: list[dict[str, Any]] = []
+    uploaded_by_reference: dict[str, str] = {}
+    with zipfile.ZipFile(path) as archive:
+        images = wps_cell_images(archive)
+        for row in rows:
+            image_reference = row["snapshot"].get("image_reference")
+            if not image_reference:
+                continue
+            image = images.get(image_reference)
+            if image is None:
+                failures.append(image_failure(row, image_reference, "image_reference_not_found"))
+                continue
+            url = uploaded_by_reference.get(image_reference)
+            if url is None:
+                data, extension = image
+                digest = hashlib.sha1(data).hexdigest()[:16]
+                try:
+                    url = upload_product_image(
+                        data,
+                        extension,
+                        f"{SOURCE_TYPE}-{row['source_sheet']}",
+                        row["source_row"],
+                        digest,
+                    )
+                except Exception as exc:
+                    failures.append(image_failure(row, image_reference, type(exc).__name__))
+                    continue
+                if not url:
+                    failures.append(image_failure(row, image_reference, "upload_returned_empty"))
+                    continue
+                uploaded_by_reference[image_reference] = url
+            row["image_url"] = url
+            row["snapshot"]["extracted_image_url"] = url
+            row["snapshot"]["image_origin"] = "selection2_wps_cell_image"
+    return {
+        "references": sum(bool(row["snapshot"].get("image_reference")) for row in rows),
+        "uploaded": len(uploaded_by_reference),
+        "rows_with_image": sum(bool(row.get("image_url")) for row in rows),
+        "upload_failures": failures,
+    }
+
+
+def image_failure(row: dict[str, Any], image_reference: str, reason: str) -> dict[str, Any]:
+    return {
+        "source_sheet": row["source_sheet"],
+        "source_row": row["source_row"],
+        "main_sku": row["main_sku"],
+        "sub_sku": row["sub_sku"],
+        "image_reference": image_reference,
+        "reason": reason,
+    }
 
 
 def parse_historical_selection2_row(
@@ -233,6 +351,8 @@ def parse_historical_selection2_row(
             archive_only_reason = "historical_claim_quality_issue" if claim_quality_issues else "historical_unclaimed"
 
     quality_issues = [*field_quality_issues, *claim_quality_issues]
+    image_value = field_value(normalized_fields, "图片")
+    image_reference = dispimg_id(image_value)
     snapshot = {
         "archive_type": "historical_selection2",
         "business_period": resolved_business_period,
@@ -247,12 +367,14 @@ def parse_historical_selection2_row(
         "quality_issues": quality_issues,
         "archive_only_reason": archive_only_reason,
     }
+    if image_reference:
+        snapshot["image_reference"] = image_reference
     if backfilled_fields:
         snapshot["backfilled_fields"] = backfilled_fields
 
     product_name = field_value(normalized_fields, "产品名称")
     specification = field_value(normalized_fields, "产品规格属性")
-    image_url = field_value(normalized_fields, "图片")
+    image_url = image_value if is_image_url(image_value) else None
     return {
         "source_type": SOURCE_TYPE,
         "source_file": source_file,
@@ -304,14 +426,31 @@ def parse_claim_sources(
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
     entries_by_salesperson: dict[str, list[dict[str, Any]]] = {}
     source_order: list[str] = []
-    for slot in claim_slots(headers):
+    quality_issues: list[dict[str, Any]] = []
+    slots = claim_slots(headers)
+    shifted_entry, consumed_columns = shifted_primary_claim_entry(values, slots)
+    if shifted_entry:
+        salesperson = shifted_entry.pop("salesperson_name")
+        entries_by_salesperson[salesperson] = [shifted_entry]
+        source_order.append(salesperson)
+
+    for slot in slots:
+        if slot["name_column"] in consumed_columns:
+            continue
         salesperson = text_value(values.get(slot["name_column"]))
-        if not salesperson or not valid_claimant_name(salesperson):
+        if not salesperson:
+            continue
+        if not valid_claimant_name(salesperson):
+            quality_issues.append(
+                {
+                    "code": "invalid_claimant_name",
+                    "raw_value": salesperson,
+                    "source_column": slot["name_column"],
+                }
+            )
             continue
 
         raw_value = first_slot_value(values, slot)
-        if raw_value in (None, ""):
-            continue
         entry = {
             "raw_value": raw_value,
             "source_column": slot["source_column"],
@@ -324,7 +463,6 @@ def parse_claim_sources(
 
     claims: list[dict[str, Any]] = []
     rejected_sources: list[dict[str, Any]] = []
-    quality_issues: list[dict[str, Any]] = []
     for salesperson in source_order:
         entries = entries_by_salesperson[salesperson]
         value_keys = {claim_value_key(entry["raw_value"]) for entry in entries}
@@ -358,8 +496,6 @@ def parse_claim_sources(
                     "source_column": entry["source_column"],
                 }
             )
-        elif entry["kind"] == "unclaimed":
-            continue
         else:
             quality_issues.append(
                 {
@@ -370,6 +506,42 @@ def parse_claim_sources(
                 }
             )
     return claims, rejected_sources, quality_issues
+
+
+def shifted_primary_claim_entry(
+    values: dict[str, Any],
+    slots: list[dict[str, str | None]],
+) -> tuple[dict[str, Any] | None, set[str]]:
+    if not slots:
+        return None, set()
+    primary = slots[0]
+    if values.get(primary["name_column"]) not in (None, ""):
+        return None, set()
+    shifted_name_column = primary["daily_sales_column"]
+    salesperson = text_value(values.get(shifted_name_column)) if shifted_name_column else None
+    if not salesperson or not valid_claimant_name(salesperson):
+        return None, set()
+
+    value_column = primary["reason_column"] or shifted_name_column
+    raw_value = values.get(value_column)
+    consumed_columns = {shifted_name_column}
+    if raw_value in (None, "") and len(slots) > 1:
+        misplaced_reason_column = slots[1]["name_column"]
+        misplaced_reason = text_value(values.get(misplaced_reason_column))
+        if misplaced_reason and not valid_claimant_name(misplaced_reason):
+            raw_value = values[misplaced_reason_column]
+            value_column = misplaced_reason_column
+            consumed_columns.add(misplaced_reason_column)
+
+    return (
+        {
+            "salesperson_name": salesperson,
+            "raw_value": raw_value,
+            "source_column": source_range(shifted_name_column, value_column),
+            "kind": claim_value_kind(raw_value, None),
+        },
+        consumed_columns,
+    )
 
 
 def claim_slots(headers: dict[str, Any]) -> list[dict[str, str | None]]:
@@ -411,8 +583,6 @@ def claim_value_kind(raw_value: Any, status_value: Any) -> str:
         return "reject"
     if strict_positive_number(raw_value) is not None:
         return "claim"
-    if is_zero_daily_sales(raw_value):
-        return "unclaimed"
     if is_formula_error(raw_value):
         return "invalid"
     return "reject"
@@ -531,6 +701,7 @@ def normalize_selection2_history_rows(rows: list[dict[str, Any] | None]) -> dict
     for row in rows:
         if row is None:
             continue
+        row = reparse_claim_evidence(row)
         key = (
             row.get("source_file"),
             row.get("source_sheet"),
@@ -616,6 +787,334 @@ def normalize_selection2_history_rows(rows: list[dict[str, Any] | None]) -> dict
         "business_repair_rows": business_repair_rows,
         "supplementary_fields": supplementary_fields,
     }
+
+
+def reparse_claim_evidence(row: dict[str, Any]) -> dict[str, Any]:
+    snapshot = row.get("snapshot") or {}
+    values = snapshot.get("raw_cells_by_cell")
+    headers = snapshot.get("headers_by_cell")
+    if not isinstance(values, dict) or not isinstance(headers, dict):
+        return row
+
+    reparsed = dict(row)
+    reparsed_snapshot = dict(snapshot)
+    field_issues = [
+        issue
+        for issue in row.get("quality_issues", [])
+        if issue.get("code") not in {"conflicting_claim_values", "invalid_claim_value", "invalid_claimant_name"}
+    ]
+    if has_infringement_marker(values):
+        claims: list[dict[str, Any]] = []
+        rejected_sources: list[dict[str, Any]] = []
+        claim_issues: list[dict[str, Any]] = []
+        archive_only_reason = "infringing_product"
+        reparsed["operator_match_policy"] = "skip"
+    else:
+        claims, rejected_sources, claim_issues = parse_claim_sources(values, headers)
+        archive_only_reason = None
+        if not claims and not rejected_sources:
+            archive_only_reason = "historical_claim_quality_issue" if claim_issues else "historical_unclaimed"
+
+    quality_issues = [*field_issues, *claim_issues]
+    reparsed.update(
+        {
+            "claims": claims,
+            "rejected_sources": rejected_sources,
+            "quality_issues": quality_issues,
+            "archive_only_reason": archive_only_reason,
+        }
+    )
+    reparsed_snapshot.update(
+        {
+            "claims": claims,
+            "rejected_sources": rejected_sources,
+            "quality_issues": quality_issues,
+            "archive_only_reason": archive_only_reason,
+        }
+    )
+    reparsed["snapshot"] = reparsed_snapshot
+    return reparsed
+
+
+def selection2_row_identity(row: dict[str, Any]) -> tuple[str, str, str, str]:
+    return (
+        row.get("batch") or "",
+        row.get("country") or DEFAULT_COUNTRY,
+        row.get("main_sku") or "",
+        row.get("sub_sku") or "",
+    )
+
+
+def find_history_opportunity(db: Session, row: dict[str, Any]) -> models.NewProductOpportunity | None:
+    period, country, main_sku, sub_sku = selection2_row_identity(row)
+    return db.scalar(
+        select(models.NewProductOpportunity)
+        .where(
+            models.NewProductOpportunity.source_type == SOURCE_TYPE,
+            models.NewProductOpportunity.batch == period,
+            models.NewProductOpportunity.country == country,
+            models.NewProductOpportunity.main_sku == main_sku,
+            models.NewProductOpportunity.sub_sku == sub_sku,
+        )
+        .order_by(models.NewProductOpportunity.created_at.asc())
+    )
+
+
+def plan_selection2_rows(db: Session, rows: list[dict[str, Any]]) -> dict[str, Any]:
+    normalization = normalize_selection2_history_rows(rows)
+    counts = {
+        "would_create_opportunities": 0,
+        "would_update_opportunities": 0,
+        "would_create_claims": 0,
+        "would_update_claims": 0,
+        "skipped_conflicting_rows": len(normalization["business_repair_rows"]),
+    }
+    by_period: dict[str, dict[str, int]] = {}
+    for row in normalization["unified_rows"]:
+        period = row["batch"]
+        period_counts = by_period.setdefault(period, {"rows": 0, "claims": 0, "rejects": 0})
+        period_counts["rows"] += 1
+        period_counts["claims"] += len(row["claims"])
+        period_counts["rejects"] += len(row["rejected_sources"])
+        opportunity = find_history_opportunity(db, row)
+        counts["would_update_opportunities" if opportunity else "would_create_opportunities"] += 1
+        for relation in history_relations(row):
+            existing = find_history_claim(db, opportunity.id, relation) if opportunity else None
+            counts["would_update_claims" if existing else "would_create_claims"] += 1
+    return {**counts, "by_period": by_period, "business_repair_rows": normalization["business_repair_rows"]}
+
+
+def apply_selection2_rows(
+    db: Session,
+    rows: list[dict[str, Any]],
+    *,
+    source_label: str,
+    imported_by: str | None = None,
+    source_sha256: str | None = None,
+) -> dict[str, Any]:
+    normalization = normalize_selection2_history_rows(rows)
+    counts = {
+        "created_opportunities": 0,
+        "updated_opportunities": 0,
+        "created_claims": 0,
+        "updated_claims": 0,
+        "created_source_snapshots": 0,
+        "updated_source_snapshots": 0,
+        "skipped_conflicting_rows": len(normalization["business_repair_rows"]),
+    }
+    batch = models.ImportBatch(
+        source_type=SOURCE_TYPE,
+        source_file=source_label,
+        source_sheet="all",
+        business_period="历史全期",
+        imported_by=imported_by,
+        status="running",
+    )
+    db.add(batch)
+    db.flush()
+
+    for row in normalization["unified_rows"]:
+        opportunity = find_history_opportunity(db, row)
+        if opportunity is None:
+            opportunity = models.NewProductOpportunity(
+                source_type=SOURCE_TYPE,
+                source_file=row["source_file"],
+                source_sheet=row["source_sheet"],
+                source_row=row["source_row"],
+                import_batch_id=batch.id,
+                batch=row["batch"],
+                country=row.get("country") or DEFAULT_COUNTRY,
+                site=row.get("site") or DEFAULT_COUNTRY,
+                main_sku=row["main_sku"],
+                sub_sku=row["sub_sku"],
+                main_sku_name=row.get("main_sku_name"),
+                sub_sku_name=row.get("sub_sku_name"),
+                image_url=row.get("image_url"),
+                current_status=ARCHIVE_STATUS,
+                claim_pool_open=False,
+                snapshot=row["snapshot"],
+            )
+            db.add(opportunity)
+            db.flush()
+            counts["created_opportunities"] += 1
+        else:
+            update_history_opportunity(opportunity, row, batch.id)
+            counts["updated_opportunities"] += 1
+
+        source_snapshot = db.scalar(
+            select(models.SourceRecordSnapshot).where(
+                models.SourceRecordSnapshot.opportunity_id == opportunity.id,
+                models.SourceRecordSnapshot.source_file == row["source_file"],
+                models.SourceRecordSnapshot.source_sheet == row["source_sheet"],
+                models.SourceRecordSnapshot.source_row == row["source_row"],
+            )
+        )
+        if source_snapshot is None:
+            source_snapshot = models.SourceRecordSnapshot(
+                import_batch_id=batch.id,
+                opportunity_id=opportunity.id,
+                source_file=row["source_file"],
+                source_sheet=row["source_sheet"],
+                source_row=row["source_row"],
+                column_range="A:AW",
+                payload=row["snapshot"],
+            )
+            db.add(source_snapshot)
+            counts["created_source_snapshots"] += 1
+        else:
+            source_snapshot.import_batch_id = batch.id
+            source_snapshot.column_range = "A:AW"
+            source_snapshot.payload = row["snapshot"]
+            counts["updated_source_snapshots"] += 1
+
+        for relation in history_relations(row):
+            claim = find_history_claim(db, opportunity.id, relation)
+            created = claim is None
+            if claim is None:
+                claim = models.SalesClaimForecast(
+                    opportunity_id=opportunity.id,
+                    source_column=relation["source_column"],
+                    claim_source=SOURCE_TYPE,
+                )
+                db.add(claim)
+            claim.salesperson_name = relation["salesperson_name"]
+            claim.claim_result = relation["claim_result"]
+            claim.claim_daily_sales = relation["claim_daily_sales"]
+            claim.reject_reason = relation["reject_reason"]
+            claim.feedback_summary = relation.get("feedback_summary")
+            claim.note = relation["note"]
+            claim.task_id = None
+            claim.downstream_status = None
+            counts["created_claims" if created else "updated_claims"] += 1
+
+    batch.created_count = counts["created_opportunities"]
+    batch.updated_count = counts["updated_opportunities"]
+    batch.skipped_count = counts["skipped_conflicting_rows"]
+    batch.status = "completed"
+    audit(
+        db,
+        AUDIT_ACTION,
+        "new_product_opportunity",
+        None,
+        {
+            "source_file": source_label,
+            "source_sha256": source_sha256,
+            "import_batch_id": batch.id,
+            **counts,
+        },
+        imported_by,
+    )
+    db.flush()
+    return {
+        "import_batch_id": batch.id,
+        **counts,
+        "business_repair_rows": normalization["business_repair_rows"],
+    }
+
+
+def update_history_opportunity(
+    opportunity: models.NewProductOpportunity,
+    row: dict[str, Any],
+    import_batch_id: str,
+) -> None:
+    opportunity.source_file = row["source_file"]
+    opportunity.source_sheet = row["source_sheet"]
+    opportunity.source_row = row["source_row"]
+    opportunity.import_batch_id = import_batch_id
+    opportunity.site = row.get("site") or DEFAULT_COUNTRY
+    opportunity.current_status = ARCHIVE_STATUS
+    opportunity.claim_pool_open = False
+    opportunity.snapshot = row["snapshot"]
+    for field in ("main_sku_name", "sub_sku_name", "image_url"):
+        if row.get(field) not in (None, ""):
+            setattr(opportunity, field, row[field])
+
+
+def history_relations(row: dict[str, Any]) -> list[dict[str, Any]]:
+    relations: list[dict[str, Any]] = []
+    for claim in row.get("claims", []):
+        relations.append(
+            history_relation(
+                row,
+                claim["salesperson_name"],
+                "claim",
+                claim["source_column"],
+                claim.get("claim_daily_sales"),
+                None,
+                claim.get("source_columns"),
+            )
+        )
+    for rejected in row.get("rejected_sources", []):
+        relations.append(
+            history_relation(
+                row,
+                rejected["salesperson_name"],
+                "reject",
+                rejected["source_column"],
+                None,
+                rejection_reason(rejected.get("raw_value")),
+                rejected.get("source_columns"),
+                rejected.get("raw_value"),
+            )
+        )
+    return relations
+
+
+def history_relation(
+    row: dict[str, Any],
+    salesperson_name: str,
+    claim_result: str,
+    source_range: str,
+    claim_daily_sales: float | None,
+    reject_reason: str | None,
+    source_ranges: list[str] | None = None,
+    raw_value: Any = None,
+) -> dict[str, Any]:
+    source_column = f"{SOURCE_TYPE}:{source_range}"
+    note = {
+        "history_source": {
+            "source_file": row["source_file"],
+            "source_sheet": row["source_sheet"],
+            "source_period": row["batch"],
+            "source_row": row["source_row"],
+            "source_column": source_range,
+            **({"source_columns": source_ranges} if source_ranges else {}),
+            **({"raw_value": raw_value} if claim_result == "reject" else {}),
+        }
+    }
+    return {
+        "salesperson_name": salesperson_name,
+        "claim_result": claim_result,
+        "claim_daily_sales": claim_daily_sales,
+        "reject_reason": reject_reason,
+        "source_column": source_column,
+        "note": json.dumps(note, ensure_ascii=False, default=str),
+    }
+
+
+def rejection_reason(raw_value: Any) -> str:
+    if raw_value in (None, ""):
+        return "来源未填写认领单销"
+    if is_zero_daily_sales(raw_value):
+        return "来源认领单销为 0"
+    return text_value(raw_value) or "来源标记不认领"
+
+
+def find_history_claim(
+    db: Session,
+    opportunity_id: str,
+    relation: dict[str, Any],
+) -> models.SalesClaimForecast | None:
+    return db.scalar(
+        select(models.SalesClaimForecast)
+        .where(
+            models.SalesClaimForecast.opportunity_id == opportunity_id,
+            models.SalesClaimForecast.claim_source == SOURCE_TYPE,
+            models.SalesClaimForecast.source_column == relation["source_column"],
+            models.SalesClaimForecast.salesperson_name == relation["salesperson_name"],
+        )
+        .order_by(models.SalesClaimForecast.created_at.asc())
+    )
 
 
 def distinct_evidence_values(evidence: list[dict[str, Any]]) -> list[Any]:
@@ -707,7 +1206,13 @@ def is_claim_status_header(header: Any) -> bool:
 
 
 def valid_claimant_name(value: str) -> bool:
-    return not any(marker in value.lower() for marker in ("表格", "已认领", "http://", "https://", "链接"))
+    text = value.strip()
+    if not text or re.fullmatch(r"\d+(?:\.\d+)?", text):
+        return False
+    return not any(
+        marker in text.lower()
+        for marker in ("表格", "已认领", "侵权", "需要", "资质", "趋势", "单销低", "http://", "https://", "链接")
+    )
 
 
 def is_explicit_rejection(value: Any) -> bool:
@@ -780,14 +1285,57 @@ def _is_repeated_header(value: str) -> bool:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="选品2历史来源只读解析/检查，不写库。")
-    parser.add_argument("--workbook", required=True, type=Path)
+    parser = argparse.ArgumentParser(description="选品2历史来源解析与一次性迁移；默认不写库。")
+    parser.add_argument("--workbook", type=Path)
     parser.add_argument("--inspect-only", action="store_true")
+    parser.add_argument("--upload-images", action="store_true")
+    parser.add_argument("--rows-out")
+    parser.add_argument("--max-rows-per-sheet", type=int, default=None)
+    parser.add_argument("--apply-rows")
+    parser.add_argument("--apply-dev", action="store_true")
+    parser.add_argument("--imported-by", default="history_selection2_import")
     args = parser.parse_args()
-    report = inspect_selection2_workbook(args.workbook) if args.inspect_only else parse_selection2_workbook(args.workbook)
-    if not args.inspect_only and "rows" in report:
-        report = {key: value for key, value in report.items() if key != "rows"}
-    print(json.dumps(report, ensure_ascii=False, indent=2, default=str))
+
+    if args.apply_rows:
+        from app.config import get_settings
+        from app.db import SessionLocal
+
+        payload = json.loads(Path(args.apply_rows).read_text(encoding="utf-8"))
+        rows = payload["rows"]
+        with SessionLocal() as db:
+            if not args.apply_dev:
+                report = plan_selection2_rows(db, rows)
+                print(json.dumps({"mode": "dry-run", "rows": len(rows), **report}, ensure_ascii=False, indent=2))
+                return
+            settings = get_settings()
+            if settings.app_env not in APPLY_ALLOWED_ENVS:
+                raise SystemExit(f"apply blocked: app_env={settings.app_env}")
+            report = apply_selection2_rows(
+                db,
+                rows,
+                source_label=payload.get("source_file", "selection2-history"),
+                imported_by=args.imported_by,
+                source_sha256=payload.get("source_sha256"),
+            )
+            db.commit()
+        print(json.dumps({"mode": "apply", **report}, ensure_ascii=False, indent=2))
+        return
+
+    if args.workbook is None:
+        parser.error("--workbook is required unless --apply-rows is used")
+    report = (
+        inspect_selection2_workbook(args.workbook)
+        if args.inspect_only
+        else parse_selection2_workbook(
+            args.workbook,
+            max_rows_per_sheet=args.max_rows_per_sheet,
+            upload_images=args.upload_images,
+        )
+    )
+    if args.rows_out and not args.inspect_only:
+        Path(args.rows_out).write_text(json.dumps(report, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+    summary = {key: value for key, value in report.items() if key != "rows"}
+    print(json.dumps(summary, ensure_ascii=False, indent=2, default=str))
 
 
 if __name__ == "__main__":
