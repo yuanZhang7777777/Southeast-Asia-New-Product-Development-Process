@@ -1667,6 +1667,25 @@ def list_plm_arrival_assignments(db: Session) -> list[dict]:
     return [_plm_assignment_row_from_match_count(item, batch, match_counts.get(item.id, 0)) for item, batch in rows]
 
 
+def list_plm_arrival_assignment_operator_profiles(db: Session) -> list[models.OperatorAssignmentProfile]:
+    enabled_names = _enabled_operator_names(db)
+    if not enabled_names:
+        return []
+    return list(
+        db.scalars(
+            select(models.OperatorAssignmentProfile)
+            .where(
+                models.OperatorAssignmentProfile.enabled.is_(True),
+                models.OperatorAssignmentProfile.operator_name.in_(enabled_names),
+            )
+            .order_by(
+                models.OperatorAssignmentProfile.display_order.asc(),
+                models.OperatorAssignmentProfile.operator_name.asc(),
+            )
+        )
+    )
+
+
 def assign_plm_arrival_to_secondary_research(
     db: Session,
     plm_arrival_item_id: str,

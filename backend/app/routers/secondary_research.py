@@ -93,6 +93,14 @@ def list_plm_arrival_assignments(
     return services.list_plm_arrival_assignments(db)
 
 
+@router.get("/plm-arrival-assignments/operators", response_model=list[schemas.OperatorAssignmentProfileRead])
+def list_plm_arrival_assignment_operators(
+    db: Session = Depends(get_db),
+    _auth: AuthContext | None = Depends(require_roles("manager")),
+) -> list[schemas.OperatorAssignmentProfileRead]:
+    return services.list_plm_arrival_assignment_operator_profiles(db)
+
+
 @router.post("/plm-arrival-assignments/assign-group", response_model=list[schemas.PlmArrivalAssignmentRead])
 def assign_plm_arrival_assignment_group(
     payload: schemas.PlmArrivalAssignmentGroupRequest,

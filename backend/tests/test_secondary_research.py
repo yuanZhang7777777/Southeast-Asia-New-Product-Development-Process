@@ -593,6 +593,48 @@ def test_manager_can_assign_plm_arrival_main_sku_group_to_operator_from_any_site
     assert len(arrivals) == 2
 
 
+def test_plm_arrival_assignment_operator_candidates_exclude_admins_and_disabled_profiles() -> None:
+    with SessionLocal() as db:
+        add_operator(db, "可承接运营", key_site="PH")
+        disabled_profile_operator = models.User(name="停用配置运营", enabled=True)
+        disabled_notification_operator = add_operator(db, "不通知运营", key_site="VN")
+        db.flush()
+        mapping = db.query(models.RoleMapping).filter_by(user_id=disabled_notification_operator.id, role="operator").one()
+        mapping.notification_enabled = False
+
+        db.add(disabled_profile_operator)
+        db.flush()
+        db.add_all(
+            [
+                models.RoleMapping(
+                    user_id=disabled_profile_operator.id,
+                    name="停用配置运营",
+                    role="operator",
+                    enabled=True,
+                    notification_enabled=True,
+                ),
+                models.OperatorAssignmentProfile(operator_name="停用配置运营", key_site="TH", enabled=False),
+            ]
+        )
+
+        manager = models.User(name="主管人员", enabled=True)
+        db.add(manager)
+        db.flush()
+        db.add_all(
+            [
+                models.RoleMapping(user_id=manager.id, name="主管人员", role="manager", enabled=True),
+                models.RoleMapping(user_id=manager.id, name="主管人员", role="operator", enabled=True, notification_enabled=True),
+                models.OperatorAssignmentProfile(operator_name="主管人员", key_site="PH", enabled=True),
+            ]
+        )
+        db.commit()
+
+    response = client.get("/secondary-research/plm-arrival-assignments/operators")
+
+    assert response.status_code == 200
+    assert [row["operator_name"] for row in response.json()] == ["可承接运营"]
+
+
 def test_manager_closes_plm_arrival_assignment_without_creating_secondary_task() -> None:
     with SessionLocal() as db:
         batch = models.PlmArrivalBatch(

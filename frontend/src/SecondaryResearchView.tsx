@@ -8,7 +8,6 @@ import {
   getAuthToken,
   OperatorAssignmentProfile,
   PlmArrivalAssignment,
-  RoleMapping,
   SecondaryResearchGroup,
   SecondaryResearchItem,
   UploadedEvidenceImage
@@ -249,20 +248,13 @@ export function SecondaryResearchView(props: {
     if (cached) setPlmAssignments(cached);
     setLoading(!cached);
     try {
-      const [assignments, operators, mappings] = await Promise.all([
+      const [assignments, operators] = await Promise.all([
         api.plmArrivalAssignments(),
-        api.operatorProfiles(),
-        api.roleMappings(),
+        api.plmArrivalAssignmentOperators(),
       ]);
       setCachedValue(cacheKey, assignments);
       setPlmAssignments(assignments);
-      const adminNames = new Set(mappings.filter((role) => role.enabled && ["manager", "super_admin"].includes(role.role)).map((role) => role.name));
-      const enabledOperatorNames = new Set(
-        mappings
-          .filter((role) => role.enabled && role.notification_enabled && role.role === "operator" && !adminNames.has(role.name))
-          .map((role) => role.name)
-      );
-      setAssignmentOperatorProfiles(operators.filter((operator) => operator.enabled && enabledOperatorNames.has(operator.operator_name)));
+      setAssignmentOperatorProfiles(operators);
     } catch (error) {
       if (!cached) props.onStatus(error instanceof Error ? error.message : "PLM到货待分配加载失败");
     } finally {

@@ -937,6 +937,8 @@ export const api = {
       `/secondary-research/submit-group?salesperson_name=${encodeURIComponent(salespersonName)}`,
       { method: "POST", body: JSON.stringify({ claim_record_ids: claimRecordIds }) }
     ),
+  plmArrivalAssignmentOperators: () =>
+    request<OperatorAssignmentProfile[]>("/secondary-research/plm-arrival-assignments/operators"),
   review: (payload: unknown) => request<{ message: string; id: string }>("/reviews", { method: "POST", body: JSON.stringify(payload) }),
   bulkReview: (payload: unknown) => request<{ message: string; id: string }>("/reviews/bulk", { method: "POST", body: JSON.stringify(payload) }),
   stocking: () => request<StockingRequest[]>("/stocking/requests"),
