@@ -1678,8 +1678,8 @@ def assign_plm_arrival_to_secondary_research(
     owner = _clean_text(salesperson_name)
     if not owner:
         raise ValueError("salesperson_name is required")
-    if not is_enabled_assignment_operator_for_site(db, owner, item.country):
-        raise ValueError("salesperson_name must be an enabled operator for this site")
+    if not is_enabled_assignment_operator(db, owner):
+        raise ValueError("salesperson_name must be an enabled operator")
 
     opportunity, claim = open_plm_arrival_for_operator(
         db,
@@ -1688,6 +1688,7 @@ def assign_plm_arrival_to_secondary_research(
         owner,
         claim_source="plm_arrival_assignment",
         note="PLM到货待分配由主管指派",
+        require_site_match=False,
     )
     item.matched_claim_record_id = claim.id
     item.match_status = "assigned"
@@ -1728,9 +1729,8 @@ def assign_plm_arrival_group_to_secondary_research(
     owner = _clean_text(salesperson_name)
     if not owner:
         raise ValueError("salesperson_name is required")
-    first_item = items_with_batches[0][0]
-    if not is_enabled_assignment_operator_for_site(db, owner, first_item.country):
-        raise ValueError("salesperson_name must be an enabled operator for this site")
+    if not is_enabled_assignment_operator(db, owner):
+        raise ValueError("salesperson_name must be an enabled operator")
     blocked = [
         item
         for item, _batch in items_with_batches
@@ -1748,6 +1748,7 @@ def assign_plm_arrival_group_to_secondary_research(
             owner,
             claim_source="plm_arrival_assignment",
             note="PLM到货待分配由主管按主SKU组指派",
+            require_site_match=False,
         )
         item.matched_claim_record_id = claim.id
         item.match_status = "assigned"
@@ -1955,6 +1956,11 @@ def is_enabled_assignment_operator_for_site(db: Session, operator_name: str | No
     return any((normalize_site_code(profile.key_site) or "") == site for profile in profiles)
 
 
+def is_enabled_assignment_operator(db: Session, operator_name: str | None) -> bool:
+    name = _clean_text(operator_name)
+    return bool(name and name in _enabled_operator_names(db))
+
+
 def open_plm_arrival_for_operator(
     db: Session,
     batch: models.PlmArrivalBatch,
@@ -1963,8 +1969,14 @@ def open_plm_arrival_for_operator(
     *,
     claim_source: str,
     note: str,
+    require_site_match: bool = True,
 ) -> tuple[models.NewProductOpportunity, models.SalesClaimForecast]:
-    if not is_enabled_assignment_operator_for_site(db, owner, item.country):
+    valid_operator = (
+        is_enabled_assignment_operator_for_site(db, owner, item.country)
+        if require_site_match
+        else is_enabled_assignment_operator(db, owner)
+    )
+    if not valid_operator:
         raise ValueError("salesperson_name must be an enabled operator for this site")
 
     opportunities = _current_opportunities_for_plm_item(db, item)

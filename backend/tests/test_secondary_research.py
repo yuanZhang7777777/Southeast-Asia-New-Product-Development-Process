@@ -543,6 +543,56 @@ def test_manager_assigns_plm_arrival_main_sku_group_to_selected_operator() -> No
     assert len(arrivals) == 2
 
 
+def test_manager_can_assign_plm_arrival_main_sku_group_to_operator_from_any_site() -> None:
+    with SessionLocal() as db:
+        add_operator(db, "泰国承接运营", key_site="TH")
+        batch = models.PlmArrivalBatch(
+            arrival_date="2026-08-07",
+            source_file="plm-2026-08-07.xlsx",
+            source_hash="hash-plm-assign-main-group-cross-site",
+            bloc_name="集团八部",
+            row_count=2,
+        )
+        db.add(batch)
+        db.flush()
+        items = [
+            models.PlmArrivalItem(
+                batch_id=batch.id,
+                source_sheet="汇总表格",
+                source_row=30 + index,
+                arrival_type="new_arrival",
+                product_name=f"菲律宾PLM待分配{index}",
+                salesperson_name="PLM原销售",
+                country="菲律宾",
+                warehouse="菲律宾海外仓",
+                main_sku="PLM-CROSS-SITE",
+                sub_sku=f"PLM-CROSS-SITE-A{index}",
+                latest_storage_time=datetime(2026, 8, 7, 9, 30, tzinfo=timezone.utc),
+                first_listing_time=datetime(2026, 8, 7, 2, 0, tzinfo=timezone.utc),
+                match_status="pending_assignment",
+                raw_payload={},
+            )
+            for index in (1, 2)
+        ]
+        db.add_all(items)
+        db.commit()
+        item_ids = [item.id for item in items]
+
+    assigned = client.post(
+        "/secondary-research/plm-arrival-assignments/assign-group",
+        json={"plm_arrival_item_ids": item_ids, "salesperson_name": "泰国承接运营"},
+    )
+
+    assert assigned.status_code == 200
+    assert {row["assigned_salesperson_name"] for row in assigned.json()} == {"泰国承接运营"}
+    with SessionLocal() as db:
+        claims = db.query(models.SalesClaimForecast).order_by(models.SalesClaimForecast.id).all()
+        arrivals = db.query(models.ArrivalRecord).order_by(models.ArrivalRecord.id).all()
+    assert {claim.salesperson_name for claim in claims} == {"泰国承接运营"}
+    assert {claim.downstream_status for claim in claims} == {"waiting_secondary_research"}
+    assert len(arrivals) == 2
+
+
 def test_manager_closes_plm_arrival_assignment_without_creating_secondary_task() -> None:
     with SessionLocal() as db:
         batch = models.PlmArrivalBatch(
@@ -1142,7 +1192,7 @@ def make_claim(
     return opportunity, claim
 
 
-def add_operator(db, name: str) -> models.User:
+def add_operator(db, name: str, key_site: str = "PH") -> models.User:
     user = models.User(name=name, enabled=True)
     db.add(user)
     db.flush()
@@ -1155,7 +1205,7 @@ def add_operator(db, name: str) -> models.User:
                 enabled=True,
                 notification_enabled=True,
             ),
-            models.OperatorAssignmentProfile(operator_name=name, key_site="PH", enabled=True),
+            models.OperatorAssignmentProfile(operator_name=name, key_site=key_site, enabled=True),
         ]
     )
     return user

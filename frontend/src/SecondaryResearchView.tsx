@@ -8,6 +8,7 @@ import {
   getAuthToken,
   OperatorAssignmentProfile,
   PlmArrivalAssignment,
+  RoleMapping,
   SecondaryResearchGroup,
   SecondaryResearchItem,
   UploadedEvidenceImage
@@ -148,9 +149,8 @@ export function SecondaryResearchView(props: {
     [allGroups, plmAssignments]
   );
   function plmAssignmentOperatorsForGroup(group: PlmArrivalAssignmentGroup) {
-    const site = normalizeSiteText(group.country);
     return assignmentOperatorProfiles
-      .filter((operator) => operator.enabled && normalizeSiteText(operator.key_site) === site)
+      .filter((operator) => operator.enabled)
       .sort((left, right) => {
         const order = (left.display_order ?? 0) - (right.display_order ?? 0);
         return order || left.operator_name.localeCompare(right.operator_name, "zh-CN");
@@ -249,13 +249,20 @@ export function SecondaryResearchView(props: {
     if (cached) setPlmAssignments(cached);
     setLoading(!cached);
     try {
-      const [assignments, operators] = await Promise.all([
+      const [assignments, operators, mappings] = await Promise.all([
         api.plmArrivalAssignments(),
         api.operatorProfiles(),
+        api.roleMappings(),
       ]);
       setCachedValue(cacheKey, assignments);
       setPlmAssignments(assignments);
-      setAssignmentOperatorProfiles(operators.filter((operator) => operator.enabled));
+      const adminNames = new Set(mappings.filter((role) => role.enabled && ["manager", "super_admin"].includes(role.role)).map((role) => role.name));
+      const enabledOperatorNames = new Set(
+        mappings
+          .filter((role) => role.enabled && role.notification_enabled && role.role === "operator" && !adminNames.has(role.name))
+          .map((role) => role.name)
+      );
+      setAssignmentOperatorProfiles(operators.filter((operator) => operator.enabled && enabledOperatorNames.has(operator.operator_name)));
     } catch (error) {
       if (!cached) props.onStatus(error instanceof Error ? error.message : "PLM到货待分配加载失败");
     } finally {
