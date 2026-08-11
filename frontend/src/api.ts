@@ -518,6 +518,8 @@ export type PlmArrivalAssignment = {
   assigned_salesperson_name?: string | null;
   claim_record_id?: string | null;
   opportunity_id?: string | null;
+  assignment_hint?: string | null;
+  assignment_block_reason?: string | null;
   note?: string | null;
 };
 

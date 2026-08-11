@@ -755,6 +755,8 @@ class PlmArrivalAssignmentRead(BaseModel):
     assigned_salesperson_name: str | None = None
     claim_record_id: str | None = None
     opportunity_id: str | None = None
+    assignment_hint: str | None = None
+    assignment_block_reason: str | None = None
     note: str | None = None
 
 

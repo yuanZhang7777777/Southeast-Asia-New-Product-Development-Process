@@ -5243,6 +5243,12 @@ th {
   margin-top: 10px;
 }
 
+.plm-assignment-warning {
+  color: #b45309;
+  font-size: 13px;
+  margin-top: 6px;
+}
+
 .plm-assignment-actions {
   display: grid;
   grid-template-columns: minmax(130px, 1fr) auto;

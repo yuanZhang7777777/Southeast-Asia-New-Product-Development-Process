@@ -1937,6 +1937,17 @@ def _plm_assignment_row(
 ) -> dict:
     current_matches = _current_opportunities_for_plm_item(db, item)
     payload = (item.raw_payload or {}).get("_plm_assignment") or {}
+    block_reason = (
+        "当前系统存在多个同国家+主SKU+子SKU商品，需先处理商品归属"
+        if len(current_matches) > 1
+        else None
+    )
+    if block_reason:
+        hint = "暂不能指派，先在商品看板处理重复商品或归属"
+    elif len(current_matches) == 1:
+        hint = "当前系统已有商品；指派后进入所选运营的二次调研和到货通知候选"
+    else:
+        hint = "当前系统没有可见商品；指派后创建PLM新增到货商品并进入所选运营二次调研"
     return {
         "plm_arrival_item_id": item.id,
         "arrival_date": batch.arrival_date,
@@ -1956,6 +1967,8 @@ def _plm_assignment_row(
         "assigned_salesperson_name": payload.get("assigned_salesperson_name"),
         "claim_record_id": item.matched_claim_record_id,
         "opportunity_id": payload.get("opportunity_id"),
+        "assignment_hint": hint,
+        "assignment_block_reason": block_reason,
         "note": payload.get("close_reason"),
     }
 

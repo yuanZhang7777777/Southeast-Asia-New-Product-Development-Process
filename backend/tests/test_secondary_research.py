@@ -528,6 +528,75 @@ def test_manager_closes_plm_arrival_assignment_without_creating_secondary_task()
         assert db.query(models.ArrivalRecord).count() == 0
 
 
+def test_plm_arrival_assignment_lists_multi_product_block_reason() -> None:
+    with SessionLocal() as db:
+        add_operator(db, "销售B")
+        batch = models.PlmArrivalBatch(
+            arrival_date="2026-08-07",
+            source_file="plm-2026-08-07.xlsx",
+            source_hash="hash-plm-multi-product",
+            bloc_name="集团八部",
+            row_count=1,
+        )
+        db.add(batch)
+        db.flush()
+        item = models.PlmArrivalItem(
+            batch_id=batch.id,
+            source_sheet="汇总表格",
+            source_row=17,
+            arrival_type="new_arrival",
+            product_name="多当前商品",
+            salesperson_name="PLM原销售",
+            country="菲律宾",
+            main_sku="PLM-DUP",
+            sub_sku="PLM-DUP-A1",
+            match_status="pending_assignment",
+            raw_payload={},
+        )
+        db.add(item)
+        db.add_all(
+            [
+                models.NewProductOpportunity(
+                    id="op-plm-dup-1",
+                    source_type="selection1_developer_claim_feedback",
+                    batch="开发0804期",
+                    country="菲律宾",
+                    site="PH",
+                    main_sku="PLM-DUP",
+                    sub_sku="PLM-DUP-A1",
+                    current_status="waiting_secondary_research",
+                ),
+                models.NewProductOpportunity(
+                    id="op-plm-dup-2",
+                    source_type="selection1_developer_claim_feedback",
+                    batch="开发0804期",
+                    country="菲律宾",
+                    site="PH",
+                    main_sku="PLM-DUP",
+                    sub_sku="PLM-DUP-A1",
+                    current_status="claim_submitted",
+                ),
+            ]
+        )
+        db.commit()
+        item_id = item.id
+
+    pending = client.get("/secondary-research/plm-arrival-assignments")
+
+    assert pending.status_code == 200
+    row = pending.json()[0]
+    assert row["existing_opportunity_count"] == 2
+    assert row["assignment_block_reason"] == "当前系统存在多个同国家+主SKU+子SKU商品，需先处理商品归属"
+
+    assigned = client.post(
+        f"/secondary-research/plm-arrival-assignments/{item_id}/assign",
+        json={"salesperson_name": "销售B"},
+    )
+
+    assert assigned.status_code == 400
+    assert "multiple current products" in assigned.json()["detail"]
+
+
 def test_saving_draft_keeps_status_and_rejects_editing_another_operator() -> None:
     opportunity, claim = make_claim("SUB-A", "销售A", downstream_status="waiting_secondary_research")
     with SessionLocal() as db:

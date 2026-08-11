@@ -577,7 +577,7 @@ export function SecondaryResearchView(props: {
         <div className="plm-assignment-panel">
           <div className="research-meta-line">
             <span>待分配 <b>{visiblePlmAssignments.length}</b></span>
-            <span>规则 <b>未指派前不分给 PLM 销售员</b></span>
+            <span>规则 <b>未指派前不分给 PLM 销售员，不发运营通知</b></span>
           </div>
           {loading && !visiblePlmAssignments.length ? <div className="research-empty">正在加载 PLM 到货待分配...</div> : null}
           {!loading && !visiblePlmAssignments.length ? <div className="research-empty"><b>当前筛选下没有到货待分配记录</b></div> : null}
@@ -593,6 +593,9 @@ export function SecondaryResearchView(props: {
                   <span>源：{row.source_file || "-"} 行 {row.source_row || "-"}</span>
                   <span>当前商品命中：{row.existing_opportunity_count}</span>
                 </div>
+                <div className={row.assignment_block_reason ? "plm-assignment-warning" : "muted"}>
+                  {row.assignment_block_reason || row.assignment_hint || "选择承接运营后才会进入二次调研"}
+                </div>
               </div>
               <div className="plm-assignment-actions">
                 <select
@@ -602,7 +605,14 @@ export function SecondaryResearchView(props: {
                   <option value="">选择承接运营</option>
                   {assignableOperators.map((operator) => <option value={operator.name} key={operator.id}>{operator.name}</option>)}
                 </select>
-                <button className="btn small primary" type="button" disabled={loading} onClick={() => void assignPlmArrival(row)}>指派进二调</button>
+                <button
+                  className="btn small primary"
+                  type="button"
+                  disabled={loading || Boolean(row.assignment_block_reason)}
+                  onClick={() => void assignPlmArrival(row)}
+                >
+                  指派进二调
+                </button>
                 <input
                   value={assignmentCloseReasons[row.plm_arrival_item_id] || ""}
                   placeholder="暂不推进原因"
