@@ -898,10 +898,20 @@ export const api = {
   createManualSecondaryResearch: (payload: ManualSecondaryResearchPayload) =>
     request<SecondaryResearchItem>("/secondary-research/manual", { method: "POST", body: JSON.stringify(payload) }),
   plmArrivalAssignments: () => request<PlmArrivalAssignment[]>("/secondary-research/plm-arrival-assignments"),
+  assignPlmArrivalGroup: (plmArrivalItemIds: string[], salespersonName: string) =>
+    request<PlmArrivalAssignment[]>("/secondary-research/plm-arrival-assignments/assign-group", {
+      method: "POST",
+      body: JSON.stringify({ plm_arrival_item_ids: plmArrivalItemIds, salesperson_name: salespersonName })
+    }),
   assignPlmArrival: (plmArrivalItemId: string, salespersonName: string) =>
     request<PlmArrivalAssignment>(`/secondary-research/plm-arrival-assignments/${plmArrivalItemId}/assign`, {
       method: "POST",
       body: JSON.stringify({ salesperson_name: salespersonName })
+    }),
+  closePlmArrivalAssignmentGroup: (plmArrivalItemIds: string[], reason: string) =>
+    request<PlmArrivalAssignment[]>("/secondary-research/plm-arrival-assignments/close-group", {
+      method: "POST",
+      body: JSON.stringify({ plm_arrival_item_ids: plmArrivalItemIds, reason })
     }),
   closePlmArrivalAssignment: (plmArrivalItemId: string, reason: string) =>
     request<PlmArrivalAssignment>(`/secondary-research/plm-arrival-assignments/${plmArrivalItemId}/close`, {

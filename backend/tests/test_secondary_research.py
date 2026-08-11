@@ -487,6 +487,62 @@ def test_manager_assigns_plm_arrival_to_selected_operator_before_secondary_resea
     assert plm_original_owner_count == 0
 
 
+def test_manager_assigns_plm_arrival_main_sku_group_to_selected_operator() -> None:
+    with SessionLocal() as db:
+        add_operator(db, "销售B")
+        batch = models.PlmArrivalBatch(
+            arrival_date="2026-08-07",
+            source_file="plm-2026-08-07.xlsx",
+            source_hash="hash-plm-assign-main-group",
+            bloc_name="集团八部",
+            row_count=2,
+        )
+        db.add(batch)
+        db.flush()
+        items = [
+            models.PlmArrivalItem(
+                batch_id=batch.id,
+                source_sheet="汇总表格",
+                source_row=20 + index,
+                arrival_type="new_arrival",
+                product_name=f"主SKU组商品{index}",
+                salesperson_name="PLM原销售",
+                country="菲律宾",
+                warehouse="菲律宾海外仓",
+                main_sku="PLM-GROUP",
+                sub_sku=f"PLM-GROUP-A{index}",
+                latest_storage_time=datetime(2026, 8, 7, 9, 30, tzinfo=timezone.utc),
+                first_listing_time=datetime(2026, 8, 7, 2, 0, tzinfo=timezone.utc),
+                match_status="pending_assignment",
+                raw_payload={},
+            )
+            for index in (1, 2)
+        ]
+        db.add_all(items)
+        db.commit()
+        item_ids = [item.id for item in items]
+
+    assigned = client.post(
+        "/secondary-research/plm-arrival-assignments/assign-group",
+        json={"plm_arrival_item_ids": item_ids, "salesperson_name": "销售B"},
+    )
+
+    assert assigned.status_code == 200
+    body = assigned.json()
+    assert [row["sub_sku"] for row in body] == ["PLM-GROUP-A1", "PLM-GROUP-A2"]
+    assert {row["assigned_salesperson_name"] for row in body} == {"销售B"}
+    with SessionLocal() as db:
+        saved_items = db.query(models.PlmArrivalItem).order_by(models.PlmArrivalItem.source_row).all()
+        claims = db.query(models.SalesClaimForecast).order_by(models.SalesClaimForecast.id).all()
+        arrivals = db.query(models.ArrivalRecord).order_by(models.ArrivalRecord.id).all()
+        opportunities = db.query(models.NewProductOpportunity).order_by(models.NewProductOpportunity.sub_sku).all()
+    assert [item.match_status for item in saved_items] == ["assigned", "assigned"]
+    assert [opportunity.sub_sku for opportunity in opportunities] == ["PLM-GROUP-A1", "PLM-GROUP-A2"]
+    assert {claim.salesperson_name for claim in claims} == {"销售B"}
+    assert {claim.downstream_status for claim in claims} == {"waiting_secondary_research"}
+    assert len(arrivals) == 2
+
+
 def test_manager_closes_plm_arrival_assignment_without_creating_secondary_task() -> None:
     with SessionLocal() as db:
         batch = models.PlmArrivalBatch(

@@ -81,6 +81,26 @@ type ManualSecondaryDraft = {
   secondary_competitor_url: string;
 };
 type ManualSecondaryErrors = Partial<Record<keyof ManualSecondaryDraft, string>>;
+type PlmArrivalAssignmentGroup = {
+  groupKey: string;
+  itemIds: string[];
+  items: PlmArrivalAssignment[];
+  country?: string | null;
+  mainSku?: string | null;
+  productName?: string | null;
+  plmSalespeople: string[];
+  firstListingTime?: string | null;
+  sourceSummary: string;
+  existingOpportunityCount: number;
+  assignmentHint?: string | null;
+  assignmentBlockReason?: string | null;
+};
+
+function plmAssignmentMainGroupKey(row: PlmArrivalAssignment) {
+  const site = normalizeSiteText(row.country) || String(row.country || "").trim();
+  const mainSku = String(row.main_sku || "").trim().toUpperCase();
+  return `${site || "__no_site"}::${mainSku || row.plm_arrival_item_id}`;
+}
 
 export function SecondaryResearchView(props: {
   salespersonName: string;
@@ -127,8 +147,8 @@ export function SecondaryResearchView(props: {
     ])).sort(),
     [allGroups, plmAssignments]
   );
-  function plmAssignmentOperatorsForRow(row: PlmArrivalAssignment) {
-    const site = normalizeSiteText(row.country);
+  function plmAssignmentOperatorsForGroup(group: PlmArrivalAssignmentGroup) {
+    const site = normalizeSiteText(group.country);
     return assignmentOperatorProfiles
       .filter((operator) => operator.enabled && normalizeSiteText(operator.key_site) === site)
       .sort((left, right) => {
@@ -155,6 +175,40 @@ export function SecondaryResearchView(props: {
       ].some((value) => String(value || "").toLowerCase().includes(keyword));
     });
   }, [countryFilter, plmAssignments, query]);
+  const visiblePlmAssignmentGroups = useMemo<PlmArrivalAssignmentGroup[]>(() => {
+    const groups = new Map<string, PlmArrivalAssignment[]>();
+    for (const item of visiblePlmAssignments) {
+      const groupKey = plmAssignmentMainGroupKey(item);
+      groups.set(groupKey, [...(groups.get(groupKey) || []), item]);
+    }
+    return Array.from(groups.entries()).map(([groupKey, items]) => {
+      const sortedItems = [...items].sort((left, right) => (left.source_row || 0) - (right.source_row || 0));
+      const first = sortedItems[0];
+      const plmSalespeople = Array.from(new Set(sortedItems.map((item) => item.plm_salesperson_name || "").filter(Boolean)));
+      const sourceRows = sortedItems
+        .map((item) => item.source_row)
+        .filter((row): row is number => typeof row === "number")
+        .sort((left, right) => left - right);
+      const sourceSummary = sourceRows.length
+        ? `${first.source_file || "-"} 行 ${sourceRows.join("、")}`
+        : `${first.source_file || "-"} 行 -`;
+      const blockReasons = sortedItems.map((item) => item.assignment_block_reason).filter(Boolean);
+      return {
+        groupKey,
+        itemIds: sortedItems.map((item) => item.plm_arrival_item_id),
+        items: sortedItems,
+        country: first.country,
+        mainSku: first.main_sku,
+        productName: first.product_name,
+        plmSalespeople,
+        firstListingTime: first.first_listing_time,
+        sourceSummary,
+        existingOpportunityCount: sortedItems.reduce((sum, item) => sum + (item.existing_opportunity_count || 0), 0),
+        assignmentHint: blockReasons[0] || first.assignment_hint,
+        assignmentBlockReason: blockReasons[0] || null,
+      };
+    });
+  }, [visiblePlmAssignments]);
   const group = groups[activeIndex];
   const [detailGroupKey, setDetailGroupKey] = useState<string | null>(null);
   const detailGroup = detailGroupKey ? groups.find((entry) => entry.key === detailGroupKey) || null : null;
@@ -544,17 +598,17 @@ export function SecondaryResearchView(props: {
     </div>
   );
 
-  async function assignPlmArrival(row: PlmArrivalAssignment) {
-    const candidates = plmAssignmentOperatorsForRow(row);
-    const owner = assignmentOwners[row.plm_arrival_item_id] || candidates[0]?.operator_name || "";
+  async function assignPlmArrivalGroup(group: PlmArrivalAssignmentGroup) {
+    const candidates = plmAssignmentOperatorsForGroup(group);
+    const owner = assignmentOwners[group.groupKey] || candidates[0]?.operator_name || "";
     if (!owner) {
       props.onStatus("请选择要承接二调的运营");
       return;
     }
     setLoading(true);
     try {
-      await api.assignPlmArrival(row.plm_arrival_item_id, owner);
-      props.onStatus(`${row.main_sku || row.sub_sku} 已指派给 ${owner}`);
+      await api.assignPlmArrivalGroup(group.itemIds, owner);
+      props.onStatus(`${group.mainSku || "PLM到货"} ${group.items.length} 个子 SKU 已指派给 ${owner}`);
       await Promise.all([loadPlmAssignments({ force: true }), loadGroups({ force: true })]);
     } catch (error) {
       props.onStatus(error instanceof Error ? error.message : "PLM到货指派失败");
@@ -563,16 +617,16 @@ export function SecondaryResearchView(props: {
     }
   }
 
-  async function closePlmArrival(row: PlmArrivalAssignment) {
-    const reason = (assignmentCloseReasons[row.plm_arrival_item_id] || "").trim();
+  async function closePlmArrivalGroup(group: PlmArrivalAssignmentGroup) {
+    const reason = (assignmentCloseReasons[group.groupKey] || "").trim();
     if (!reason) {
       props.onStatus("关闭到货待分配必须填写原因");
       return;
     }
     setLoading(true);
     try {
-      await api.closePlmArrivalAssignment(row.plm_arrival_item_id, reason);
-      props.onStatus(`${row.main_sku || row.sub_sku} 已关闭，不进入二调`);
+      await api.closePlmArrivalAssignmentGroup(group.itemIds, reason);
+      props.onStatus(`${group.mainSku || "PLM到货"} ${group.items.length} 个子 SKU 已关闭，不进入二调`);
       await loadPlmAssignments({ force: true });
     } catch (error) {
       props.onStatus(error instanceof Error ? error.message : "PLM到货关闭失败");
@@ -587,49 +641,54 @@ export function SecondaryResearchView(props: {
         {controls}
         <div className="plm-assignment-panel">
           <div className="research-meta-line">
-            <span>待分配 <b>{visiblePlmAssignments.length}</b></span>
+            <span>待分配 <b>{visiblePlmAssignmentGroups.length}</b> 个主 SKU 组 / <b>{visiblePlmAssignments.length}</b> 个子 SKU</span>
             <span>规则 <b>未指派前不分给 PLM 销售员，不发运营通知</b></span>
           </div>
-          {loading && !visiblePlmAssignments.length ? <div className="research-empty">正在加载 PLM 到货待分配...</div> : null}
-          {!loading && !visiblePlmAssignments.length ? <div className="research-empty"><b>当前筛选下没有到货待分配记录</b></div> : null}
-          {visiblePlmAssignments.map((row) => (
-            <div className="plm-assignment-row" key={row.plm_arrival_item_id}>
+          {loading && !visiblePlmAssignmentGroups.length ? <div className="research-empty">正在加载 PLM 到货待分配...</div> : null}
+          {!loading && !visiblePlmAssignmentGroups.length ? <div className="research-empty"><b>当前筛选下没有到货待分配记录</b></div> : null}
+          {visiblePlmAssignmentGroups.map((group) => (
+            <div className="plm-assignment-row" key={group.groupKey}>
               <div>
-                <b>{row.main_sku || "-"}</b> / {row.sub_sku || "-"}
-                <div className="muted">{row.product_name || "未填写商品名"}</div>
+                <b>{group.mainSku || "-"}</b> <span className="muted">/ {group.items.length} 个子 SKU</span>
+                <div className="muted">{group.productName || "未填写商品名"}</div>
                 <div className="research-meta-line">
-                  <span>{row.country || "-"}</span>
-                  <span>PLM销售员：{row.plm_salesperson_name || "-"}</span>
-                  <span>首次上架：{formatDateTime(row.first_listing_time)}</span>
-                  <span>源：{row.source_file || "-"} 行 {row.source_row || "-"}</span>
-                  <span>当前商品命中：{row.existing_opportunity_count}</span>
+                  <span>{group.country || "-"}</span>
+                  <span>PLM销售员：{group.plmSalespeople.join("、") || "-"}</span>
+                  <span>首次上架：{formatDateTime(group.firstListingTime)}</span>
+                  <span>源：{group.sourceSummary}</span>
+                  <span>当前商品命中：{group.existingOpportunityCount}</span>
                 </div>
-                <div className={row.assignment_block_reason ? "plm-assignment-warning" : "muted"}>
-                  {row.assignment_block_reason || row.assignment_hint || "选择承接运营后才会进入二次调研"}
+                <div className="research-meta-line">
+                  {group.items.map((item) => (
+                    <span key={item.plm_arrival_item_id}>{item.sub_sku || "-"}：{item.product_name || "-"}</span>
+                  ))}
+                </div>
+                <div className={group.assignmentBlockReason ? "plm-assignment-warning" : "muted"}>
+                  {group.assignmentBlockReason || group.assignmentHint || "选择承接运营后才会整组进入二次调研"}
                 </div>
               </div>
               <div className="plm-assignment-actions">
                 <select
-                  value={assignmentOwners[row.plm_arrival_item_id] || ""}
-                  onChange={(event) => setAssignmentOwners((current) => ({ ...current, [row.plm_arrival_item_id]: event.target.value }))}
+                  value={assignmentOwners[group.groupKey] || ""}
+                  onChange={(event) => setAssignmentOwners((current) => ({ ...current, [group.groupKey]: event.target.value }))}
                 >
                   <option value="">选择承接运营</option>
-                  {plmAssignmentOperatorsForRow(row).map((operator) => <option value={operator.operator_name} key={operator.id}>{operator.operator_name}</option>)}
+                  {plmAssignmentOperatorsForGroup(group).map((operator) => <option value={operator.operator_name} key={operator.id}>{operator.operator_name}</option>)}
                 </select>
                 <button
                   className="btn small primary"
                   type="button"
-                  disabled={loading || Boolean(row.assignment_block_reason)}
-                  onClick={() => void assignPlmArrival(row)}
+                  disabled={loading || Boolean(group.assignmentBlockReason)}
+                  onClick={() => void assignPlmArrivalGroup(group)}
                 >
-                  指派进二调
+                  整组指派进二调
                 </button>
                 <input
-                  value={assignmentCloseReasons[row.plm_arrival_item_id] || ""}
+                  value={assignmentCloseReasons[group.groupKey] || ""}
                   placeholder="暂不推进原因"
-                  onChange={(event) => setAssignmentCloseReasons((current) => ({ ...current, [row.plm_arrival_item_id]: event.target.value }))}
+                  onChange={(event) => setAssignmentCloseReasons((current) => ({ ...current, [group.groupKey]: event.target.value }))}
                 />
-                <button className="btn small danger" type="button" disabled={loading} onClick={() => void closePlmArrival(row)}>关闭</button>
+                <button className="btn small danger" type="button" disabled={loading} onClick={() => void closePlmArrivalGroup(group)}>整组关闭</button>
               </div>
             </div>
           ))}

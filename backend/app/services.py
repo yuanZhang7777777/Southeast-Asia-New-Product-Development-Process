@@ -1717,6 +1717,68 @@ def assign_plm_arrival_to_secondary_research(
     return _plm_assignment_row(db, item, batch)
 
 
+def assign_plm_arrival_group_to_secondary_research(
+    db: Session,
+    plm_arrival_item_ids: list[str],
+    salesperson_name: str,
+    actor_name: str | None = None,
+    actor_user_id: str | None = None,
+) -> list[dict]:
+    items_with_batches = _plm_arrival_assignment_group_items(db, plm_arrival_item_ids, lock=True)
+    owner = _clean_text(salesperson_name)
+    if not owner:
+        raise ValueError("salesperson_name is required")
+    first_item = items_with_batches[0][0]
+    if not is_enabled_assignment_operator_for_site(db, owner, first_item.country):
+        raise ValueError("salesperson_name must be an enabled operator for this site")
+    blocked = [
+        item
+        for item, _batch in items_with_batches
+        if len(_current_opportunities_for_plm_item(db, item)) > 1
+    ]
+    if blocked:
+        raise ValueError("PLM arrival group has child SKU matching multiple current products; resolve product ownership first")
+
+    assigned_rows: list[dict] = []
+    for item, batch in items_with_batches:
+        opportunity, claim = open_plm_arrival_for_operator(
+            db,
+            batch,
+            item,
+            owner,
+            claim_source="plm_arrival_assignment",
+            note="PLM到货待分配由主管按主SKU组指派",
+        )
+        item.matched_claim_record_id = claim.id
+        item.match_status = "assigned"
+        item.raw_payload = {
+            **(item.raw_payload or {}),
+            "_plm_assignment": {
+                **((item.raw_payload or {}).get("_plm_assignment") or {}),
+                "status": "assigned",
+                "assigned_salesperson_name": owner,
+                "plm_salesperson_name": item.salesperson_name,
+                "opportunity_id": opportunity.id,
+                "claim_record_id": claim.id,
+                "assigned_at": datetime.now(timezone.utc).isoformat(),
+                "assigned_by": actor_name,
+                "assigned_by_group": True,
+            },
+        }
+        audit(
+            db,
+            "plm_arrival_assignment.assigned",
+            "plm_arrival_item",
+            item.id,
+            {"salesperson_name": owner, "opportunity_id": opportunity.id, "claim_record_id": claim.id},
+            actor_name,
+            actor_user_id,
+        )
+        assigned_rows.append(_plm_assignment_row(db, item, batch))
+    db.flush()
+    return assigned_rows
+
+
 def close_plm_arrival_assignment(
     db: Session,
     plm_arrival_item_id: str,
@@ -1752,6 +1814,45 @@ def close_plm_arrival_assignment(
     return _plm_assignment_row(db, item, batch)
 
 
+def close_plm_arrival_assignment_group(
+    db: Session,
+    plm_arrival_item_ids: list[str],
+    reason: str,
+    actor_name: str | None = None,
+    actor_user_id: str | None = None,
+) -> list[dict]:
+    items_with_batches = _plm_arrival_assignment_group_items(db, plm_arrival_item_ids, lock=True)
+    close_reason = _clean_text(reason)
+    if not close_reason:
+        raise ValueError("reason is required")
+    closed_rows: list[dict] = []
+    for item, batch in items_with_batches:
+        item.match_status = "assignment_closed"
+        item.raw_payload = {
+            **(item.raw_payload or {}),
+            "_plm_assignment": {
+                **((item.raw_payload or {}).get("_plm_assignment") or {}),
+                "status": "assignment_closed",
+                "close_reason": close_reason,
+                "closed_at": datetime.now(timezone.utc).isoformat(),
+                "closed_by": actor_name,
+                "closed_by_group": True,
+            },
+        }
+        audit(
+            db,
+            "plm_arrival_assignment.closed",
+            "plm_arrival_item",
+            item.id,
+            {"reason": close_reason},
+            actor_name,
+            actor_user_id,
+        )
+        closed_rows.append(_plm_assignment_row(db, item, batch))
+    db.flush()
+    return closed_rows
+
+
 def _plm_arrival_assignment_item(
     db: Session,
     plm_arrival_item_id: str,
@@ -1772,6 +1873,45 @@ def _plm_arrival_assignment_item(
     if item.arrival_type != "new_arrival" or item.match_status not in PLM_ARRIVAL_ASSIGNMENT_PENDING_STATUSES:
         raise ValueError("PLM arrival item is not pending assignment")
     return item, batch
+
+
+def _plm_arrival_assignment_group_items(
+    db: Session,
+    plm_arrival_item_ids: list[str],
+    *,
+    lock: bool = False,
+) -> list[tuple[models.PlmArrivalItem, models.PlmArrivalBatch]]:
+    ordered_ids = list(dict.fromkeys([_clean_text(item_id) for item_id in plm_arrival_item_ids if _clean_text(item_id)]))
+    if not ordered_ids:
+        raise ValueError("plm_arrival_item_ids is required")
+    query = (
+        select(models.PlmArrivalItem, models.PlmArrivalBatch)
+        .join(models.PlmArrivalBatch, models.PlmArrivalBatch.id == models.PlmArrivalItem.batch_id)
+        .where(models.PlmArrivalItem.id.in_(ordered_ids))
+    )
+    if lock:
+        query = query.with_for_update()
+    rows_by_id = {item.id: (item, batch) for item, batch in db.execute(query).all()}
+    if len(rows_by_id) != len(ordered_ids):
+        raise LookupError("PLM arrival item not found")
+    rows = [rows_by_id[item_id] for item_id in ordered_ids]
+    first_key = _plm_assignment_main_group_key(rows[0][0])
+    if first_key is None:
+        raise ValueError("PLM arrival item is missing country or main_sku")
+    for item, _batch in rows:
+        if item.arrival_type != "new_arrival" or item.match_status not in PLM_ARRIVAL_ASSIGNMENT_PENDING_STATUSES:
+            raise ValueError("PLM arrival item is not pending assignment")
+        if _plm_assignment_main_group_key(item) != first_key:
+            raise ValueError("PLM arrival items must belong to the same country and main SKU")
+    return rows
+
+
+def _plm_assignment_main_group_key(item: models.PlmArrivalItem) -> tuple[str, str] | None:
+    site = normalize_site_code(item.country)
+    main_sku = _sku_key(item.main_sku)
+    if not site or not main_sku:
+        return None
+    return site, main_sku
 
 
 def _enabled_operator_names(db: Session) -> set[str]:

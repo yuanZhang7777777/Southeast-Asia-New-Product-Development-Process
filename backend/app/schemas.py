@@ -766,7 +766,21 @@ class PlmArrivalAssignmentRequest(BaseModel):
     model_config = {"extra": "forbid"}
 
 
+class PlmArrivalAssignmentGroupRequest(BaseModel):
+    plm_arrival_item_ids: list[str] = Field(min_length=1)
+    salesperson_name: str
+
+    model_config = {"extra": "forbid"}
+
+
 class PlmArrivalAssignmentCloseRequest(BaseModel):
+    reason: str
+
+    model_config = {"extra": "forbid"}
+
+
+class PlmArrivalAssignmentGroupCloseRequest(BaseModel):
+    plm_arrival_item_ids: list[str] = Field(min_length=1)
     reason: str
 
     model_config = {"extra": "forbid"}

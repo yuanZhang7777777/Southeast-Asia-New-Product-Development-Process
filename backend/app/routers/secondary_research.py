@@ -93,6 +93,50 @@ def list_plm_arrival_assignments(
     return services.list_plm_arrival_assignments(db)
 
 
+@router.post("/plm-arrival-assignments/assign-group", response_model=list[schemas.PlmArrivalAssignmentRead])
+def assign_plm_arrival_assignment_group(
+    payload: schemas.PlmArrivalAssignmentGroupRequest,
+    db: Session = Depends(get_db),
+    auth: AuthContext | None = Depends(require_roles("manager")),
+) -> list[dict]:
+    try:
+        result = services.assign_plm_arrival_group_to_secondary_research(
+            db,
+            payload.plm_arrival_item_ids,
+            payload.salesperson_name,
+            actor_name=auth.user.name if auth else "local",
+            actor_user_id=auth.user.id if auth else None,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    db.commit()
+    return result
+
+
+@router.post("/plm-arrival-assignments/close-group", response_model=list[schemas.PlmArrivalAssignmentRead])
+def close_plm_arrival_assignment_group(
+    payload: schemas.PlmArrivalAssignmentGroupCloseRequest,
+    db: Session = Depends(get_db),
+    auth: AuthContext | None = Depends(require_roles("manager")),
+) -> list[dict]:
+    try:
+        result = services.close_plm_arrival_assignment_group(
+            db,
+            payload.plm_arrival_item_ids,
+            payload.reason,
+            actor_name=auth.user.name if auth else "local",
+            actor_user_id=auth.user.id if auth else None,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    db.commit()
+    return result
+
+
 @router.post("/plm-arrival-assignments/{plm_arrival_item_id}/assign", response_model=schemas.PlmArrivalAssignmentRead)
 def assign_plm_arrival_assignment(
     plm_arrival_item_id: str,
