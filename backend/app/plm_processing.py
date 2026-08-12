@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import and_, select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session
 
 from app import models, services
@@ -177,8 +177,11 @@ def _exact_claim_matches(
         .join(models.NewProductOpportunity, models.NewProductOpportunity.id == models.SalesClaimForecast.opportunity_id)
         .where(
             models.SalesClaimForecast.claim_result == CLAIM_RESULT_CLAIM,
-            models.SalesClaimForecast.source_column.in_(
-                ("platform", "history_selection1", "plm_arrival_discovery", "manual_secondary")
+            or_(
+                models.SalesClaimForecast.source_column.in_(
+                    ("platform", "history_selection1", "plm_arrival_discovery", "manual_secondary")
+                ),
+                models.SalesClaimForecast.claim_source == "history_selection34",
             ),
             models.SalesClaimForecast.secondary_research_submitted_at.is_(None),
         )
@@ -200,9 +203,7 @@ def _exact_claim_matches(
         claim_sites = claim_export_sites or {normalize_site_code(opportunity.site or opportunity.country) or ""}
         if site not in claim_sites:
             continue
-        if opportunity.current_status == "disabled" or services.is_read_only_historical_opportunity(opportunity):
-            continue
-        if opportunity.current_status == "historical_archive":
+        if not services.is_current_business_opportunity_for_plm(opportunity):
             continue
         seen.add(claim.id)
         matches.append((claim, opportunity))
@@ -380,9 +381,7 @@ def _system_opportunity_exists_for_item(db: Session, item: models.PlmArrivalItem
         _sku_key(row.main_sku) == main_sku
         and _sku_key(row.sub_sku) == sub_sku
         and (normalize_site_code(row.site or row.country) or "") == site
-        and row.current_status != "historical_archive"
-        and not services.is_read_only_historical_opportunity(row)
-        and services.is_visible_business_period(row.batch)
+        and services.is_current_business_opportunity_for_plm(row)
         for row in rows
     )
 

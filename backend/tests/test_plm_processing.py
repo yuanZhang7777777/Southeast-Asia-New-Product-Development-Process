@@ -598,7 +598,7 @@ def test_plm_processing_skips_secondary_research_when_active_item_exists(tmp_pat
         assert db.get(models.SalesClaimForecast, claim.id).downstream_status == "waiting_arrival"
 
 
-def test_plm_processing_ignores_read_only_archive_when_queueing_assignment(tmp_path: Path) -> None:
+def test_plm_processing_matches_selection34_business_period_claim(tmp_path: Path) -> None:
     workbook_path = tmp_path / "plm.xlsx"
     build_workbook(workbook_path)
     with SessionLocal() as db:
@@ -639,13 +639,17 @@ def test_plm_processing_ignores_read_only_archive_when_queueing_assignment(tmp_p
         )
 
         item = db.query(models.PlmArrivalItem).filter_by(source_row=2).one()
-        assert result["matched_count"] == 0
-        assert result["arrival_record_count"] == 0
-        assert item.match_status == "pending_assignment"
-        assert item.raw_payload["_plm_assignment"]["status"] == "pending_assignment"
+        assert result["matched_count"] == 1
+        assert result["arrival_record_count"] == 1
+        assert item.match_status == "matched"
+        assert item.matched_claim_record_id is not None
         assert db.query(models.NewProductOpportunity).filter_by(source_type="plm_arrival_discovery").count() == 0
         assert db.query(models.SalesClaimForecast).count() == 1
-        assert db.query(models.ArrivalRecord).count() == 0
+        assert db.query(models.ArrivalRecord).count() == 1
+        saved_claim = db.query(models.SalesClaimForecast).one()
+        saved_opportunity = db.get(models.NewProductOpportunity, archived.id)
+        assert saved_claim.downstream_status == "waiting_secondary_research"
+        assert saved_opportunity.current_status == "waiting_secondary_research"
 
 
 def test_activate_existing_system_sku_discoveries_reopens_items_blocked_by_archive() -> None:
@@ -690,7 +694,9 @@ def test_activate_existing_system_sku_discoveries_reopens_items_blocked_by_archi
         db.commit()
 
         dry_run = plm_processing.activate_existing_system_sku_discoveries(db, arrival_date="2026-08-10", apply=False)
-        assert dry_run["would_activate"] == 1
+        assert dry_run["would_activate"] == 0
+        assert dry_run["skipped"] == 1
+        assert dry_run["items"][0]["status"] == "still_existing_system_sku"
         assert db.query(models.NewProductOpportunity).filter_by(source_type="plm_arrival_discovery").count() == 0
 
         result = plm_processing.activate_existing_system_sku_discoveries(db, arrival_date="2026-08-10", apply=True)
@@ -698,8 +704,9 @@ def test_activate_existing_system_sku_discoveries_reopens_items_blocked_by_archi
         assert db.query(models.NewProductOpportunity).filter_by(source_type="plm_arrival_discovery").count() == 0
         saved_item = db.get(models.PlmArrivalItem, item.id)
         assert result["activated"] == 0
-        assert result["queued_for_assignment"] == 1
-        assert saved_item.match_status == "pending_assignment"
+        assert result["queued_for_assignment"] == 0
+        assert result["skipped"] == 1
+        assert saved_item.match_status == "existing_system_sku"
         assert saved_item.matched_claim_record_id is None
         assert db.query(models.SalesClaimForecast).count() == 0
         assert db.query(models.ArrivalRecord).count() == 0

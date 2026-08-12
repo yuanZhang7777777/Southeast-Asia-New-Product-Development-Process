@@ -371,6 +371,7 @@ def test_product_board_shows_selection2_and_selection34_historical_claim_relatio
         for item in group["responsibilities"]
     } == {
         ("历史期1", "历史运营1", 1.0),
+        ("历史期2", "历史运营2", 2.0),
     }
 
 
@@ -470,7 +471,7 @@ def test_product_board_business_periods_use_active_board_scope() -> None:
     assert "开发0721期" in periods
     assert "开发0414期" in periods
     assert "PLM新增到货" in periods
-    assert "小货老品-4月底" not in periods
+    assert "小货老品-4月底" in periods
     assert "历史归档" not in periods
     assert "8.4期" not in periods
 
@@ -478,9 +479,9 @@ def test_product_board_business_periods_use_active_board_scope() -> None:
     assert board_response.status_code == 200
     board_periods = {group["business_period"] for group in board_response.json()}
     assert "开发0721期" in board_periods
+    assert "小货老品-4月底" in board_periods
     assert "开发0414期" in board_periods
     assert "PLM新增到货" in board_periods
-    assert "小货老品-4月底" not in board_periods
 
 
 def prepare_approved_group(

@@ -13,6 +13,7 @@ import {
 
 const productBoardViewSource = readFileSync(new URL("../src/ProductBoardView.tsx", import.meta.url), "utf8");
 const appSource = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
+const apiSource = readFileSync(new URL("../src/api.ts", import.meta.url), "utf8");
 
 const baseGroup = {
   key: "2026-W29|PH|MAIN-1",
@@ -157,6 +158,13 @@ test("product board shows historical archive rows as claim results instead of in
 test("product board sends filters to backend instead of loading all rows once", () => {
   assert.match(productBoardViewSource, /const requestFilters = useMemo/);
   assert.match(productBoardViewSource, /api\s*\.productBoard\(\{\s*\.\.\.requestFilters,\s*limit:\s*PRODUCT_BOARD_SERVER_STEP\s*\}\)/);
+});
+
+test("product board maps UI filter keys to backend query parameters", () => {
+  assert.match(apiSource, /params\.businessPeriod/);
+  assert.match(apiSource, /params\.status/);
+  assert.match(apiSource, /business_period/);
+  assert.match(apiSource, /visible_status/);
 });
 
 test("product board does not expose dangerous server-side load-more", () => {

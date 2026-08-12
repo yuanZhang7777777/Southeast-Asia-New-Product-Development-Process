@@ -2234,7 +2234,7 @@ type OpportunityWithHistoricalClaims = Opportunity & {
   historical_claims?: HistoricalClaimFact[];
 };
 
-const readOnlyHistoricalSourceTypes = new Set(["history_selection2", "history_selection34"]);
+const readOnlyHistoricalSourceTypes = new Set(["history_selection2"]);
 
 function isReadOnlyHistoricalItem(item: Opportunity) {
   return readOnlyHistoricalSourceTypes.has(item.source_type || "");

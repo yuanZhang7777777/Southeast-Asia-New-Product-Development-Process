@@ -435,7 +435,7 @@ def test_operator_can_edit_owned_selection2_fields_but_not_locked_identity() -> 
     assert not_owned.status_code == 403
 
 
-def test_manager_and_operator_cannot_edit_read_only_historical_sources() -> None:
+def test_manager_and_operator_cannot_edit_read_only_selection2_historical_source() -> None:
     with SessionLocal() as db:
         db.add_all(
             [
@@ -443,19 +443,16 @@ def test_manager_and_operator_cannot_edit_read_only_historical_sources() -> None
                 models.RoleMapping(name="Manager A", role="manager", dingtalk_user_id="dt-m", enabled=True),
             ]
         )
-        opportunities = [
-            models.NewProductOpportunity(
-                source_type=source_type,
-                main_sku=f"MAIN-{source_type}",
-                sub_sku=f"SUB-{source_type}",
-                main_sku_name="原商品名",
-                current_status="historical_archive",
-            )
-            for source_type in ("history_selection2", "history_selection34")
-        ]
-        db.add_all(opportunities)
+        opportunity = models.NewProductOpportunity(
+            source_type="history_selection2",
+            main_sku="MAIN-history_selection2",
+            sub_sku="SUB-history_selection2",
+            main_sku_name="原商品名",
+            current_status="historical_archive",
+        )
+        db.add(opportunity)
         db.commit()
-        opportunity_ids = [item.id for item in opportunities]
+        opportunity_id = opportunity.id
 
     tokens = [
         client.post("/auth/dingtalk/login", json={"dingtalk_user_id": dingtalk_user_id}).json()["access_token"]
@@ -468,13 +465,12 @@ def test_manager_and_operator_cannot_edit_read_only_historical_sources() -> None
             json={"main_sku_name": "错误修改", "edit_reason": "测试历史只读"},
         )
         for token in tokens
-        for opportunity_id in opportunity_ids
     ]
 
-    assert [response.status_code for response in responses] == [403, 403, 403, 403]
+    assert [response.status_code for response in responses] == [403, 403]
     assert all("read-only" in response.json()["detail"] for response in responses)
     with SessionLocal() as db:
-        rows = db.query(models.NewProductOpportunity).filter(models.NewProductOpportunity.id.in_(opportunity_ids)).all()
+        rows = db.query(models.NewProductOpportunity).filter(models.NewProductOpportunity.id == opportunity_id).all()
         assert {row.main_sku_name for row in rows} == {"原商品名"}
         assert {row.current_status for row in rows} == {"historical_archive"}
         assert db.query(models.AuditLog).filter_by(action="opportunity.updated").count() == 0

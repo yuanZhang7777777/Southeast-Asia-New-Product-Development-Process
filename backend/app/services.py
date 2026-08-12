@@ -310,7 +310,8 @@ EDITABLE_OPPORTUNITY_STATUSES = {
     OPPORTUNITY_READY_FOR_STOCKING,
     OPPORTUNITY_CONFIRMED_NOT_CLAIM,
 }
-READ_ONLY_HISTORICAL_SOURCE_TYPES = frozenset({"history_selection2", "history_selection34"})
+READ_ONLY_HISTORICAL_SOURCE_TYPES = frozenset({"history_selection2"})
+ARCHIVE_STATUS_CURRENT_BUSINESS_SOURCE_TYPES = frozenset({"history_selection34"})
 HIDDEN_BUSINESS_PERIODS = frozenset(
     {
         "5.26期",
@@ -325,11 +326,26 @@ HIDDEN_BUSINESS_PERIODS = frozenset(
         "开发0727期-财根",
     }
 )
-PRODUCT_BOARD_HIDDEN_SOURCE_TYPES = frozenset({"history_selection34"})
+PRODUCT_BOARD_HIDDEN_SOURCE_TYPES = frozenset()
 
 
 def is_read_only_historical_opportunity(opportunity: models.NewProductOpportunity) -> bool:
     return opportunity.source_type in READ_ONLY_HISTORICAL_SOURCE_TYPES
+
+
+def is_current_business_opportunity_for_plm(opportunity: models.NewProductOpportunity) -> bool:
+    if opportunity.current_status == OPPORTUNITY_DISABLED:
+        return False
+    if opportunity.source_type == "plm_arrival_discovery":
+        return False
+    if not is_visible_business_period(opportunity.batch):
+        return False
+    if is_read_only_historical_opportunity(opportunity):
+        return False
+    return (
+        opportunity.current_status != "historical_archive"
+        or opportunity.source_type in ARCHIVE_STATUS_CURRENT_BUSINESS_SOURCE_TYPES
+    )
 
 
 def is_visible_business_period(period: str | None) -> bool:
@@ -2039,15 +2055,13 @@ def _current_opportunities_for_plm_item(db: Session, item: models.PlmArrivalItem
     rows = db.scalars(
         select(models.NewProductOpportunity).where(
             models.NewProductOpportunity.current_status != OPPORTUNITY_DISABLED,
-            models.NewProductOpportunity.current_status != "historical_archive",
             models.NewProductOpportunity.source_type != "plm_arrival_discovery",
-            _visible_business_period_filter(models.NewProductOpportunity.batch),
         )
     ).all()
     return [
         row
         for row in rows
-        if not is_read_only_historical_opportunity(row)
+        if is_current_business_opportunity_for_plm(row)
         and _sku_key(row.main_sku) == main_sku
         and _sku_key(row.sub_sku) == sub_sku
         and (normalize_site_code(row.site or row.country) or "") == site
@@ -2073,14 +2087,12 @@ def _current_opportunity_counts_for_plm_items(
     rows = db.scalars(
         select(models.NewProductOpportunity).where(
             models.NewProductOpportunity.current_status != OPPORTUNITY_DISABLED,
-            models.NewProductOpportunity.current_status != "historical_archive",
             models.NewProductOpportunity.source_type != "plm_arrival_discovery",
-            _visible_business_period_filter(models.NewProductOpportunity.batch),
         )
     ).all()
     counts: Counter[tuple[str, str, str]] = Counter()
     for row in rows:
-        if is_read_only_historical_opportunity(row):
+        if not is_current_business_opportunity_for_plm(row):
             continue
         key = (
             normalize_site_code(row.site or row.country) or "",

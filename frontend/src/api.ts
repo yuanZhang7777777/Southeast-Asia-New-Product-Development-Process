@@ -557,7 +557,9 @@ export type ProductBoardGroup = {
 export type ProductBoardFilter = {
   owner?: string;
   business_period?: string;
+  businessPeriod?: string;
   visible_status?: string;
+  status?: string;
   arrival_date_from?: string;
   arrival_date_to?: string;
   site?: string;
@@ -781,12 +783,16 @@ function secondaryResearchQuery(
 }
 
 function productBoardQuery(params: ProductBoardFilter = {}) {
-  const search = new URLSearchParams();
-  for (const [key, value] of Object.entries(params)) {
-    if (value !== undefined && value !== null && value !== "") search.set(key, String(value));
-  }
-  const value = search.toString();
-  return value ? `?${value}` : "";
+  return query({
+    owner: params.owner,
+    business_period: params.business_period || params.businessPeriod,
+    visible_status: params.visible_status || params.status,
+    arrival_date_from: params.arrival_date_from,
+    arrival_date_to: params.arrival_date_to,
+    site: params.site,
+    query: params.query,
+    limit: params.limit
+  });
 }
 
 function listingWorkbenchQuery(params: ListingWorkbenchFilter = {}) {

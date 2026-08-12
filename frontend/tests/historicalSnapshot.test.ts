@@ -301,7 +301,7 @@ test("商品详情把历史认领作为只读来源事实展示", () => {
   assert.match(claimTable, /claim\.source_note/);
   assert.match(claimTable, /来源表未提供主管复核/);
   assert.match(submissionHelper, /history_selection2/);
-  assert.match(submissionHelper, /history_selection34/);
+  assert.doesNotMatch(submissionHelper, /history_selection34/);
   assert.match(submissionHelper, /isReadOnlyHistoricalItem\(item\)/);
   assert.match(detailView, /!isReadOnlyHistoricalItem\(activeChild\)/);
   assert.match(detailView, /detailOwnerText\(group\)/);

@@ -105,8 +105,8 @@ def test_arrival_opens_secondary_research_for_the_matched_claim() -> None:
     assert saved_opportunity.current_status == "waiting_secondary_research"
 
 
-@pytest.mark.parametrize("source_type", ["history_selection2", "history_selection34"])
-def test_read_only_historical_claim_cannot_open_arrival_or_secondary_research(source_type: str) -> None:
+def test_read_only_historical_selection2_claim_cannot_open_arrival_or_secondary_research() -> None:
+    source_type = "history_selection2"
     opportunity = models.NewProductOpportunity(
         id=models.new_id(),
         source_type=source_type,

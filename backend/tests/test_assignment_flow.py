@@ -136,13 +136,12 @@ def test_confirm_assignment_skips_stale_non_pending_selection_ids() -> None:
         assert db.get(models.NewProductOpportunity, locked.id).current_status == "ready_for_stocking"
 
 
-@pytest.mark.parametrize("source_type", ["history_selection2", "history_selection34"])
-def test_confirm_assignment_rejects_read_only_historical_sources(source_type: str) -> None:
+def test_confirm_assignment_rejects_read_only_historical_selection2_source() -> None:
     with SessionLocal() as db:
         opportunity = models.NewProductOpportunity(
-            source_type=source_type,
-            main_sku=f"MAIN-{source_type}",
-            sub_sku=f"SUB-{source_type}",
+            source_type="history_selection2",
+            main_sku="MAIN-history_selection2",
+            sub_sku="SUB-history_selection2",
             current_status="pending_assignment",
         )
         db.add(opportunity)
@@ -158,6 +157,31 @@ def test_confirm_assignment_rejects_read_only_historical_sources(source_type: st
         assert db.get(models.NewProductOpportunity, opportunity_id).current_status == "pending_assignment"
         assert db.query(models.FlowInstance).count() == 0
         assert db.query(models.FlowTask).count() == 0
+
+
+def test_confirm_assignment_allows_selection34_business_source() -> None:
+    with SessionLocal() as db:
+        opportunity = models.NewProductOpportunity(
+            source_type="history_selection34",
+            batch="销售自选0608期",
+            country="PH",
+            site="PH",
+            main_sku="MAIN-history_selection34",
+            sub_sku="SUB-history_selection34",
+            current_status="pending_assignment",
+        )
+        db.add(opportunity)
+        db.commit()
+        opportunity_id = opportunity.id
+
+        tasks = services.confirm_assignment(
+            db,
+            schemas.AssignmentConfirmRequest(opportunity_ids=[opportunity_id], assignee_name="Operator A"),
+        )
+
+        assert db.get(models.NewProductOpportunity, opportunity_id).current_status == "assigned"
+        assert len(tasks) == 1
+        assert db.query(models.FlowInstance).count() == 1
 
 
 def test_reassign_rejects_completed_tasks() -> None:
