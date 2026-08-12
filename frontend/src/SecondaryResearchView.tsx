@@ -92,6 +92,7 @@ type PlmArrivalAssignmentGroup = {
   firstListingTime?: string | null;
   sourceSummary: string;
   existingOpportunityCount: number;
+  systemBusinessPeriods: string[];
   assignmentHint?: string | null;
   assignmentBlockReason?: string | null;
 };
@@ -171,6 +172,7 @@ export function SecondaryResearchView(props: {
         item.product_name,
         item.plm_salesperson_name,
         item.source_file,
+        ...(item.system_business_periods || []),
       ].some((value) => String(value || "").toLowerCase().includes(keyword));
     });
   }, [countryFilter, plmAssignments, query]);
@@ -192,6 +194,7 @@ export function SecondaryResearchView(props: {
         ? `${first.source_file || "-"} 行 ${sourceRows.join("、")}`
         : `${first.source_file || "-"} 行 -`;
       const blockReasons = sortedItems.map((item) => item.assignment_block_reason).filter(Boolean);
+      const systemBusinessPeriods = Array.from(new Set(sortedItems.flatMap((item) => item.system_business_periods || []).filter(Boolean))).sort();
       return {
         groupKey,
         itemIds: sortedItems.map((item) => item.plm_arrival_item_id),
@@ -203,6 +206,7 @@ export function SecondaryResearchView(props: {
         firstListingTime: first.first_listing_time,
         sourceSummary,
         existingOpportunityCount: sortedItems.reduce((sum, item) => sum + (item.existing_opportunity_count || 0), 0),
+        systemBusinessPeriods,
         assignmentHint: blockReasons[0] || first.assignment_hint,
         assignmentBlockReason: blockReasons[0] || null,
       };
@@ -656,6 +660,7 @@ export function SecondaryResearchView(props: {
                   <span>首次上架：{formatDateTime(group.firstListingTime)}</span>
                   <span>源：{group.sourceSummary}</span>
                   <span>当前商品命中：{group.existingOpportunityCount}</span>
+                  {group.systemBusinessPeriods.length ? <span>系统期数：{group.systemBusinessPeriods.join("、")}</span> : null}
                 </div>
                 <div className="research-meta-line">
                   {group.items.map((item) => (

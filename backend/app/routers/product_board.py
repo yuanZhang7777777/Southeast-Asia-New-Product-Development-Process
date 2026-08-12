@@ -18,6 +18,17 @@ def list_product_board_business_periods(
     return services.list_product_board_business_periods(db)
 
 
+@router.get("/filter-options", response_model=schemas.ProductBoardFilterOptionsRead)
+def list_product_board_filter_options(
+    db: Session = Depends(get_db),
+    auth: AuthContext | None = Depends(require_roles("operator", "manager")),
+) -> dict:
+    owner = None
+    if auth and "operator" in auth.role_keys and auth.role_keys.isdisjoint({"manager", "super_admin"}):
+        owner = auth.operator_name
+    return services.list_product_board_filter_options(db, owner=owner)
+
+
 @router.get("", response_model=list[schemas.ProductBoardGroupRead])
 def list_product_board(
     owner: str | None = None,

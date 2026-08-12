@@ -484,6 +484,56 @@ def test_product_board_business_periods_use_active_board_scope() -> None:
     assert "PLM新增到货" in board_periods
 
 
+def test_product_board_filter_options_are_not_shrunk_by_current_site_filter() -> None:
+    with SessionLocal() as db:
+        db.add_all(
+            [
+                models.NewProductOpportunity(
+                    source_type="selection1_developer_claim_feedback",
+                    source_file="selection1.xlsx",
+                    source_sheet="开发0414期",
+                    batch="开发0414期",
+                    country="泰国",
+                    site="TH",
+                    main_sku="BOARD-TH",
+                    sub_sku="BOARD-TH-A1",
+                    current_status="pending_assignment",
+                ),
+                models.NewProductOpportunity(
+                    source_type="selection1_developer_claim_feedback",
+                    source_file="selection1.xlsx",
+                    source_sheet="开发0414期",
+                    batch="开发0414期",
+                    country="菲律宾",
+                    site="PH",
+                    main_sku="BOARD-PH",
+                    sub_sku="BOARD-PH-A1",
+                    current_status="pending_assignment",
+                ),
+                models.NewProductOpportunity(
+                    source_type="selection1_developer_claim_feedback",
+                    source_file="old.xlsx",
+                    source_sheet="历史归档",
+                    batch="历史归档",
+                    country="马来西亚",
+                    site="MY",
+                    main_sku="BOARD-HIDDEN",
+                    sub_sku="BOARD-HIDDEN-A1",
+                    current_status="pending_assignment",
+                ),
+            ]
+        )
+        db.commit()
+
+    filtered_board = client.get("/product-board?site=泰国")
+    options = client.get("/product-board/filter-options?site=泰国")
+
+    assert filtered_board.status_code == 200
+    assert [group["main_sku"] for group in filtered_board.json()] == ["BOARD-TH"]
+    assert options.status_code == 200
+    assert options.json()["sites"] == ["菲律宾", "泰国"]
+
+
 def prepare_approved_group(
     period: str = "2026-W29",
     site: str = "PH",

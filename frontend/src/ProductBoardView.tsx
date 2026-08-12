@@ -1,7 +1,7 @@
 import { ChevronDown, ChevronRight, ClipboardPen, Search, X } from "lucide-react";
 import { Fragment, useEffect, useMemo, useState } from "react";
 
-import { api, ProductBoardGroup } from "./api";
+import { api, ProductBoardFilterOptions, ProductBoardGroup } from "./api";
 import { formatBusinessNumber } from "./businessFormat";
 import { productImageSrc, productThumbSrc } from "./imageSource";
 import {
@@ -38,7 +38,7 @@ export function ProductBoardView({
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [filters, setFilters] = useState<ProductBoardFilters>({});
   const [rowLimit, setRowLimit] = useState(PRODUCT_BOARD_RENDER_STEP);
-  const [businessPeriods, setBusinessPeriods] = useState<string[]>([]);
+  const [filterOptions, setFilterOptions] = useState<ProductBoardFilterOptions | null>(null);
   const requestFilters = useMemo(
     () => (role === "operator" ? { ...filters, owner: operatorName.trim() } : filters),
     [filters, operatorName, role]
@@ -72,23 +72,23 @@ export function ProductBoardView({
 
   useEffect(() => {
     let cancelled = false;
-    api.productBoardPeriods()
+    api.productBoardFilterOptions()
       .then((items) => {
-        if (!cancelled) setBusinessPeriods(items);
+        if (!cancelled) setFilterOptions(items);
       })
       .catch(() => {
-        if (!cancelled) setBusinessPeriods([]);
+        if (!cancelled) setFilterOptions(null);
       });
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [operatorName, role]);
 
   const rows = useMemo(() => buildProductBoardRows(groups), [groups]);
   const effectiveFilters = requestFilters;
   const visibleRows = useMemo(() => filterProductBoardRows(rows, effectiveFilters), [rows, effectiveFilters]);
   const renderedRows = useMemo(() => limitProductBoardRows(visibleRows, rowLimit), [visibleRows, rowLimit]);
-  const options = useMemo(() => buildOptions(rows, businessPeriods), [businessPeriods, rows]);
+  const options = useMemo(() => buildOptions(rows, filterOptions), [filterOptions, rows]);
 
   useEffect(() => {
     setRowLimit(PRODUCT_BOARD_RENDER_STEP);
@@ -284,11 +284,11 @@ function StatusPill({ status }: { status: string }) {
   return <span className={`pill ${meta.klass}`}>{meta.label}</span>;
 }
 
-function buildOptions(rows: ProductBoardRow[], businessPeriods: string[]) {
+function buildOptions(rows: ProductBoardRow[], filterOptions: ProductBoardFilterOptions | null) {
   return {
-    businessPeriods: unique(businessPeriods),
-    owners: unique(rows.flatMap((row) => row.owners)),
-    statuses: unique(rows.flatMap((row) => row.statuses)),
-    sites: unique(rows.map((row) => row.site || row.country).filter(Boolean) as string[])
+    businessPeriods: filterOptions?.business_periods?.length ? unique(filterOptions.business_periods) : unique(rows.map((row) => row.business_period).filter(Boolean) as string[]),
+    owners: filterOptions?.owners?.length ? unique(filterOptions.owners) : unique(rows.flatMap((row) => row.owners)),
+    statuses: filterOptions?.statuses?.length ? unique(filterOptions.statuses) : unique(rows.flatMap((row) => row.statuses)),
+    sites: filterOptions?.sites?.length ? unique(filterOptions.sites) : unique(rows.map((row) => row.site || row.country).filter(Boolean) as string[])
   };
 }

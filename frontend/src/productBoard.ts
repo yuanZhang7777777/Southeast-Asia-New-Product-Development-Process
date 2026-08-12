@@ -72,7 +72,7 @@ export function filterProductBoardRows(rows: ProductBoardRow[], filters: Product
     })
     .filter((row) => {
       if (filters.businessPeriod && row.business_period !== filters.businessPeriod) return false;
-      if (filters.site && (row.site || row.country || "") !== filters.site) return false;
+      if (filters.site && normalizeSiteCode(row.site || row.country) !== normalizeSiteCode(filters.site)) return false;
       if (filters.status && !row.statuses.includes(filters.status)) return false;
       if (filters.owner && !row.responsibilities.length) return false;
       if (!needle) return true;
@@ -121,4 +121,23 @@ export function unique(values: string[]) {
 
 function normalize(value: string) {
   return value.toLowerCase().replace(/\s+/g, "");
+}
+
+function normalizeSiteCode(value?: string | null) {
+  const text = String(value || "").trim().toUpperCase();
+  const aliases: Record<string, string> = {
+    "菲律宾": "PH",
+    "菲": "PH",
+    PH: "PH",
+    "泰国": "TH",
+    "泰": "TH",
+    TH: "TH",
+    "越南": "VN",
+    "越": "VN",
+    VN: "VN",
+    "马来西亚": "MY",
+    "马来": "MY",
+    MY: "MY",
+  };
+  return aliases[text] || aliases[String(value || "").trim()] || text;
 }

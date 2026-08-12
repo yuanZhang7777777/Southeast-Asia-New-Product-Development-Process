@@ -692,6 +692,13 @@ class ProductBoardGroupRead(BaseModel):
     summary_tags: list[str] = Field(default_factory=list)
 
 
+class ProductBoardFilterOptionsRead(BaseModel):
+    business_periods: list[str] = Field(default_factory=list)
+    owners: list[str] = Field(default_factory=list)
+    statuses: list[str] = Field(default_factory=list)
+    sites: list[str] = Field(default_factory=list)
+
+
 class SecondaryResearchDraftUpdate(BaseModel):
     secondary_research_at: datetime | None = None
     secondary_competitor_url: str | None = None
@@ -736,6 +743,14 @@ class ManualSecondaryResearchCreate(BaseModel):
     model_config = {"extra": "forbid"}
 
 
+class PlmArrivalSystemMatchRead(BaseModel):
+    opportunity_id: str
+    business_period: str | None = None
+    source_row: int | None = None
+    main_sku: str | None = None
+    sub_sku: str | None = None
+
+
 class PlmArrivalAssignmentRead(BaseModel):
     plm_arrival_item_id: str
     arrival_date: str
@@ -752,6 +767,8 @@ class PlmArrivalAssignmentRead(BaseModel):
     first_listing_time: datetime | None = None
     match_status: str
     existing_opportunity_count: int = 0
+    system_business_periods: list[str] = Field(default_factory=list)
+    system_matches: list[PlmArrivalSystemMatchRead] = Field(default_factory=list)
     assigned_salesperson_name: str | None = None
     claim_record_id: str | None = None
     opportunity_id: str | None = None

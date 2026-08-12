@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import math
 from copy import deepcopy
-from collections import Counter, defaultdict
+from collections import defaultdict
 from io import BytesIO
 from datetime import date, datetime, timedelta, timezone
 from types import SimpleNamespace
@@ -23,7 +23,7 @@ from app.dingtalk_card_sender import DingTalkCardSender, NewProductTodoCard, mas
 from app.excel_images import PUBLIC_UPLOAD_PREFIX, UPLOADED_SOURCES_ROOT
 from app.field_mapping import normalize_header, number_value
 from app.oss_storage import read_oss_object_by_public_url
-from app.site_codes import normalize_site_code
+from app.site_codes import normalize_site_code, site_display_label, site_match_values
 from app.workflow_status import (
     CLAIM_LISTING_OBSERVATION,
     CLAIM_RESULT_CLAIM,
@@ -365,6 +365,29 @@ def _product_board_source_filter():
     return or_(
         models.NewProductOpportunity.source_type.is_(None),
         models.NewProductOpportunity.source_type.notin_(PRODUCT_BOARD_HIDDEN_SOURCE_TYPES),
+    )
+
+
+def _product_board_base_filters() -> list:
+    return [
+        models.NewProductOpportunity.current_status.notin_([OPPORTUNITY_DISABLED, OPPORTUNITY_REPLACED_BY_NORMALIZED_SELECTION1]),
+        _visible_business_period_filter(models.NewProductOpportunity.batch),
+        _active_import_batch_filter(),
+        _product_board_source_filter(),
+    ]
+
+
+def _site_alias_filter(site_or_country: str | None):
+    values = site_match_values(site_or_country)
+    if not values:
+        return None
+    return or_(models.NewProductOpportunity.site.in_(values), models.NewProductOpportunity.country.in_(values))
+
+
+def _product_board_claim_join_condition():
+    return (models.SalesClaimForecast.opportunity_id == models.NewProductOpportunity.id) & or_(
+        models.SalesClaimForecast.source_column.in_(("platform", "history_selection1", "plm_arrival_discovery", "manual_secondary")),
+        models.SalesClaimForecast.claim_source.in_(("history_selection2", "history_selection34")),
     )
 
 OPPORTUNITY_FIELD_COLUMNS = {
@@ -1679,8 +1702,8 @@ def list_plm_arrival_assignments(db: Session) -> list[dict]:
         )
         .order_by(models.PlmArrivalBatch.arrival_date.desc(), models.PlmArrivalItem.source_row.asc())
     ).all()
-    match_counts = _current_opportunity_counts_for_plm_items(db, [item for item, _batch in rows])
-    return [_plm_assignment_row_from_match_count(item, batch, match_counts.get(item.id, 0)) for item, batch in rows]
+    match_summaries = _current_opportunity_summaries_for_plm_items(db, [item for item, _batch in rows])
+    return [_plm_assignment_row_from_matches(item, batch, match_summaries.get(item.id, [])) for item, batch in rows]
 
 
 def list_plm_arrival_assignment_operator_profiles(db: Session) -> list[models.OperatorAssignmentProfile]:
@@ -2081,6 +2104,13 @@ def _current_opportunity_counts_for_plm_items(
     db: Session,
     items: list[models.PlmArrivalItem],
 ) -> dict[str, int]:
+    return {item_id: len(matches) for item_id, matches in _current_opportunity_summaries_for_plm_items(db, items).items()}
+
+
+def _current_opportunity_summaries_for_plm_items(
+    db: Session,
+    items: list[models.PlmArrivalItem],
+) -> dict[str, list[dict]]:
     requested_keys = {key for item in items if (key := _plm_item_match_key(item))}
     if not requested_keys:
         return {}
@@ -2090,7 +2120,7 @@ def _current_opportunity_counts_for_plm_items(
             models.NewProductOpportunity.source_type != "plm_arrival_discovery",
         )
     ).all()
-    counts: Counter[tuple[str, str, str]] = Counter()
+    matches_by_key: dict[tuple[str, str, str], list[dict]] = defaultdict(list)
     for row in rows:
         if not is_current_business_opportunity_for_plm(row):
             continue
@@ -2100,9 +2130,20 @@ def _current_opportunity_counts_for_plm_items(
             _sku_key(row.sub_sku),
         )
         if key in requested_keys:
-            counts[key] += 1
+            matches_by_key[key].append(
+                {
+                    "opportunity_id": row.id,
+                    "business_period": row.batch,
+                    "source_row": row.source_row,
+                    "main_sku": row.main_sku,
+                    "sub_sku": row.sub_sku,
+                }
+            )
     return {
-        item.id: counts.get(key, 0)
+        item.id: sorted(
+            matches_by_key.get(key, []),
+            key=lambda row: (row.get("business_period") or "", row.get("source_row") or 0, row.get("opportunity_id") or ""),
+        )
         for item in items
         if (key := _plm_item_match_key(item))
     }
@@ -2213,14 +2254,26 @@ def _plm_assignment_row(
     batch: models.PlmArrivalBatch,
 ) -> dict:
     current_matches = _current_opportunities_for_plm_item(db, item)
-    return _plm_assignment_row_from_match_count(item, batch, len(current_matches))
+    matches = [
+        {
+            "opportunity_id": row.id,
+            "business_period": row.batch,
+            "source_row": row.source_row,
+            "main_sku": row.main_sku,
+            "sub_sku": row.sub_sku,
+        }
+        for row in current_matches
+    ]
+    return _plm_assignment_row_from_matches(item, batch, matches)
 
 
-def _plm_assignment_row_from_match_count(
+def _plm_assignment_row_from_matches(
     item: models.PlmArrivalItem,
     batch: models.PlmArrivalBatch,
-    current_match_count: int,
+    current_matches: list[dict],
 ) -> dict:
+    current_match_count = len(current_matches)
+    system_periods = list(dict.fromkeys([match.get("business_period") for match in current_matches if match.get("business_period")]))
     payload = (item.raw_payload or {}).get("_plm_assignment") or {}
     block_reason = (
         "当前系统存在多个同国家+主SKU+子SKU商品，需先处理商品归属"
@@ -2249,6 +2302,8 @@ def _plm_assignment_row_from_match_count(
         "first_listing_time": item.first_listing_time,
         "match_status": item.match_status,
         "existing_opportunity_count": current_match_count,
+        "system_business_periods": system_periods,
+        "system_matches": current_matches,
         "assigned_salesperson_name": payload.get("assigned_salesperson_name"),
         "claim_record_id": item.matched_claim_record_id,
         "opportunity_id": payload.get("opportunity_id"),
@@ -3865,20 +3920,14 @@ def list_product_board_groups(
     query: str | None = None,
     limit: int | None = None,
 ) -> list[dict]:
-    filters = [
-        models.NewProductOpportunity.current_status.notin_([OPPORTUNITY_DISABLED, OPPORTUNITY_REPLACED_BY_NORMALIZED_SELECTION1]),
-        _visible_business_period_filter(models.NewProductOpportunity.batch),
-        _active_import_batch_filter(),
-        _product_board_source_filter(),
-    ]
-    claim_join_condition = (models.SalesClaimForecast.opportunity_id == models.NewProductOpportunity.id) & or_(
-        models.SalesClaimForecast.source_column.in_(("platform", "history_selection1", "plm_arrival_discovery", "manual_secondary")),
-        models.SalesClaimForecast.claim_source.in_(("history_selection2", "history_selection34")),
-    )
+    filters = _product_board_base_filters()
+    claim_join_condition = _product_board_claim_join_condition()
     if business_period:
         filters.append(models.NewProductOpportunity.batch == business_period)
     if site:
-        filters.append(or_(models.NewProductOpportunity.site == site, models.NewProductOpportunity.country == site))
+        site_filter = _site_alias_filter(site)
+        if site_filter is not None:
+            filters.append(site_filter)
     text = (query or "").strip()
     if text:
         like = f"%{text}%"
@@ -4088,6 +4137,70 @@ def list_product_board_business_periods(db: Session) -> list[str]:
         .order_by(func.max(models.NewProductOpportunity.created_at).desc())
     ).all()
     return [batch for batch, _ in rows if batch]
+
+
+def list_product_board_filter_options(db: Session, owner: str | None = None) -> dict:
+    filters = _product_board_base_filters()
+    claim_join_condition = _product_board_claim_join_condition()
+    if owner:
+        owner_task_opportunities = (
+            select(models.FlowInstance.opportunity_id)
+            .join(models.FlowTask, models.FlowTask.flow_instance_id == models.FlowInstance.id)
+            .where(
+                models.FlowTask.status == TASK_PENDING,
+                models.FlowTask.task_type == "sales_claim",
+                models.FlowTask.assignee_name == owner,
+            )
+        )
+        filters.append(or_(models.SalesClaimForecast.salesperson_name == owner, models.NewProductOpportunity.id.in_(owner_task_opportunities)))
+
+    rows = db.execute(
+        select(
+            models.NewProductOpportunity.batch,
+            models.NewProductOpportunity.site,
+            models.NewProductOpportunity.country,
+            models.NewProductOpportunity.current_status,
+            models.SalesClaimForecast.salesperson_name,
+            models.SalesClaimForecast.downstream_status,
+        )
+        .outerjoin(models.SalesClaimForecast, claim_join_condition)
+        .outerjoin(models.ImportBatch, models.ImportBatch.id == models.NewProductOpportunity.import_batch_id)
+        .where(*filters)
+    ).all()
+    owners: set[str] = set()
+    statuses: set[str] = set()
+    sites: set[str] = set()
+    for batch, site, country, current_status, salesperson_name, downstream_status in rows:
+        if salesperson_name:
+            owners.add(salesperson_name)
+        if downstream_status:
+            statuses.add(downstream_status)
+        elif current_status:
+            statuses.add(current_status)
+        label = site_display_label(site or country)
+        if label:
+            sites.add(label)
+    task_filters = _product_board_base_filters()
+    if owner:
+        task_filters.append(models.FlowTask.assignee_name == owner)
+    task_rows = db.execute(
+        select(models.FlowTask.assignee_name, models.NewProductOpportunity.current_status)
+        .join(models.FlowInstance, models.FlowInstance.id == models.FlowTask.flow_instance_id)
+        .join(models.NewProductOpportunity, models.NewProductOpportunity.id == models.FlowInstance.opportunity_id)
+        .outerjoin(models.ImportBatch, models.ImportBatch.id == models.NewProductOpportunity.import_batch_id)
+        .where(*([models.FlowTask.status == TASK_PENDING, models.FlowTask.task_type == "sales_claim"] + task_filters))
+    ).all()
+    for assignee_name, current_status in task_rows:
+        if assignee_name:
+            owners.add(assignee_name)
+        if current_status:
+            statuses.add(current_status)
+    return {
+        "business_periods": list_product_board_business_periods(db),
+        "owners": sorted(owners),
+        "statuses": sorted(statuses),
+        "sites": sorted(sites, key=lambda value: (["菲律宾", "泰国", "越南", "马来西亚"].index(value) if value in ["菲律宾", "泰国", "越南", "马来西亚"] else 99, value)),
+    }
 
 
 def responsibility_visible_status(

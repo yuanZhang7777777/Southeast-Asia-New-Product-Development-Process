@@ -515,6 +515,14 @@ export type PlmArrivalAssignment = {
   first_listing_time?: string | null;
   match_status: string;
   existing_opportunity_count: number;
+  system_business_periods?: string[];
+  system_matches?: {
+    opportunity_id: string;
+    business_period?: string | null;
+    source_row?: number | null;
+    main_sku?: string | null;
+    sub_sku?: string | null;
+  }[];
   assigned_salesperson_name?: string | null;
   claim_record_id?: string | null;
   opportunity_id?: string | null;
@@ -552,6 +560,13 @@ export type ProductBoardGroup = {
   child_skus: ProductBoardChildSku[];
   responsibilities: ProductBoardResponsibility[];
   summary_tags: string[];
+};
+
+export type ProductBoardFilterOptions = {
+  business_periods: string[];
+  owners: string[];
+  statuses: string[];
+  sites: string[];
 };
 
 export type ProductBoardFilter = {
@@ -925,6 +940,7 @@ export const api = {
       body: JSON.stringify({ reason })
     }),
   productBoard: (filter?: ProductBoardFilter) => request<ProductBoardGroup[]>(`/product-board${productBoardQuery(filter)}`),
+  productBoardFilterOptions: () => request<ProductBoardFilterOptions>("/product-board/filter-options"),
   productBoardPeriods: () => request<string[]>("/product-board/business-periods"),
   dashboardCounts: (salespersonName = "") =>
     request<DashboardCounts>(`/dashboard/counts${query({ salesperson_name: salespersonName })}`),

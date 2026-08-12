@@ -807,6 +807,57 @@ def test_plm_arrival_assignment_list_batches_current_product_lookup() -> None:
     assert opportunity_selects <= 1
 
 
+def test_plm_arrival_assignment_lists_matching_system_periods() -> None:
+    with SessionLocal() as db:
+        batch = models.PlmArrivalBatch(
+            arrival_date="2026-08-11",
+            source_file="plm-2026-08-11.xlsx",
+            source_hash="hash-plm-system-period",
+            bloc_name="集团八部",
+            row_count=1,
+        )
+        db.add(batch)
+        db.flush()
+        db.add(
+            models.PlmArrivalItem(
+                batch_id=batch.id,
+                source_sheet="汇总表格",
+                source_row=33417,
+                arrival_type="new_arrival",
+                product_name="系统里已有的到货新品",
+                salesperson_name="PLM原销售",
+                country="泰国",
+                main_sku="ZRTOY2962",
+                sub_sku="ZRTOY2962-A5",
+                match_status="pending_assignment",
+                raw_payload={},
+            )
+        )
+        db.add(
+            models.NewProductOpportunity(
+                source_type="history_selection34",
+                source_file="history-selection34.xlsx",
+                source_sheet="直发热销转0630期",
+                source_row=113,
+                batch="直发热销转0630期",
+                country="泰国",
+                site="TH",
+                main_sku="ZRTOY2962",
+                sub_sku="ZRTOY2962-A5",
+                current_status="historical_archive",
+            )
+        )
+        db.commit()
+
+        rows = services.list_plm_arrival_assignments(db)
+
+    assert len(rows) == 1
+    assert rows[0]["existing_opportunity_count"] == 1
+    assert rows[0]["system_business_periods"] == ["直发热销转0630期"]
+    assert rows[0]["system_matches"][0]["business_period"] == "直发热销转0630期"
+    assert rows[0]["system_matches"][0]["source_row"] == 113
+
+
 def test_plm_arrival_assignment_rejects_manager_even_if_operator_role_exists() -> None:
     with SessionLocal() as db:
         user = models.User(name="管理员兼运营", enabled=True)
