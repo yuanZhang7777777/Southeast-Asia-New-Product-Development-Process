@@ -603,6 +603,7 @@ export type PendingListingTask = {
   site?: string | null;
   main_sku: string;
   main_sku_name?: string | null;
+  image_url?: string | null;
   salesperson_name: string;
   claim_record_ids: string[];
   default_first_period_start: string;

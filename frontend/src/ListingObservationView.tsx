@@ -892,7 +892,9 @@ export function ListingObservationView(props: {
             productLinkIndex.get(`${group.context.main_sku}|${normalizeSiteText(group.context.country)}`) || [],
             group.context.business_period
           );
-          const imageUrl = productLink?.image_url || group.listings.find((listing) => listing.image_url)?.image_url;
+          const imageUrl = group.context.image_url
+            || productLink?.image_url
+            || group.listings.find((listing) => listing.image_url)?.image_url;
           const itemSummaries = group.listings.map((listing) => {
             const rows = sortStartedObservationPeriods(group.periodRows.filter((row) => row.listing_record_id === listing.id));
             const itemStatusRows = sortStartedObservationPeriods(periodRowsByListing.get(listing.id) || []);
@@ -923,10 +925,14 @@ export function ListingObservationView(props: {
                   <button
                     type="button"
                     className="listing-product-link"
-                    disabled={!group.listings.length}
+                    disabled={!group.listings.length && !productLink?.opportunity_id}
                     onClick={() => {
                       const listing = group.listings[0];
-                      if (listing) props.onOpenProduct(listing.id, group.context.main_sku, productLink?.opportunity_id);
+                      if (listing) {
+                        props.onOpenProduct(listing.id, group.context.main_sku, productLink?.opportunity_id);
+                      } else if (productLink?.opportunity_id) {
+                        props.onOpenProduct("", group.context.main_sku, productLink.opportunity_id);
+                      }
                     }}
                     title={productLink ? "打开商品详情" : "创建待补商品详情"}
                   >

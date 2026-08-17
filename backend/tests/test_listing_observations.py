@@ -226,6 +226,25 @@ def test_listing_workbench_returns_bound_product_image() -> None:
     assert period_row["image_url"] == "/uploaded-sources/product-images/main-a.png"
 
 
+def test_pending_listing_task_returns_product_image() -> None:
+    headers = login("销售A", "operator", "dt-a")
+    create_waiting_listing_group("销售A", "MAIN-PENDING")
+    with SessionLocal() as db:
+        opportunities = db.scalars(
+            select(models.NewProductOpportunity)
+            .where(models.NewProductOpportunity.main_sku == "MAIN-PENDING")
+            .order_by(models.NewProductOpportunity.sub_sku)
+        ).all()
+        opportunities[1].image_url = "/uploaded-sources/product-images/main-pending.png"
+        db.commit()
+
+    response = client.get("/listing-workbench", headers=headers)
+
+    assert response.status_code == 200
+    task = next(row for row in response.json()["pending_listing_tasks"] if row["main_sku"] == "MAIN-PENDING")
+    assert task["image_url"] == "/uploaded-sources/product-images/main-pending.png"
+
+
 def test_listing_workbench_falls_back_to_product_image_by_main_sku_and_country() -> None:
     headers = login("销售A", "operator", "dt-a")
     with SessionLocal() as db:

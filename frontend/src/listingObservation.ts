@@ -162,6 +162,7 @@ export function buildListingTaskContexts<
     site?: string | null;
     main_sku: string;
     main_sku_name?: string | null;
+    image_url?: string | null;
     salesperson_name: string;
     claim_record_ids: string[];
     default_first_period_start: string;
@@ -172,6 +173,7 @@ export function buildListingTaskContexts<
     site?: string | null;
     main_sku: string;
     main_sku_name?: string | null;
+    image_url?: string | null;
     salesperson_name: string;
   }
 >(tasks: readonly TTask[], listings: readonly TListing[], defaultFirstPeriodStart: string) {
@@ -183,6 +185,7 @@ export function buildListingTaskContexts<
     site?: string | null;
     main_sku: string;
     main_sku_name?: string | null;
+    image_url?: string | null;
     salesperson_name: string;
     claim_record_ids: never[];
     default_first_period_start: string;
@@ -198,6 +201,7 @@ export function buildListingTaskContexts<
       site: listing.site,
       main_sku: listing.main_sku,
       main_sku_name: listing.main_sku_name,
+      image_url: listing.image_url,
       salesperson_name: listing.salesperson_name,
       claim_record_ids: [],
       default_first_period_start: defaultFirstPeriodStart

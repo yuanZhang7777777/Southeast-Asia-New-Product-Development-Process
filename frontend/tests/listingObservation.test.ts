@@ -115,6 +115,20 @@ function pendingTask(patch: Partial<PendingListingTask> = {}): PendingListingTas
   };
 }
 
+test("待刊登任务保留商品图片供刊登任务列表展示", () => {
+  const contexts = buildListingTaskContexts([
+    pendingTask({ image_url: "/uploaded-sources/product-images/pending.png" })
+  ], [], "2026-07-23");
+
+  assert.equal(contexts.find((context) => context.task_key === "task-1")?.image_url, "/uploaded-sources/product-images/pending.png");
+});
+
+test("待刊登任务无 Item 但匹配商品时仍可点击主 SKU 进入详情", () => {
+  assert.match(listingObservationViewSource, /disabled=\{!group\.listings\.length && !productLink\?\.opportunity_id\}/);
+  assert.match(listingObservationViewSource, /props\.onOpenProduct\("", group\.context\.main_sku, productLink\.opportunity_id\)/);
+  assert.match(appSource, /if \(opportunityId\) \{[\s\S]*await openOpportunityDetailById\(opportunityId\);[\s\S]*return;[\s\S]*\}/);
+});
+
 function listingRecord(patch: Partial<ListingRecord> = {}): ListingRecord {
   return {
     id: "listing-1",
@@ -548,6 +562,7 @@ test("已有刊登记录可重建同一主 SKU 的新增上下文", () => {
     site: "PH",
     main_sku: "MAIN-A",
     main_sku_name: "商品 A",
+    image_url: undefined,
     salesperson_name: "运营甲",
     claim_record_ids: [],
     default_first_period_start: "2026-07-23"

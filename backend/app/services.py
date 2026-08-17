@@ -2726,11 +2726,16 @@ def list_pending_listing_tasks(
                 "site": opportunity.site,
                 "main_sku": opportunity.main_sku,
                 "main_sku_name": opportunity.main_sku_name,
+                "image_url": opportunity.image_url,
                 "salesperson_name": claim.salesperson_name or "",
                 "claim_record_ids": [],
                 "default_first_period_start": default_start,
             },
         )
+        if not group.get("image_url") and opportunity.image_url:
+            group["image_url"] = opportunity.image_url
+        if not group.get("main_sku_name") and opportunity.main_sku_name:
+            group["main_sku_name"] = opportunity.main_sku_name
         waiting_group_keys.add(key)
         group["claim_record_ids"].append(claim.id)
     listing_statement = select(models.ListingRecord)
@@ -2757,6 +2762,7 @@ def list_pending_listing_tasks(
                 "site": listing.site,
                 "main_sku": listing.main_sku,
                 "main_sku_name": listing.main_sku_name,
+                "image_url": None,
                 "salesperson_name": listing.salesperson_name,
                 "claim_record_ids": list(listing.source_claim_ids or []),
                 "default_first_period_start": default_start,

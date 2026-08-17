@@ -575,6 +575,10 @@ function App() {
         openOpportunityDetail(current);
         return;
       }
+      if (opportunityId) {
+        await openOpportunityDetailById(opportunityId);
+        return;
+      }
       const item = await api.listingProductDetail(listingId, mainSku);
       detailSnapshotCache.current.set(item.id, opportunityDetailCacheEntry(item as OpportunityWithHistoricalClaims));
       const next = [item, ...opportunities.filter((entry) => entry.id !== item.id)];

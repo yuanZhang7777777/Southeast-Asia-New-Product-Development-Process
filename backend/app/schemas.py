@@ -811,6 +811,7 @@ class PendingListingTaskRead(BaseModel):
     site: str | None = None
     main_sku: str
     main_sku_name: str | None = None
+    image_url: str | None = None
     salesperson_name: str
     claim_record_ids: list[str]
     default_first_period_start: date
