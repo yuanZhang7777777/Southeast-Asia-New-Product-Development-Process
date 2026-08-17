@@ -3,11 +3,13 @@
 
 export type OpportunityDetailRow = {
   id: string;
+  image_url?: string | null;
   snapshot?: Record<string, unknown>;
   historical_claims?: unknown[];
 };
 
 export type OpportunityDetailCacheEntry = {
+  image_url?: string | null;
   snapshot?: Record<string, unknown>;
   historical_claims?: unknown[];
 };
@@ -16,6 +18,7 @@ type OpportunityDetailCacheValue = OpportunityDetailCacheEntry | Record<string, 
 
 export function opportunityDetailCacheEntry(detail: OpportunityDetailRow): OpportunityDetailCacheEntry {
   return {
+    image_url: detail.image_url,
     snapshot: detail.snapshot || {},
     historical_claims: detail.historical_claims
   };
@@ -45,6 +48,7 @@ export function attachCachedSnapshots<T extends OpportunityDetailRow>(
     const cached = normalizeCacheEntry(cache.get(item.id));
     if (!cached) return item;
     const patch: Partial<OpportunityDetailRow> = {};
+    if (!item.image_url && cached.image_url) patch.image_url = cached.image_url;
     if (item.snapshot === undefined && cached.snapshot !== undefined) patch.snapshot = cached.snapshot;
     if (cached.historical_claims !== undefined) patch.historical_claims = cached.historical_claims;
     return Object.keys(patch).length ? { ...item, ...patch } : item;

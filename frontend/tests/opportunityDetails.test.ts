@@ -46,6 +46,23 @@ test("刷新后的轻量列表能贴回已缓存历史认领且不覆盖列表�
   assert.deepEqual(merged[0].historical_claims, cached.historical_claims);
 });
 
+test("刷新后的轻量列表不能覆盖详情入口兜底图片", () => {
+  const items = [
+    { id: "a", image_url: null },
+    { id: "b", image_url: "https://img.example.com/list.png" }
+  ];
+  const merged = attachCachedSnapshots(items, new Map([[
+    "a",
+    {
+      snapshot: { cells: {} },
+      image_url: "https://img.example.com/detail-fallback.png"
+    }
+  ]]));
+
+  assert.equal(merged[0].image_url, "https://img.example.com/detail-fallback.png");
+  assert.equal(merged[1].image_url, "https://img.example.com/list.png");
+});
+
 test("hasFullDetail 以 snapshot 是否取回为准（空对象也算已取回）", () => {
   assert.equal(hasFullDetail({ id: "a" }), false);
   assert.equal(hasFullDetail(null), false);
