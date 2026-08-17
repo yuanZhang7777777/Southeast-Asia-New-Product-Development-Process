@@ -125,8 +125,14 @@ test("待刊登任务保留商品图片供刊登任务列表展示", () => {
 
 test("待刊登任务无 Item 但匹配商品时仍可点击主 SKU 进入详情", () => {
   assert.match(listingObservationViewSource, /disabled=\{!group\.listings\.length && !productLink\?\.opportunity_id\}/);
-  assert.match(listingObservationViewSource, /props\.onOpenProduct\("", group\.context\.main_sku, productLink\.opportunity_id\)/);
-  assert.match(appSource, /if \(opportunityId\) \{[\s\S]*await openOpportunityDetailById\(opportunityId\);[\s\S]*return;[\s\S]*\}/);
+  assert.match(listingObservationViewSource, /props\.onOpenProduct\("", group\.context\.main_sku, productLink\.opportunity_id, imageUrl\)/);
+  assert.match(appSource, /if \(opportunityId\) \{[\s\S]*await openOpportunityDetailById\(opportunityId, fallbackImageUrl\);[\s\S]*return;[\s\S]*\}/);
+});
+
+test("从待刊登进入商品详情时使用刊登任务图片作为无图子 SKU 兜底", () => {
+  assert.match(listingObservationViewSource, /props\.onOpenProduct\([^)]*imageUrl[^)]*\)/);
+  assert.match(appSource, /function opportunityWithFallbackImage\(item: Opportunity, fallbackImageUrl\?: string \| null\)/);
+  assert.match(appSource, /fallbackImageUrl && !item\.image_url \? \{ \.\.\.item, image_url: fallbackImageUrl \} : item/);
 });
 
 function listingRecord(patch: Partial<ListingRecord> = {}): ListingRecord {

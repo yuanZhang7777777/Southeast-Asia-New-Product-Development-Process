@@ -549,15 +549,24 @@ function App() {
     if (group) openProductDetail(group, item.id);
   }
 
-  async function openOpportunityDetailById(opportunityId: string) {
+  function opportunityWithFallbackImage(item: Opportunity, fallbackImageUrl?: string | null): Opportunity {
+    return fallbackImageUrl && !item.image_url ? { ...item, image_url: fallbackImageUrl } : item;
+  }
+
+  async function openOpportunityDetailById(opportunityId: string, fallbackImageUrl?: string | null) {
     if (!opportunityId) return;
     try {
       const current = opportunities.find((item) => item.id === opportunityId);
       if (current) {
-        openOpportunityDetail(current);
+        const displayItem = opportunityWithFallbackImage(current, fallbackImageUrl);
+        if (displayItem !== current) {
+          detailSnapshotCache.current.set(displayItem.id, opportunityDetailCacheEntry(displayItem as OpportunityWithHistoricalClaims));
+          setOpportunities((items) => items.map((item) => item.id === displayItem.id ? displayItem : item));
+        }
+        openOpportunityDetail(displayItem);
         return;
       }
-      const item = await api.opportunity(opportunityId);
+      const item = opportunityWithFallbackImage(await api.opportunity(opportunityId), fallbackImageUrl);
       detailSnapshotCache.current.set(item.id, opportunityDetailCacheEntry(item as OpportunityWithHistoricalClaims));
       const next = [item, ...opportunities.filter((entry) => entry.id !== item.id)];
       setOpportunities(next);
@@ -568,18 +577,23 @@ function App() {
     }
   }
 
-  async function openListingProductDetail(listingId: string, mainSku: string, opportunityId?: string) {
+  async function openListingProductDetail(listingId: string, mainSku: string, opportunityId?: string, fallbackImageUrl?: string | null) {
     try {
       const current = opportunityId ? opportunities.find((item) => item.id === opportunityId) : undefined;
       if (current) {
-        openOpportunityDetail(current);
+        const displayItem = opportunityWithFallbackImage(current, fallbackImageUrl);
+        if (displayItem !== current) {
+          detailSnapshotCache.current.set(displayItem.id, opportunityDetailCacheEntry(displayItem as OpportunityWithHistoricalClaims));
+          setOpportunities((items) => items.map((item) => item.id === displayItem.id ? displayItem : item));
+        }
+        openOpportunityDetail(displayItem);
         return;
       }
       if (opportunityId) {
-        await openOpportunityDetailById(opportunityId);
+        await openOpportunityDetailById(opportunityId, fallbackImageUrl);
         return;
       }
-      const item = await api.listingProductDetail(listingId, mainSku);
+      const item = opportunityWithFallbackImage(await api.listingProductDetail(listingId, mainSku), fallbackImageUrl);
       detailSnapshotCache.current.set(item.id, opportunityDetailCacheEntry(item as OpportunityWithHistoricalClaims));
       const next = [item, ...opportunities.filter((entry) => entry.id !== item.id)];
       setOpportunities(next);
@@ -1538,8 +1552,8 @@ function App() {
                 canManage={canManage}
                 preset={listingPreset}
                 productLinks={listingProductLinks}
-                onOpenProduct={(listingId, mainSku, opportunityId) => {
-                  void openListingProductDetail(listingId, mainSku, opportunityId);
+                onOpenProduct={(listingId, mainSku, opportunityId, fallbackImageUrl) => {
+                  void openListingProductDetail(listingId, mainSku, opportunityId, fallbackImageUrl);
                 }}
                 onStatus={setStatusMessage}
               />

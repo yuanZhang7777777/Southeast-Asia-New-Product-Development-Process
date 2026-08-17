@@ -104,7 +104,7 @@ export function ListingObservationView(props: {
     nonce: number;
   } | null;
   productLinks: ListingProductLink[];
-  onOpenProduct: (listingId: string, mainSku: string, opportunityId?: string) => void;
+  onOpenProduct: (listingId: string, mainSku: string, opportunityId?: string, fallbackImageUrl?: string | null) => void;
   onStatus: (message: string) => void;
 }) {
   const [data, setData] = useState<ListingWorkbenchResponse>(EMPTY_DATA);
@@ -929,9 +929,9 @@ export function ListingObservationView(props: {
                     onClick={() => {
                       const listing = group.listings[0];
                       if (listing) {
-                        props.onOpenProduct(listing.id, group.context.main_sku, productLink?.opportunity_id);
+                        props.onOpenProduct(listing.id, group.context.main_sku, productLink?.opportunity_id, imageUrl);
                       } else if (productLink?.opportunity_id) {
-                        props.onOpenProduct("", group.context.main_sku, productLink.opportunity_id);
+                        props.onOpenProduct("", group.context.main_sku, productLink.opportunity_id, imageUrl);
                       }
                     }}
                     title={productLink ? "打开商品详情" : "创建待补商品详情"}
