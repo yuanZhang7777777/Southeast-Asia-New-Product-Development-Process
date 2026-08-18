@@ -53,18 +53,18 @@ def test_finebi_pull_due_runs_once_after_0800_for_latest_completed_week() -> Non
     assert not finebi_pull_due(due, "0730-0805")
 
 
-def test_daily_notification_due_runs_once_after_0900_beijing() -> None:
-    before = datetime(2026, 7, 13, 8, 59, tzinfo=ZoneInfo("Asia/Shanghai"))
-    due = datetime(2026, 7, 13, 9, 0, tzinfo=ZoneInfo("Asia/Shanghai"))
+def test_daily_notification_due_runs_once_after_1000_beijing() -> None:
+    before = datetime(2026, 7, 13, 9, 59, tzinfo=ZoneInfo("Asia/Shanghai"))
+    due = datetime(2026, 7, 13, 10, 0, tzinfo=ZoneInfo("Asia/Shanghai"))
 
     assert not daily_notification_due(before, None)
     assert daily_notification_due(due, None)
     assert not daily_notification_due(due, "2026-07-13")
 
 
-def test_listing_reminder_due_runs_once_after_0900_beijing() -> None:
-    before = datetime(2026, 7, 13, 8, 59, tzinfo=ZoneInfo("Asia/Shanghai"))
-    due = datetime(2026, 7, 13, 9, 0, tzinfo=ZoneInfo("Asia/Shanghai"))
+def test_listing_reminder_due_runs_once_after_1000_beijing() -> None:
+    before = datetime(2026, 7, 13, 9, 59, tzinfo=ZoneInfo("Asia/Shanghai"))
+    due = datetime(2026, 7, 13, 10, 0, tzinfo=ZoneInfo("Asia/Shanghai"))
 
     assert not listing_reminder_due(before, None)
     assert listing_reminder_due(due, None)
@@ -81,7 +81,7 @@ def test_listing_reminder_job_marker_prevents_same_day_rerun() -> None:
     restored = scheduler.load_last_completed_date(scheduler.JOB_LISTING_REMINDER)
     assert restored == "2026-07-13"
     assert not listing_reminder_due(datetime(2026, 7, 13, 11, 0, tzinfo=ZoneInfo("Asia/Shanghai")), restored)
-    assert listing_reminder_due(datetime(2026, 7, 14, 9, 0, tzinfo=ZoneInfo("Asia/Shanghai")), restored)
+    assert listing_reminder_due(datetime(2026, 7, 14, 10, 0, tzinfo=ZoneInfo("Asia/Shanghai")), restored)
 
 
 def test_listing_reminder_job_sends_operator_cards(monkeypatch) -> None:
