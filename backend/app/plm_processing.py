@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
 
 from app import models, services
@@ -227,6 +227,7 @@ def _existing_plm_arrival_item(
             models.PlmArrivalItem.arrival_type == "new_arrival",
             models.PlmArrivalItem.batch_id != current_batch_id,
             models.PlmArrivalItem.match_status.in_(PLM_ARRIVAL_DEDUPE_STATUSES),
+            _normalized_sku_column(models.PlmArrivalItem.sub_sku) == sub_sku,
         )
         .order_by(models.PlmArrivalItem.created_at)
     )
@@ -252,6 +253,7 @@ def _exact_claim_matches(
         .join(models.NewProductOpportunity, models.NewProductOpportunity.id == models.SalesClaimForecast.opportunity_id)
         .where(
             models.SalesClaimForecast.claim_result == CLAIM_RESULT_CLAIM,
+            _normalized_sku_column(models.NewProductOpportunity.sub_sku) == sub_sku,
             or_(
                 models.SalesClaimForecast.source_column.in_(
                     ("platform", "history_selection1", "plm_arrival_discovery", "manual_secondary")
@@ -456,6 +458,7 @@ def _system_opportunity_exists_for_item(db: Session, item: models.PlmArrivalItem
         select(models.NewProductOpportunity).where(
             models.NewProductOpportunity.current_status != "disabled",
             models.NewProductOpportunity.source_type != "plm_arrival_discovery",
+            _normalized_sku_column(models.NewProductOpportunity.sub_sku) == sub_sku,
         )
     )
     return any(
@@ -659,6 +662,10 @@ def _historical_responsibility_rows(
 
 def _sku_key(value: Any) -> str:
     return "".join(str(value or "").split()).upper()
+
+
+def _normalized_sku_column(column: Any) -> Any:
+    return func.upper(func.replace(func.trim(column), " ", ""))
 
 
 def _datetime_value(value: Any) -> datetime | None:
