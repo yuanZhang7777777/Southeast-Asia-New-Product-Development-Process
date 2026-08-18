@@ -2071,9 +2071,8 @@ def open_plm_arrival_for_operator(
 
 def _current_opportunities_for_plm_item(db: Session, item: models.PlmArrivalItem) -> list[models.NewProductOpportunity]:
     site = normalize_site_code(item.country)
-    main_sku = _sku_key(item.main_sku)
     sub_sku = _sku_key(item.sub_sku)
-    if not site or not main_sku or not sub_sku:
+    if not site or not sub_sku:
         return []
     rows = db.scalars(
         select(models.NewProductOpportunity).where(
@@ -2085,19 +2084,17 @@ def _current_opportunities_for_plm_item(db: Session, item: models.PlmArrivalItem
         row
         for row in rows
         if is_current_business_opportunity_for_plm(row)
-        and _sku_key(row.main_sku) == main_sku
         and _sku_key(row.sub_sku) == sub_sku
         and (normalize_site_code(row.site or row.country) or "") == site
     ]
 
 
-def _plm_item_match_key(item: models.PlmArrivalItem) -> tuple[str, str, str] | None:
+def _plm_item_match_key(item: models.PlmArrivalItem) -> tuple[str, str] | None:
     site = normalize_site_code(item.country)
-    main_sku = _sku_key(item.main_sku)
     sub_sku = _sku_key(item.sub_sku)
-    if not site or not main_sku or not sub_sku:
+    if not site or not sub_sku:
         return None
-    return site, main_sku, sub_sku
+    return site, sub_sku
 
 
 def _current_opportunity_counts_for_plm_items(
@@ -2120,13 +2117,12 @@ def _current_opportunity_summaries_for_plm_items(
             models.NewProductOpportunity.source_type != "plm_arrival_discovery",
         )
     ).all()
-    matches_by_key: dict[tuple[str, str, str], list[dict]] = defaultdict(list)
+    matches_by_key: dict[tuple[str, str], list[dict]] = defaultdict(list)
     for row in rows:
         if not is_current_business_opportunity_for_plm(row):
             continue
         key = (
             normalize_site_code(row.site or row.country) or "",
-            _sku_key(row.main_sku),
             _sku_key(row.sub_sku),
         )
         if key in requested_keys:
@@ -2276,7 +2272,7 @@ def _plm_assignment_row_from_matches(
     system_periods = list(dict.fromkeys([match.get("business_period") for match in current_matches if match.get("business_period")]))
     payload = (item.raw_payload or {}).get("_plm_assignment") or {}
     block_reason = (
-        "当前系统存在多个同国家+主SKU+子SKU商品，需先处理商品归属"
+        "当前系统存在多个同国家+子SKU商品，需先处理商品归属"
         if current_match_count > 1
         else None
     )

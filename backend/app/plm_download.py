@@ -68,7 +68,7 @@ def download_plm_export(
     base_url: str,
     username: str,
     password: str,
-    bloc_name: str,
+    bloc_name: str | None = None,
     cache_dir: str | Path,
     force: bool = False,
 ) -> Path:
@@ -76,7 +76,7 @@ def download_plm_export(
     if not force and _valid_workbook(cache_path):
         return cache_path
 
-    required = {"PLM_BASE_URL": base_url, "PLM_USERNAME": username, "PLM_PASSWORD": password, "PLM_BLOC_NAME": bloc_name}
+    required = {"PLM_BASE_URL": base_url, "PLM_USERNAME": username, "PLM_PASSWORD": password}
     missing = [name for name, value in required.items() if not str(value).strip()]
     if missing:
         raise ValueError(f"missing PLM settings: {', '.join(missing)}")

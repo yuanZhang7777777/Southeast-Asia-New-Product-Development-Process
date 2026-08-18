@@ -16,38 +16,47 @@ PH_WAREHOUSE = "\u83f2\u5f8b\u5bbe\u4ed3"
 TH_WAREHOUSE = "\u6cf0\u56fd\u4ed3"
 
 
-def test_parse_plm_arrival_preview_filters_by_first_listing_date(tmp_path: Path) -> None:
+def test_parse_plm_arrival_preview_uses_first_listing_window_without_group_filter(tmp_path: Path) -> None:
     workbook_path = tmp_path / "plm.xlsx"
     build_workbook(workbook_path)
 
     preview = parse_plm_arrival_preview(workbook_path, "2026-07-12", bloc_name=GROUP_EIGHT)
 
-    assert preview["row_count"] == 1
-    assert preview["new_arrival_count"] == 1
+    assert preview["row_count"] == 2
+    assert preview["new_arrival_count"] == 2
     assert preview["restock_count"] == 0
     assert preview["unknown_count"] == 0
     assert preview["by_salesperson"] == [
         {"salesperson_name": SALES_A, "new_arrival_count": 1, "restock_count": 0, "unknown_count": 0, "total_count": 1},
+        {"salesperson_name": SALES_C, "new_arrival_count": 1, "restock_count": 0, "unknown_count": 0, "total_count": 1},
     ]
-    assert [item["arrival_type"] for item in preview["items"]] == ["new_arrival"]
-    assert [item["source_row"] for item in preview["items"]] == [2]
+    assert [item["arrival_type"] for item in preview["items"]] == ["new_arrival", "new_arrival"]
+    assert [item["source_row"] for item in preview["items"]] == [2, 5]
     assert preview["items"][0]["product_name"] == "new"
+    assert preview["items"][1]["product_name"] == "other group"
+    assert preview["items"][1]["bloc_name"] == GROUP_ONE
 
 
-def test_parse_plm_arrival_preview_uses_first_listing_date_as_target_day(tmp_path: Path) -> None:
+def test_parse_plm_arrival_preview_includes_two_days_around_target_day(tmp_path: Path) -> None:
     workbook_path = tmp_path / "plm-first-listing.xlsx"
     workbook = Workbook()
     sheet = workbook.active
     sheet.append(["商品名称", "子SKU", "主SKU", "销售员", "集团", "海外仓", "国家", "最后一次入库时间", "首次上架时间"])
-    sheet.append(["storage target only", "OLD-1", "M1", SALES_A, GROUP_EIGHT, PH_WAREHOUSE, PH, "2026-07-12 10:00:00", "2026-07-10 00:00:00"])
+    sheet.append(["target minus two", "OLD-1", "M1", SALES_A, GROUP_EIGHT, PH_WAREHOUSE, PH, "2026-07-12 10:00:00", "2026-07-10 00:00:00"])
     sheet.append(["first listing target", "NEW-1", "M2", SALES_A, GROUP_EIGHT, PH_WAREHOUSE, PH, "2026-07-11 10:00:00", "2026-07-12 00:00:00"])
+    sheet.append(["target plus two", "NEW-2", "M3", SALES_A, GROUP_EIGHT, PH_WAREHOUSE, PH, "2026-07-12 10:00:00", "2026-07-14 00:00:00"])
+    sheet.append(["target minus three", "OLD-2", "M4", SALES_A, GROUP_EIGHT, PH_WAREHOUSE, PH, "2026-07-12 10:00:00", "2026-07-09 00:00:00"])
     workbook.save(workbook_path)
 
     preview = parse_plm_arrival_preview(workbook_path, "2026-07-12", bloc_name=GROUP_EIGHT)
 
-    assert preview["row_count"] == 1
-    assert preview["new_arrival_count"] == 1
-    assert preview["items"][0]["product_name"] == "first listing target"
+    assert preview["row_count"] == 3
+    assert preview["new_arrival_count"] == 3
+    assert [item["product_name"] for item in preview["items"]] == [
+        "target minus two",
+        "first listing target",
+        "target plus two",
+    ]
 
 
 def test_plm_arrival_preview_endpoint_reads_cached_workbook(tmp_path: Path) -> None:

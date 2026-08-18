@@ -60,7 +60,7 @@ def plm_arrival_preview(
     path = Path(settings.plm_cache_dir) / f"plm-{date_text}.xlsx"
     if not path.exists():
         raise HTTPException(status_code=404, detail="PLM cache file not found")
-    return parse_plm_arrival_preview(path, date_text, bloc_name=settings.plm_bloc_name)
+    return parse_plm_arrival_preview(path, date_text)
 
 
 @router.post("/plm-process", response_model=schemas.PlmArrivalProcessRead)
@@ -78,6 +78,5 @@ def process_plm_arrivals(
         path,
         payload.date,
         source_file=source_file,
-        bloc_name=settings.plm_bloc_name,
         workflow_automation_enabled=settings.workflow_automation_enabled,
     )

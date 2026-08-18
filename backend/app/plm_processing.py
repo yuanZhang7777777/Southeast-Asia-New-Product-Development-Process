@@ -10,11 +10,23 @@ from sqlalchemy.orm import Session
 
 from app import models, services
 from app.historical_arrival_activation import activate_historical_arrival, listing_status_for_sku
-from app.plm_arrivals import parse_plm_arrival_preview
+from app.plm_arrivals import ALL_BLOC_SCOPE, DEFAULT_FIRST_LISTING_WINDOW_DAYS, parse_plm_arrival_preview
 from app.site_codes import normalize_site_code
 from app.workflow_status import CLAIM_RESULT_CLAIM
 
 BEIJING_TZ = timezone(timedelta(hours=8))
+PLM_ARRIVAL_DEDUPE_STATUSES = {
+    "matched",
+    "matched_dry_run",
+    "matched_historical",
+    "matched_historical_dry_run",
+    "matched_discovered",
+    "pending_assignment",
+    "existing_system_sku",
+    "historical_deduped",
+    "already_listed",
+    "historical_secondary_research",
+}
 
 
 def process_plm_arrival_workbook(
@@ -22,21 +34,25 @@ def process_plm_arrival_workbook(
     workbook_path: str | Path,
     date_text: str,
     source_file: str | None = None,
-    bloc_name: str = "\u96c6\u56e2\u516b\u90e8",
+    bloc_name: str | None = None,
     workflow_automation_enabled: bool = False,
 ) -> dict[str, Any]:
     path = Path(workbook_path)
-    source_hash = hashlib.sha256(path.read_bytes() + f"\n{date_text}\n{bloc_name}".encode()).hexdigest()
+    scope_name = bloc_name or ALL_BLOC_SCOPE
+    source_hash = hashlib.sha256(
+        path.read_bytes()
+        + f"\n{date_text}\n{ALL_BLOC_SCOPE}\nfirst_listing_window={DEFAULT_FIRST_LISTING_WINDOW_DAYS}".encode()
+    ).hexdigest()
     existing = db.scalar(select(models.PlmArrivalBatch).where(models.PlmArrivalBatch.source_hash == source_hash))
     if existing:
         return _summary(db, existing, "duplicate")
 
-    preview = parse_plm_arrival_preview(path, date_text, bloc_name=bloc_name)
+    preview = parse_plm_arrival_preview(path, date_text)
     batch = models.PlmArrivalBatch(
         arrival_date=date_text,
         source_file=source_file or path.name,
         source_hash=source_hash,
-        bloc_name=bloc_name,
+        bloc_name=scope_name,
         status="processed",
         processed_at=datetime.now(timezone.utc),
         row_count=preview["row_count"],
@@ -45,19 +61,51 @@ def process_plm_arrival_workbook(
     db.flush()
 
     planned_responsibilities: list[dict[str, Any]] = []
+    matched_claim_ids_in_batch: set[str] = set()
     for row in preview["items"]:
+        duplicate_item = _existing_plm_arrival_item(db, row, current_batch_id=batch.id)
         item = _arrival_item(batch.id, row)
         db.add(item)
         if item.arrival_type != "new_arrival":
             item.match_status = "not_new_arrival"
             continue
+        if duplicate_item is not None:
+            item.match_status = "duplicate_plm_arrival_item"
+            item.raw_payload = {
+                **(item.raw_payload or {}),
+                "_duplicate_plm_arrival_item_id": duplicate_item.id,
+                "_duplicate_plm_arrival_batch_id": duplicate_item.batch_id,
+            }
+            continue
         candidates = _exact_claim_matches(db, row)
+        if len(candidates) > 1:
+            item.match_status = "existing_system_sku"
+            item.raw_payload = {
+                **(item.raw_payload or {}),
+                "_matching_current_products": _responsibility_rows(candidates, item.product_name),
+                "_plm_assignment": _assignment_payload(
+                    batch,
+                    item,
+                    "当前系统同国家+子SKU命中多个当前商品/认领，等待主管/超管选择具体归属",
+                ),
+            }
+            continue
+        fresh_candidates = [(claim, opportunity) for claim, opportunity in candidates if claim.id not in matched_claim_ids_in_batch]
+        if candidates and not fresh_candidates:
+            item.match_status = "duplicate_claim_in_batch"
+            item.raw_payload = {
+                **(item.raw_payload or {}),
+                "_duplicate_claim_record_ids": [claim.id for claim, _ in candidates],
+            }
+            continue
+        candidates = fresh_candidates
         matches, listing_status = _unlisted_claim_matches(db, candidates)
         if matches:
             item.matched_claim_record_id = matches[0][0].id
             item.match_status = "matched"
             item.raw_payload = {**(item.raw_payload or {}), "_matched_claim_record_ids": [claim.id for claim, _ in matches]}
             planned_responsibilities.extend(_responsibility_rows(matches, item.product_name))
+            matched_claim_ids_in_batch.update(claim.id for claim, _ in matches)
             if not workflow_automation_enabled:
                 item.match_status = "matched_dry_run"
                 continue
@@ -162,15 +210,42 @@ def _arrival_item(batch_id: str, row: dict[str, Any]) -> models.PlmArrivalItem:
     )
 
 
+def _existing_plm_arrival_item(
+    db: Session,
+    row: dict[str, Any],
+    *,
+    current_batch_id: str,
+) -> models.PlmArrivalItem | None:
+    site = normalize_site_code(row.get("country"))
+    sub_sku = _sku_key(row.get("sub_sku"))
+    first_listing_date = _beijing_date(_datetime_value(row.get("first_listing_time")))
+    if not site or not sub_sku or first_listing_date is None:
+        return None
+    rows = db.scalars(
+        select(models.PlmArrivalItem)
+        .where(
+            models.PlmArrivalItem.arrival_type == "new_arrival",
+            models.PlmArrivalItem.batch_id != current_batch_id,
+            models.PlmArrivalItem.match_status.in_(PLM_ARRIVAL_DEDUPE_STATUSES),
+        )
+        .order_by(models.PlmArrivalItem.created_at)
+    )
+    for item in rows:
+        item_site = normalize_site_code(item.country)
+        item_sub_sku = _sku_key(item.sub_sku)
+        item_first_listing_date = _beijing_date(item.first_listing_time)
+        if item_site == site and item_sub_sku == sub_sku and item_first_listing_date == first_listing_date:
+            return item
+    return None
+
+
 def _exact_claim_matches(
     db: Session,
     row: dict[str, Any],
 ) -> list[tuple[models.SalesClaimForecast, models.NewProductOpportunity]]:
     sub_sku = _sku_key(row.get("sub_sku"))
-    main_sku = _sku_key(row.get("main_sku"))
     site = normalize_site_code(row.get("country")) or ""
-    salesperson = (row.get("salesperson_name") or "").strip()
-    if not sub_sku or not site or not salesperson:
+    if not sub_sku or not site:
         return []
     rows = db.execute(
         select(models.SalesClaimForecast, models.NewProductOpportunity)
@@ -192,10 +267,6 @@ def _exact_claim_matches(
     matches: list[tuple[models.SalesClaimForecast, models.NewProductOpportunity]] = []
     for claim, opportunity in rows:
         if claim.id in seen:
-            continue
-        if (claim.salesperson_name or "").strip() != salesperson:
-            continue
-        if main_sku and _sku_key(opportunity.main_sku) != main_sku:
             continue
         if _sku_key(opportunity.sub_sku) != sub_sku:
             continue
@@ -309,55 +380,34 @@ def _activate_plm_discovery(
     salesperson_name = (item.salesperson_name or "").strip()
     if not site or not main_sku or not sub_sku:
         return {"status": "assignment_missing_required_fields"}
+    if services.is_enabled_assignment_operator_for_site(db, salesperson_name, site):
+        opportunity, claim = services.open_plm_arrival_for_operator(
+            db,
+            batch,
+            item,
+            salesperson_name,
+            claim_source="plm_arrival_site_owner",
+            note="PLM销售员仍负责该国家，PLM新增到货自动进入二调",
+            require_site_match=True,
+        )
+        return {
+            "status": "matched_discovered",
+            "runtime_claim_id": claim.id,
+            "opportunity_id": opportunity.id,
+            "salesperson_name": salesperson_name,
+            "reason": "PLM销售员是当前启用运营且负责该国家，直接进入本人二次调研",
+        }
     country = _country_label(item.country)
-    if services.is_enabled_assignment_operator_for_site(db, salesperson_name, item.country):
-        try:
-            opportunity, claim = services.open_plm_arrival_for_operator(
-                db,
-                batch,
-                item,
-                salesperson_name,
-                claim_source="plm_arrival_auto_site_owner",
-                note="PLM新品到货按当前站点运营自动进入二次调研",
-            )
-        except ValueError as exc:
-            assignment_reason = str(exc)
-        else:
-            return {
-                "status": "matched_discovered",
-                "batch_id": batch.id,
-                "item_id": item.id,
-                "arrival_date": batch.arrival_date,
-                "runtime_claim_id": claim.id,
-                "opportunity_id": opportunity.id,
-                "salesperson_name": salesperson_name,
-                "country": country,
-                "site": site,
-                "main_sku": main_sku,
-                "sub_sku": sub_sku,
-                "reason": "PLM销售员是当前站点启用运营，自动进入二次调研",
-            }
-    else:
-        assignment_reason = "PLM销售员不是当前站点启用运营，等待主管/超管指派"
-    assignment = {
-        "status": "pending_assignment",
-        "batch_id": batch.id,
-        "item_id": item.id,
-        "arrival_date": batch.arrival_date,
-        "source_file": batch.source_file,
-        "source_sheet": item.source_sheet,
-        "source_row": item.source_row,
-        "salesperson_name": salesperson_name or None,
-        "country": country,
-        "site": site,
-        "main_sku": main_sku,
-        "sub_sku": sub_sku,
-        "product_name": item.product_name,
-        "warehouse": item.warehouse,
-        "latest_storage_time": item.latest_storage_time.isoformat() if item.latest_storage_time else None,
-        "first_listing_time": item.first_listing_time.isoformat() if item.first_listing_time else None,
-        "reason": assignment_reason,
-    }
+    assignment = _assignment_payload(
+        batch,
+        item,
+        "当前系统没有可唯一承接的同国家+子SKU商品，且PLM销售员不是该国家当前启用运营，等待主管/超管指派",
+        country=country,
+        site=site,
+        salesperson_name=salesperson_name or None,
+        main_sku=main_sku,
+        sub_sku=sub_sku,
+    )
     item.raw_payload = {
         **(item.raw_payload or {}),
         "_plm_assignment": assignment,
@@ -365,11 +415,42 @@ def _activate_plm_discovery(
     return assignment
 
 
+def _assignment_payload(
+    batch: models.PlmArrivalBatch,
+    item: models.PlmArrivalItem,
+    reason: str,
+    *,
+    country: str | None = None,
+    site: str | None = None,
+    salesperson_name: str | None = None,
+    main_sku: str | None = None,
+    sub_sku: str | None = None,
+) -> dict[str, Any]:
+    return {
+        "status": "pending_assignment",
+        "batch_id": batch.id,
+        "item_id": item.id,
+        "arrival_date": batch.arrival_date,
+        "source_file": batch.source_file,
+        "source_sheet": item.source_sheet,
+        "source_row": item.source_row,
+        "salesperson_name": salesperson_name if salesperson_name is not None else ((item.salesperson_name or "").strip() or None),
+        "country": country if country is not None else _country_label(item.country),
+        "site": site if site is not None else normalize_site_code(item.country),
+        "main_sku": main_sku if main_sku is not None else ((item.main_sku or "").strip() or None),
+        "sub_sku": sub_sku if sub_sku is not None else ((item.sub_sku or "").strip() or None),
+        "product_name": item.product_name,
+        "warehouse": item.warehouse,
+        "latest_storage_time": item.latest_storage_time.isoformat() if item.latest_storage_time else None,
+        "first_listing_time": item.first_listing_time.isoformat() if item.first_listing_time else None,
+        "reason": reason,
+    }
+
+
 def _system_opportunity_exists_for_item(db: Session, item: models.PlmArrivalItem) -> bool:
     site = normalize_site_code(item.country)
-    main_sku = _sku_key(item.main_sku)
     sub_sku = _sku_key(item.sub_sku)
-    if not site or not main_sku or not sub_sku:
+    if not site or not sub_sku:
         return False
     rows = db.scalars(
         select(models.NewProductOpportunity).where(
@@ -378,8 +459,7 @@ def _system_opportunity_exists_for_item(db: Session, item: models.PlmArrivalItem
         )
     )
     return any(
-        _sku_key(row.main_sku) == main_sku
-        and _sku_key(row.sub_sku) == sub_sku
+        _sku_key(row.sub_sku) == sub_sku
         and (normalize_site_code(row.site or row.country) or "") == site
         and services.is_current_business_opportunity_for_plm(row)
         for row in rows
@@ -596,6 +676,15 @@ def _datetime_value(value: Any) -> datetime | None:
         except ValueError:
             continue
     return None
+
+
+def _beijing_date(value: datetime | None):
+    if value is None:
+        return None
+    source = value
+    if source.tzinfo is None:
+        source = source.replace(tzinfo=timezone.utc)
+    return source.astimezone(BEIJING_TZ).date()
 
 
 def _int_or_none(value: Any) -> int | None:

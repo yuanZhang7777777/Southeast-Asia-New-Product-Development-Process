@@ -735,7 +735,7 @@ def test_plm_arrival_assignment_lists_multi_product_block_reason() -> None:
     assert pending.status_code == 200
     row = pending.json()[0]
     assert row["existing_opportunity_count"] == 2
-    assert row["assignment_block_reason"] == "当前系统存在多个同国家+主SKU+子SKU商品，需先处理商品归属"
+    assert row["assignment_block_reason"] == "当前系统存在多个同国家+子SKU商品，需先处理商品归属"
 
     assigned = client.post(
         f"/secondary-research/plm-arrival-assignments/{item_id}/assign",

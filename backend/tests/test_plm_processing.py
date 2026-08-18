@@ -51,8 +51,8 @@ def test_plm_processing_persists_all_rows_and_dry_run_does_not_open_secondary_re
             workflow_automation_enabled=False,
         )
 
-        assert result["row_count"] == 2
-        assert result["new_arrival_count"] == 2
+        assert result["row_count"] == 3
+        assert result["new_arrival_count"] == 3
         assert result["restock_count"] == 0
         assert result["unknown_count"] == 0
         assert result["matched_count"] == 1
@@ -72,8 +72,8 @@ def test_plm_processing_persists_all_rows_and_dry_run_does_not_open_secondary_re
         ]
         assert db.query(models.PlmArrivalBatch).count() == 1
         items = db.query(models.PlmArrivalItem).order_by(models.PlmArrivalItem.source_row).all()
-        assert [item.arrival_type for item in items] == ["new_arrival", "new_arrival"]
-        assert [item.match_status for item in items] == ["matched_dry_run", "unmatched"]
+        assert [item.arrival_type for item in items] == ["new_arrival", "new_arrival", "new_arrival"]
+        assert [item.match_status for item in items] == ["matched_dry_run", "duplicate_claim_in_batch", "unmatched"]
         assert items[0].product_name == "new"
         assert items[0].raw_payload["_matched_claim_record_ids"] == [claim.id]
         assert db.get(models.SalesClaimForecast, claim.id).downstream_status == "waiting_arrival"
@@ -123,7 +123,7 @@ def test_plm_processing_automation_uses_utc_arrival_time_and_dedupes_source_hash
         assert second["status"] == "duplicate"
         assert second["planned_responsibilities"][0]["claim_record_id"] == claim.id
         assert db.query(models.PlmArrivalBatch).count() == 1
-        assert db.query(models.PlmArrivalItem).count() == 2
+        assert db.query(models.PlmArrivalItem).count() == 3
         assert db.query(models.ArrivalRecord).count() == 1
         assert opened_arrivals[0].tzinfo == timezone.utc
         assert opened_arrivals[0].isoformat() == "2026-07-12T02:00:00+00:00"
@@ -162,7 +162,18 @@ def test_plm_processing_allows_same_workbook_for_different_first_listing_dates(t
         assert day1["status"] == "processed"
         assert day2["status"] == "processed"
         assert db.query(models.PlmArrivalBatch).count() == 2
-        assert [item.product_name for item in db.query(models.PlmArrivalItem).order_by(models.PlmArrivalItem.source_row)] == ["day1", "day2"]
+        items = (
+            db.query(models.PlmArrivalItem)
+            .join(models.PlmArrivalBatch, models.PlmArrivalBatch.id == models.PlmArrivalItem.batch_id)
+            .order_by(models.PlmArrivalBatch.arrival_date, models.PlmArrivalItem.source_row)
+            .all()
+        )
+        assert [item.product_name for item in items] == [
+            "day1",
+            "day2",
+            "day1",
+            "day2",
+        ]
 
 
 def test_plm_processing_does_not_duplicate_arrival_record_for_same_claim_across_batches(tmp_path: Path) -> None:
@@ -249,7 +260,65 @@ def test_plm_processing_queues_missing_system_sku_for_manager_assignment(tmp_pat
         assert db.query(models.FlowTask).count() == 0
 
 
-def test_plm_processing_auto_opens_missing_sku_when_plm_salesperson_owns_site(tmp_path: Path) -> None:
+def test_plm_processing_does_not_duplicate_pending_assignment_across_batches(tmp_path: Path) -> None:
+    first_path = tmp_path / "plm-first.xlsx"
+    second_path = tmp_path / "plm-second.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.append(
+        [
+            "商品名称",
+            "国家",
+            "子SKU",
+            "主SKU",
+            "销售员",
+            "集团",
+            "海外仓",
+            "最后一次入库时间",
+            "首次上架时间",
+        ]
+    )
+    sheet.append(["missing system sku", TH, "MISS-SUB", "MISS-MAIN", SALES_A, GROUP_ONE, "TH仓", "2026-08-10 10:00:00", "2026-08-10 08:00:00"])
+    workbook.save(first_path)
+    sheet.append(["different sku", TH, "NEW-SUB", "NEW-MAIN", SALES_A, GROUP_ONE, "TH仓", "2026-08-10 11:00:00", "2026-08-10 08:00:00"])
+    workbook.save(second_path)
+
+    with SessionLocal() as db:
+        first = process_plm_arrival_workbook(
+            db,
+            first_path,
+            "2026-08-10",
+            source_file="plm-first.xlsx",
+            workflow_automation_enabled=True,
+        )
+        second = process_plm_arrival_workbook(
+            db,
+            second_path,
+            "2026-08-10",
+            source_file="plm-second.xlsx",
+            workflow_automation_enabled=True,
+        )
+
+        assert first["status"] == "processed"
+        assert second["status"] == "processed"
+        statuses = [
+            item.match_status
+            for item in (
+                db.query(models.PlmArrivalItem)
+                .join(models.PlmArrivalBatch, models.PlmArrivalBatch.id == models.PlmArrivalItem.batch_id)
+                .order_by(models.PlmArrivalBatch.source_file, models.PlmArrivalItem.source_row)
+                .all()
+            )
+        ]
+        assert statuses == ["pending_assignment", "duplicate_plm_arrival_item", "pending_assignment"]
+        pending_items = db.query(models.PlmArrivalItem).filter_by(match_status="pending_assignment").all()
+        assert {item.sub_sku for item in pending_items} == {"MISS-SUB", "NEW-SUB"}
+        assert db.query(models.NewProductOpportunity).count() == 0
+        assert db.query(models.SalesClaimForecast).count() == 0
+        assert db.query(models.ArrivalRecord).count() == 0
+
+
+def test_plm_processing_routes_missing_sku_to_plm_salesperson_when_they_own_site(tmp_path: Path) -> None:
     workbook_path = tmp_path / "plm-discovery-site-owner.xlsx"
     workbook = Workbook()
     sheet = workbook.active
@@ -301,12 +370,123 @@ def test_plm_processing_auto_opens_missing_sku_when_plm_salesperson_owns_site(tm
         assert result["arrival_record_count"] == 1
         assert item.match_status == "matched_discovered"
         assert item.matched_claim_record_id == claim.id
+        assert item.raw_payload["_plm_discovery"]["status"] == "matched_discovered"
+        assert item.raw_payload["_plm_discovery"]["salesperson_name"] == SALES_A
         assert opportunity.batch == "PLM新增到货"
         assert opportunity.main_sku == "OWN-MAIN"
+        assert opportunity.sub_sku == "OWN-SUB"
         assert claim.salesperson_name == SALES_A
         assert claim.downstream_status == "waiting_secondary_research"
         assert arrival.salesperson_name == SALES_A
         assert db.query(models.FlowTask).count() == 0
+
+
+def test_plm_processing_queues_missing_sku_when_plm_salesperson_does_not_own_site(tmp_path: Path) -> None:
+    workbook_path = tmp_path / "plm-discovery-site-mismatch.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.append(
+        [
+            "商品名称",
+            "国家",
+            "子SKU",
+            "主SKU",
+            "销售员",
+            "集团",
+            "海外仓",
+            "最后一次入库时间",
+            "首次上架时间",
+            "海外仓可发",
+            "真仓库存",
+        ]
+    )
+    sheet.append(["site mismatch sku", PH, "OWN-SUB", "OWN-MAIN", SALES_A, GROUP_EIGHT, "PH仓", "2026-07-12 10:00:00", "2026-07-12 00:00:00", 2, 2])
+    workbook.save(workbook_path)
+
+    with SessionLocal() as db:
+        user = models.User(name=SALES_A, enabled=True)
+        db.add(user)
+        db.flush()
+        db.add_all(
+            [
+                models.RoleMapping(user_id=user.id, name=SALES_A, role="operator", enabled=True, notification_enabled=True),
+                models.OperatorAssignmentProfile(operator_name=SALES_A, key_site="TH", enabled=True),
+            ]
+        )
+        db.commit()
+
+        result = process_plm_arrival_workbook(
+            db,
+            workbook_path,
+            "2026-07-12",
+            source_file="plm-discovery-site-mismatch.xlsx",
+            bloc_name=GROUP_EIGHT,
+            workflow_automation_enabled=True,
+        )
+
+        item = db.query(models.PlmArrivalItem).one()
+
+        assert result["matched_count"] == 0
+        assert result["arrival_record_count"] == 0
+        assert item.match_status == "pending_assignment"
+        assert item.matched_claim_record_id is None
+        assert item.raw_payload["_plm_assignment"]["status"] == "pending_assignment"
+        assert item.raw_payload["_plm_assignment"]["salesperson_name"] == SALES_A
+        assert "等待主管/超管指派" in item.raw_payload["_plm_assignment"]["reason"]
+        assert db.query(models.NewProductOpportunity).filter_by(source_type="plm_arrival_discovery").count() == 0
+        assert db.query(models.SalesClaimForecast).count() == 0
+        assert db.query(models.ArrivalRecord).count() == 0
+        assert db.query(models.FlowTask).count() == 0
+
+
+def test_plm_processing_matches_current_claim_by_country_and_sub_sku_only(tmp_path: Path) -> None:
+    workbook_path = tmp_path / "plm-country-sub.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.append(
+        [
+            "商品名称",
+            "国家",
+            "子SKU",
+            "主SKU",
+            "销售员",
+            "集团",
+            "海外仓",
+            "最后一次入库时间",
+            "首次上架时间",
+            "海外仓可发",
+        ]
+    )
+    sheet.append(["same country stock", PH, "SUB-A", "PLM-MAIN", SALES_B, GROUP_ONE, "PH仓", "2026-07-12 10:00:00", "2026-07-14 09:00:00", 8])
+    workbook.save(workbook_path)
+
+    with SessionLocal() as db:
+        opportunity, claim = make_claim("SUB-A", "PH", SALES_A, "waiting_arrival")
+        opportunity.main_sku = "SYSTEM-MAIN"
+        db.add_all([opportunity, claim])
+        db.commit()
+
+        result = process_plm_arrival_workbook(
+            db,
+            workbook_path,
+            "2026-07-12",
+            source_file="plm-country-sub.xlsx",
+            bloc_name=GROUP_EIGHT,
+            workflow_automation_enabled=True,
+        )
+
+        item = db.query(models.PlmArrivalItem).one()
+        saved_claim = db.get(models.SalesClaimForecast, claim.id)
+        arrival = db.query(models.ArrivalRecord).one()
+        assert result["row_count"] == 1
+        assert result["matched_count"] == 1
+        assert result["arrival_record_count"] == 1
+        assert item.match_status == "matched"
+        assert item.matched_claim_record_id == claim.id
+        assert item.raw_payload["bloc_name"] == GROUP_ONE
+        assert saved_claim.salesperson_name == SALES_A
+        assert saved_claim.downstream_status == "waiting_secondary_research"
+        assert arrival.salesperson_name == SALES_A
 
 
 def test_plm_processing_exact_match_ignores_non_platform_claim(tmp_path: Path) -> None:
@@ -358,7 +538,7 @@ def test_plm_processing_matches_the_country_snapshotted_at_export() -> None:
         assert th_matches == []
 
 
-def test_plm_processing_automation_processes_same_exact_match_across_periods(tmp_path: Path) -> None:
+def test_plm_processing_queues_ambiguous_country_sub_sku_matches(tmp_path: Path) -> None:
     workbook_path = tmp_path / "plm.xlsx"
     build_workbook(workbook_path)
     with SessionLocal() as db:
@@ -381,13 +561,15 @@ def test_plm_processing_automation_processes_same_exact_match_across_periods(tmp
             workflow_automation_enabled=True,
         )
 
-        assert result["arrival_record_count"] == 2
-        assert result["matched_count"] == 2
-        assert sorted(item["business_period"] for item in result["planned_responsibilities"]) == ["2026-W28", "2026-W29"]
-        assert db.query(models.ArrivalRecord).count() == 2
-        assert {record.claim_record_id for record in db.query(models.ArrivalRecord).all()} == {claim.id for claim in claims}
+        item = db.query(models.PlmArrivalItem).filter_by(source_row=2).one()
+        assert result["arrival_record_count"] == 0
+        assert result["matched_count"] == 0
+        assert result["planned_responsibilities"] == []
+        assert item.match_status == "existing_system_sku"
+        assert len(item.raw_payload["_matching_current_products"]) == 2
+        assert db.query(models.ArrivalRecord).count() == 0
         assert {db.get(models.SalesClaimForecast, claim.id).downstream_status for claim in claims} == {
-            "waiting_secondary_research"
+            "waiting_arrival"
         }
 
 

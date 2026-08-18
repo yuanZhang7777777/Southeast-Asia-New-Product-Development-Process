@@ -948,6 +948,7 @@ class PlmArrivalItem(BaseModel):
     arrival_type: str
     product_name: str | None = None
     salesperson_name: str
+    bloc_name: str | None = None
     sub_sku: str | None = None
     main_sku: str | None = None
     country: str | None = None
@@ -970,6 +971,7 @@ class PlmArrivalSalespersonSummary(BaseModel):
 class PlmArrivalPreviewRead(BaseModel):
     date: str
     bloc_name: str
+    first_listing_window_days: int | None = None
     row_count: int
     new_arrival_count: int
     restock_count: int

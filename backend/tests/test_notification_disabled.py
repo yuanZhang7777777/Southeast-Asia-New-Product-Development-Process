@@ -32,7 +32,41 @@ def test_arrival_card_skips_notification_disabled_operator() -> None:
         batch = models.PlmArrivalBatch(arrival_date="2026-07-12", source_hash="muted", bloc_name="集团八部", row_count=1)
         db.add(batch)
         db.flush()
-        db.add(models.PlmArrivalItem(batch_id=batch.id, arrival_type="new_arrival", salesperson_name="销售静默", main_sku="MAIN-M", sub_sku="SUB-M"))
+        opportunity = models.NewProductOpportunity(
+            id=models.new_id(),
+            source_type="selection1_developer_claim_feedback",
+            source_file="selection.xlsx",
+            source_sheet="sheet",
+            source_row=1,
+            batch="开发0712期",
+            country="PH",
+            site="PH",
+            main_sku="MAIN-M",
+            sub_sku="SUB-M",
+            current_status="waiting_secondary_research",
+            snapshot={},
+        )
+        claim = models.SalesClaimForecast(
+            id=models.new_id(),
+            opportunity_id=opportunity.id,
+            salesperson_name="销售静默",
+            claim_result="claim",
+            source_column="platform",
+            downstream_status="waiting_secondary_research",
+        )
+        item = models.PlmArrivalItem(batch_id=batch.id, arrival_type="new_arrival", salesperson_name="销售静默", main_sku="MAIN-M", sub_sku="SUB-M")
+        db.add_all([opportunity, claim, item])
+        db.flush()
+        db.add(
+            models.ArrivalRecord(
+                opportunity_id=opportunity.id,
+                claim_record_id=claim.id,
+                plm_arrival_batch_id=batch.id,
+                plm_arrival_item_id=item.id,
+                salesperson_name="销售静默",
+                country="PH",
+            )
+        )
         db.flush()
         logs = send_arrival_daily_cards(db, Settings(dingtalk_card_autosend_enabled=True), sender, "2026-07-12")
 

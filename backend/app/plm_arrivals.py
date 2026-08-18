@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -22,11 +22,21 @@ HEADERS = {
     "daily_sales": "\u5355\u9500",
 }
 DEFAULT_BLOC_NAME = "\u96c6\u56e2\u516b\u90e8"
+ALL_BLOC_SCOPE = "\u5168\u90e8\u96c6\u56e2"
+DEFAULT_FIRST_LISTING_WINDOW_DAYS = 2
 UNKNOWN_SALESPERSON = "\u672a\u5339\u914d\u9500\u552e\u5458"
 
 
-def parse_plm_arrival_preview(workbook_path: str | Path, date_text: str, bloc_name: str = DEFAULT_BLOC_NAME) -> dict[str, Any]:
+def parse_plm_arrival_preview(
+    workbook_path: str | Path,
+    date_text: str,
+    bloc_name: str | None = None,
+    first_listing_window_days: int = DEFAULT_FIRST_LISTING_WINDOW_DAYS,
+    include_non_new: bool = False,
+) -> dict[str, Any]:
     target_date = date.fromisoformat(date_text)
+    window_start = target_date - timedelta(days=first_listing_window_days)
+    window_end = target_date + timedelta(days=first_listing_window_days)
     workbook = load_workbook(workbook_path, read_only=True, data_only=True)
     try:
         sheet = workbook[workbook.sheetnames[0]]
@@ -36,18 +46,23 @@ def parse_plm_arrival_preview(workbook_path: str | Path, date_text: str, bloc_na
         items: list[dict[str, Any]] = []
         for source_row, row in enumerate(sheet.iter_rows(min_row=2, values_only=True), start=2):
             values = {field: row[index] if index < len(row) else None for field, index in indexes.items()}
-            if _text(values.get("bloc_name")) != bloc_name:
-                continue
             first_date = _date_value(values.get("first_listing_time"))
-            if first_date != target_date:
+            if first_date is None:
+                arrival_type = "unknown"
+            elif window_start <= first_date <= window_end:
+                arrival_type = "new_arrival"
+            else:
+                arrival_type = "restock"
+            if not include_non_new and arrival_type != "new_arrival":
                 continue
             items.append(
                 {
                     "source_sheet": sheet_name,
                     "source_row": source_row,
-                    "arrival_type": "new_arrival",
+                    "arrival_type": arrival_type,
                     "product_name": _text(values.get("product_name")),
                     "salesperson_name": _text(values.get("salesperson_name")) or UNKNOWN_SALESPERSON,
+                    "bloc_name": _text(values.get("bloc_name")),
                     "sub_sku": _text(values.get("sub_sku")),
                     "main_sku": _text(values.get("main_sku")),
                     "country": _text(values.get("country")),
@@ -64,7 +79,8 @@ def parse_plm_arrival_preview(workbook_path: str | Path, date_text: str, bloc_na
 
     return {
         "date": date_text,
-        "bloc_name": bloc_name,
+        "bloc_name": bloc_name or ALL_BLOC_SCOPE,
+        "first_listing_window_days": first_listing_window_days,
         "row_count": len(items),
         "new_arrival_count": _count(items, "new_arrival"),
         "restock_count": _count(items, "restock"),

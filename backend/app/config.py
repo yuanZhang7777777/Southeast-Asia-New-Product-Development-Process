@@ -65,9 +65,9 @@ class Settings(BaseSettings):
         if not is_local_app_env(self.app_env) and (not self.auth_secret_key or self.auth_secret_key in WEAK_AUTH_SECRET_KEYS):
             raise ValueError("Default AUTH_SECRET_KEY is only allowed for local/test environments.")
         if self.plm_sync_enabled and not all(
-            [self.plm_base_url.strip(), self.plm_username.strip(), self.plm_password, self.plm_bloc_name.strip()]
+            [self.plm_base_url.strip(), self.plm_username.strip(), self.plm_password]
         ):
-            raise ValueError("PLM credentials and group are required when PLM sync is enabled.")
+            raise ValueError("PLM credentials are required when PLM sync is enabled.")
 
     @property
     def cors_origin_list(self) -> list[str]:
