@@ -1,6 +1,6 @@
 import os
 import sys
-from datetime import date, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 os.environ["DATABASE_URL"] = f"sqlite:///{Path(__file__).with_name('test_plm_processing.db')}"
@@ -489,6 +489,52 @@ def test_plm_processing_matches_current_claim_by_country_and_sub_sku_only(tmp_pa
         assert arrival.salesperson_name == SALES_A
 
 
+def test_plm_processing_does_not_duplicate_current_submitted_secondary(tmp_path: Path) -> None:
+    workbook_path = tmp_path / "plm-current-submitted.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.append(
+        [
+            "商品名称",
+            "国家",
+            "子SKU",
+            "主SKU",
+            "销售员",
+            "集团",
+            "海外仓",
+            "最后一次入库时间",
+            "首次上架时间",
+            "海外仓可发",
+        ]
+    )
+    sheet.append(["already researched", PH, "SUB-A", "PLM-MAIN", SALES_B, GROUP_ONE, "PH仓", "2026-07-12 10:00:00", "2026-07-14 09:00:00", 8])
+    workbook.save(workbook_path)
+
+    with SessionLocal() as db:
+        opportunity, claim = make_claim("SUB-A", "PH", SALES_A, "historical_secondary_submitted")
+        claim.secondary_research_submitted_at = datetime(2026, 7, 12, 10, tzinfo=timezone.utc)
+        claim.secondary_research_summary = "已二调"
+        db.add_all([opportunity, claim])
+        db.commit()
+
+        result = process_plm_arrival_workbook(
+            db,
+            workbook_path,
+            "2026-07-12",
+            source_file="plm-current-submitted.xlsx",
+            bloc_name=GROUP_EIGHT,
+            workflow_automation_enabled=True,
+        )
+
+        item = db.query(models.PlmArrivalItem).one()
+        assert result["matched_count"] == 0
+        assert result["arrival_record_count"] == 0
+        assert item.match_status == "historical_secondary_research"
+        assert db.query(models.NewProductOpportunity).filter_by(source_type="plm_arrival_discovery").count() == 0
+        assert db.query(models.SalesClaimForecast).count() == 1
+        assert db.query(models.ArrivalRecord).count() == 0
+
+
 def test_plm_processing_exact_match_ignores_non_platform_claim(tmp_path: Path) -> None:
     workbook_path = tmp_path / "plm.xlsx"
     build_workbook(workbook_path)
@@ -693,6 +739,7 @@ def test_plm_processing_opens_secondary_for_existing_system_claim_without_export
             source_file="plm.xlsx",
             bloc_name=GROUP_EIGHT,
             workflow_automation_enabled=True,
+            allow_historical_activation=True,
         )
 
         item = db.query(models.PlmArrivalItem).filter_by(source_row=2).one()
@@ -818,6 +865,7 @@ def test_plm_processing_matches_selection34_business_period_claim(tmp_path: Path
             source_file="plm.xlsx",
             bloc_name=GROUP_EIGHT,
             workflow_automation_enabled=True,
+            allow_historical_activation=True,
         )
 
         item = db.query(models.PlmArrivalItem).filter_by(source_row=2).one()
@@ -968,6 +1016,7 @@ def test_plm_processing_activates_historical_claim_after_verified_new_arrival(tm
             source_file="plm.xlsx",
             bloc_name=GROUP_EIGHT,
             workflow_automation_enabled=True,
+            allow_historical_activation=True,
         )
 
         item = db.query(models.PlmArrivalItem).filter_by(source_row=2).one()

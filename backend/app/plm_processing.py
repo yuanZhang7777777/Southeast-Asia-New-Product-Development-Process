@@ -36,6 +36,7 @@ def process_plm_arrival_workbook(
     source_file: str | None = None,
     bloc_name: str | None = None,
     workflow_automation_enabled: bool = False,
+    allow_historical_activation: bool = False,
 ) -> dict[str, Any]:
     path = Path(workbook_path)
     scope_name = bloc_name or ALL_BLOC_SCOPE
@@ -138,6 +139,36 @@ def process_plm_arrival_workbook(
             continue
 
         db.flush()
+        if not allow_historical_activation:
+            if _system_opportunity_exists_for_item(db, item):
+                item.match_status = "historical_secondary_research"
+                item.raw_payload = {
+                    **(item.raw_payload or {}),
+                    "_skipped_current_system_product": {
+                        "reason": "当前系统已有同国家+子SKU商品，但没有可打开的待二调认领；不创建PLM新增到货重复品",
+                    },
+                }
+                continue
+            if workflow_automation_enabled:
+                discovered = _activate_plm_discovery(db, batch, item)
+                item.raw_payload = {**(item.raw_payload or {}), "_plm_discovery": discovered}
+                runtime_claim_id = discovered.get("runtime_claim_id")
+                if runtime_claim_id:
+                    item.matched_claim_record_id = runtime_claim_id
+                    item.match_status = "matched_discovered"
+                    matches = db.execute(
+                        select(models.SalesClaimForecast, models.NewProductOpportunity)
+                        .join(models.NewProductOpportunity, models.NewProductOpportunity.id == models.SalesClaimForecast.opportunity_id)
+                        .where(models.SalesClaimForecast.id == runtime_claim_id)
+                    ).all()
+                    planned_responsibilities.extend(_responsibility_rows(matches, item.product_name))
+                    continue
+                if discovered.get("status"):
+                    item.match_status = discovered["status"]
+                    continue
+            item.match_status = "unmatched"
+            continue
+
         historical = activate_historical_arrival(db, item, apply=workflow_automation_enabled)
         item.raw_payload = {**(item.raw_payload or {}), "_historical_activation": historical}
         if historical.get("status") == "already_activated":
