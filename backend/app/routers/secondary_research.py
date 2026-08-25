@@ -61,17 +61,17 @@ def export_secondary_research(
     )
 
 
-@router.post("/manual", response_model=schemas.SecondaryResearchItemRead)
+@router.post("/manual", response_model=list[schemas.SecondaryResearchItemRead])
 def create_manual_secondary_research(
     payload: schemas.ManualSecondaryResearchCreate,
     db: Session = Depends(get_db),
     auth: AuthContext | None = Depends(require_roles("operator", "manager")),
-) -> dict:
+) -> list[dict]:
     owner = secondary_research_write_owner(auth, payload.salesperson_name)
     if not owner:
         raise HTTPException(status_code=400, detail="salesperson_name is required")
     try:
-        item = services.create_manual_secondary_research(
+        items = services.create_manual_secondary_research(
             db,
             payload,
             owner,
@@ -79,10 +79,10 @@ def create_manual_secondary_research(
             actor_user_id=auth.user.id if auth else None,
         )
     except ValueError as exc:
-        status_code = 409 if "已存在于后续阶段" in str(exc) else 400
+        status_code = 409 if "已存在" in str(exc) else 400
         raise HTTPException(status_code=status_code, detail=str(exc)) from exc
     db.commit()
-    return item
+    return items
 
 
 @router.get("/plm-arrival-assignments", response_model=list[schemas.PlmArrivalAssignmentRead])

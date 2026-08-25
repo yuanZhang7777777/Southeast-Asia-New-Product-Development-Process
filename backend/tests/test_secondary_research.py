@@ -386,98 +386,151 @@ def test_secondary_research_history_can_include_submitted_records_after_workflow
     assert next(item for item in items if item["sub_sku"] == "SUB-SUBMITTED")["secondary_conclusion"] == "已提交结论"
 
 
-def test_manual_secondary_research_creates_missing_sku_without_tasks_or_notifications() -> None:
+def test_manual_secondary_research_creates_multi_child_research_snapshot() -> None:
     response = client.post(
         "/secondary-research/manual",
         json={
             "country": "菲律宾",
             "main_sku": "MANUAL-MAIN",
-            "sub_sku": "MANUAL-SUB",
             "salesperson_name": "销售A",
-            "business_period": "手工二调0803期",
-            "main_sku_name": "手工新增商品",
-            "sub_sku_name": "黑色",
-            "secondary_competitor_url": "https://shopee.ph/item/manual",
+            "business_period": "销售自选8.24-8.30",
+            "main_sku_name": "手工商品",
+            "keyword": "折叠收纳",
+            "route": "direct_secondary",
+            "children": [
+                {
+                    "sub_sku": "MANUAL-A",
+                    "sub_sku_name": "黑色",
+                    "target_daily_sales": 6,
+                    "reference_price": 399,
+                    "secondary_competitor_url": "https://shopee.ph/anchor-a",
+                    "competitors": {
+                        "lowest": {"url": "https://shopee.ph/low", "price": 299, "monthly_sales": 88},
+                        "most_orders": {"url": "https://shopee.ph/hot", "price": 329, "monthly_sales": 900},
+                        "new_arrival": {"url": "https://shopee.ph/new", "price": 359, "monthly_sales": 35},
+                    },
+                },
+                {
+                    "sub_sku": "MANUAL-B",
+                    "sub_sku_name": None,
+                    "competitors": {"lowest": {"monthly_sales": 12}},
+                },
+            ],
         },
     )
 
     assert response.status_code == 200
-    item = response.json()
-    assert item["salesperson_name"] == "销售A"
-    assert item["sub_sku"] == "MANUAL-SUB"
-    assert item["downstream_status"] == "waiting_secondary_research"
-    assert item["secondary_competitor_url"] == "https://shopee.ph/item/manual"
+    assert [(row["sub_sku"], row["downstream_status"]) for row in response.json()] == [
+        ("MANUAL-A", "waiting_secondary_research"),
+        ("MANUAL-B", "waiting_secondary_research"),
+    ]
 
     listed = client.get(
         "/secondary-research",
-        params={"salesperson_name": "销售A", "business_period": "手工二调0803期"},
+        params={"salesperson_name": "销售A", "business_period": "销售自选8.24-8.30"},
     )
     assert listed.status_code == 200
     group = listed.json()[0]
     assert group["source_type"] == "manual_secondary"
     assert group["country"] == "菲律宾"
     assert group["main_sku"] == "MANUAL-MAIN"
-    assert [row["sub_sku"] for row in group["items"]] == ["MANUAL-SUB"]
+    assert [row["sub_sku"] for row in group["items"]] == ["MANUAL-A", "MANUAL-B"]
 
     with SessionLocal() as db:
-        opportunity = db.get(models.NewProductOpportunity, item["opportunity_id"])
-        claim = db.get(models.SalesClaimForecast, item["claim_record_id"])
-        snapshot = db.query(models.SourceRecordSnapshot).one()
-        assert opportunity.source_type == "manual_secondary"
-        assert opportunity.current_status == "waiting_secondary_research"
-        assert claim.claim_source == "manual_secondary"
+        opportunities = db.query(models.NewProductOpportunity).order_by(models.NewProductOpportunity.sub_sku).all()
+        claims = db.query(models.SalesClaimForecast).order_by(models.SalesClaimForecast.id).all()
+        assert [row.keyword for row in opportunities] == ["折叠收纳", "折叠收纳"]
+        assert opportunities[0].snapshot["currency_code"] == "PHP"
+        assert opportunities[0].snapshot["headers_by_column"]["AA"] == ["最低价竞品售价（PHP）"]
+        assert opportunities[0].snapshot["fields_by_column"]["Z"] == "https://shopee.ph/low"
+        assert opportunities[0].snapshot["fields_by_column"]["AO"] == 6
+        assert opportunities[0].snapshot["fields_by_column"]["AP"] == 399
+        assert {row.claim_source for row in claims} == {"manual_secondary"}
+        market_items = db.query(models.MarketResearchItem).filter_by(opportunity_id=opportunities[0].id).all()
+        assert {
+            (row.research_type, row.competitor_price, row.competitor_monthly_sales)
+            for row in market_items
+        } == {("最低价", 299, 88), ("most_orders", 329, 900), ("新晋", 359, 35)}
+        assert db.query(models.MarketResearchItem).count() == 4
+        assert db.query(models.SourceRecordSnapshot).count() == 2
         assert db.query(models.FlowTask).count() == 0
         assert db.query(models.NotificationLog).count() == 0
-        assert snapshot.payload["manual_secondary"]["main_sku"] == "MANUAL-MAIN"
 
 
-def test_manual_secondary_research_reuses_pending_exact_match_and_rejects_later_stage() -> None:
-    first = client.post(
+def test_manual_secondary_initial_stocking_prefills_existing_stocking_flow() -> None:
+    response = client.post(
         "/secondary-research/manual",
         json={
-            "country": "PH",
-            "main_sku": "MANUAL-MAIN",
-            "sub_sku": "MANUAL-SUB",
+            "country": "TH",
+            "main_sku": "STOCK-MAIN",
             "salesperson_name": "销售A",
+            "route": "initial_stocking",
+            "children": [{"sub_sku": "STOCK-A", "target_daily_sales": 3.5}],
         },
     )
-    assert first.status_code == 200
-    claim_id = first.json()["claim_record_id"]
-
-    repeated = client.post(
-        "/secondary-research/manual",
-        json={
-            "country": "菲律宾",
-            "main_sku": "MANUAL-MAIN",
-            "sub_sku": "MANUAL-SUB",
-            "salesperson_name": "销售A",
-        },
-    )
-    assert repeated.status_code == 200
-    assert repeated.json()["claim_record_id"] == claim_id
-
+    assert response.status_code == 200
     with SessionLocal() as db:
-        claim = db.get(models.SalesClaimForecast, claim_id)
-        fill_research(claim, "利润款", "可以刊登")
-        db.commit()
-    submitted = client.post(
-        "/secondary-research/submit-group",
-        params={"salesperson_name": "销售A"},
-        json={"claim_record_ids": [claim_id]},
-    )
-    assert submitted.status_code == 200
+        claim = db.query(models.SalesClaimForecast).one()
+        request = db.query(models.StockingRequest).one()
+        assert (claim.source_column, claim.downstream_status, claim.claim_daily_sales) == (
+            "platform",
+            "waiting_stocking_request",
+            3.5,
+        )
+        assert (request.status, request.daily_sales, request.quantity) == ("draft", 3.5, 105)
 
-    blocked = client.post(
+
+def test_manual_secondary_ready_to_list_reuses_inventory_branch() -> None:
+    response = client.post(
+        "/secondary-research/manual",
+        json={
+            "country": "VN",
+            "main_sku": "LIST-MAIN",
+            "salesperson_name": "销售A",
+            "route": "ready_to_list",
+            "children": [{"sub_sku": "LIST-A", "target_daily_sales": 8}],
+        },
+    )
+    assert response.status_code == 200
+    with SessionLocal() as db:
+        claim = db.query(models.SalesClaimForecast).one()
+        assert (claim.inventory_available, claim.needs_stocking, claim.downstream_status) == (
+            True,
+            False,
+            "waiting_listing",
+        )
+        assert claim.secondary_target_daily_sales == 8
+        assert db.query(models.StockingRequest).count() == 0
+
+
+def test_manual_secondary_existing_child_rejects_whole_group() -> None:
+    with SessionLocal() as db:
+        db.add(
+            models.NewProductOpportunity(
+                source_type="selection1_developer_claim_feedback",
+                country="PH",
+                site="PH",
+                main_sku="DUP-MAIN",
+                sub_sku="DUP-B",
+                current_status="assigned",
+            )
+        )
+        db.commit()
+
+    response = client.post(
         "/secondary-research/manual",
         json={
             "country": "PH",
-            "main_sku": "MANUAL-MAIN",
-            "sub_sku": "MANUAL-SUB",
+            "main_sku": "DUP-MAIN",
             "salesperson_name": "销售A",
+            "route": "direct_secondary",
+            "children": [{"sub_sku": "DUP-A"}, {"sub_sku": "DUP-B"}],
         },
     )
-    assert blocked.status_code == 409
-    assert "已存在于后续阶段" in blocked.json()["detail"]
+    assert response.status_code == 409
+    with SessionLocal() as db:
+        assert db.query(models.NewProductOpportunity).count() == 1
+        assert db.query(models.SalesClaimForecast).count() == 0
 
 
 def test_manager_assigns_plm_arrival_to_selected_operator_before_secondary_research() -> None:

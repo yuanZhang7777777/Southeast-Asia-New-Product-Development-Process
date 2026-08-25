@@ -23,7 +23,7 @@ from app.dingtalk_card_sender import DingTalkCardSender, NewProductTodoCard, mas
 from app.excel_images import PUBLIC_UPLOAD_PREFIX, UPLOADED_SOURCES_ROOT
 from app.field_mapping import normalize_header, number_value
 from app.oss_storage import read_oss_object_by_public_url
-from app.site_codes import normalize_site_code, site_display_label, site_match_values
+from app.site_codes import normalize_site_code, site_currency_code, site_display_label, site_match_values
 from app.workflow_status import (
     CLAIM_LISTING_OBSERVATION,
     CLAIM_RESULT_CLAIM,
@@ -1217,6 +1217,8 @@ def _country_label(value: str | None) -> str | None:
         "TH": "泰国",
         "VN": "越南",
         "MY": "马来西亚",
+        "SG": "新加坡",
+        "ID": "印度尼西亚",
     }.get(code or "", _clean_text(value))
 
 
@@ -1588,73 +1590,149 @@ def list_secondary_research_groups(
     return list(groups.values())
 
 
+MANUAL_COMPETITOR_COLUMNS = {
+    "lowest": ("最低价", "Z", "AA", "AB"),
+    "most_orders": ("most_orders", "AC", "AD", "AE"),
+    "new_arrival": ("新晋", "AL", "AM", "AN"),
+}
+
+MANUAL_ROUTE_STATUS = {
+    "direct_secondary": CLAIM_WAITING_SECONDARY_RESEARCH,
+    "initial_stocking": CLAIM_WAITING_STOCKING_REQUEST,
+    "ready_to_list": CLAIM_WAITING_LISTING,
+}
+
+
 def create_manual_secondary_research(
     db: Session,
     payload: schemas.ManualSecondaryResearchCreate,
     salesperson_name: str,
     actor_name: str | None = None,
     actor_user_id: str | None = None,
-) -> dict:
+) -> list[dict]:
     main_sku = _clean_text(payload.main_sku)
-    sub_sku = _clean_text(payload.sub_sku)
     owner = _clean_text(salesperson_name)
     site_code = normalize_site_code(payload.site or payload.country)
+    currency_code = site_currency_code(site_code)
     country = _country_label(payload.country or payload.site)
-    site = site_code or _clean_text(payload.site) or _clean_text(payload.country)
-    if not main_sku or not sub_sku or not owner or not site_code:
-        raise ValueError("country, main_sku, sub_sku and salesperson_name are required")
+    children = [(_clean_text(child.sub_sku), child) for child in payload.children]
+    if not main_sku or not owner or not country or any(not sub_sku for sub_sku, _child in children):
+        raise ValueError("country, main_sku, child sub_sku and salesperson_name are required")
+    if not site_code or not currency_code:
+        raise ValueError("暂不支持该国家或站点")
 
-    opportunity = next(
-        (
-            item for item in db.scalars(
-                select(models.NewProductOpportunity).where(
-                    models.NewProductOpportunity.main_sku == main_sku,
-                    models.NewProductOpportunity.sub_sku == sub_sku,
-                    models.NewProductOpportunity.current_status != OPPORTUNITY_DISABLED,
-                )
-            )
-            if normalize_site_code(item.site or item.country) == site_code
-        ),
-        None,
-    )
-    if opportunity is not None:
-        existing_claim = db.scalar(
-            select(models.SalesClaimForecast).where(
-                models.SalesClaimForecast.opportunity_id == opportunity.id,
-                models.SalesClaimForecast.salesperson_name == owner,
-                models.SalesClaimForecast.claim_result == CLAIM_RESULT_CLAIM,
+    child_keys = {sub_sku.lower() for sub_sku, _child in children if sub_sku}
+    existing = [
+        opportunity
+        for opportunity in db.scalars(
+            select(models.NewProductOpportunity).where(
+                func.lower(models.NewProductOpportunity.main_sku) == main_sku.lower(),
+                func.lower(models.NewProductOpportunity.sub_sku).in_(child_keys),
+                models.NewProductOpportunity.current_status.notin_(
+                    [OPPORTUNITY_DISABLED, OPPORTUNITY_REPLACED_BY_NORMALIZED_SELECTION1]
+                ),
             )
         )
-        if existing_claim is not None:
-            if existing_claim.downstream_status == CLAIM_WAITING_SECONDARY_RESEARCH:
-                return secondary_research_item(existing_claim, opportunity, secondary_research_peers(db, existing_claim))
-            raise ValueError("该 SKU 已存在于后续阶段，不能重复新增二次调研")
-    else:
+        if normalize_site_code(opportunity.site or opportunity.country) == site_code
+    ]
+    if existing:
+        duplicates = sorted({opportunity.sub_sku for opportunity in existing})
+        raise ValueError(f"以下 SKU 已存在，整组未新增：{', '.join(duplicates)}")
+
+    period = _clean_text(payload.business_period) or "手工二调"
+    keyword = _clean_text(payload.keyword)
+    main_sku_name = _clean_text(payload.main_sku_name)
+    downstream_status = MANUAL_ROUTE_STATUS[payload.route]
+    opportunity_status = (
+        CLAIM_WAITING_SECONDARY_RESEARCH
+        if payload.route == "direct_secondary"
+        else OPPORTUNITY_READY_FOR_STOCKING
+    )
+    now = datetime.now(timezone.utc)
+    created: list[tuple[models.SalesClaimForecast, models.NewProductOpportunity]] = []
+    for source_row, (sub_sku, child) in enumerate(children, start=1):
+        headers_by_column = {
+            "E": ["关键词"],
+            "Z": ["最低价竞品链接"],
+            "AA": [f"最低价竞品售价（{currency_code}）"],
+            "AB": ["最低价竞品月销"],
+            "AC": ["月销最高竞品链接"],
+            "AD": [f"月销最高竞品售价（{currency_code}）"],
+            "AE": ["月销最高竞品月销"],
+            "AL": ["新晋竞品链接"],
+            "AM": [f"新晋竞品售价（{currency_code}）"],
+            "AN": ["新晋竞品月销"],
+            "AO": ["目标单销"],
+            "AP": [f"竞对参考售价（{currency_code}）"],
+        }
+        values_by_column: dict[str, object] = {"E": keyword}
+        for competitor_key, (_research_type, url_column, price_column, sales_column) in MANUAL_COMPETITOR_COLUMNS.items():
+            competitor = child.competitors.get(competitor_key)
+            if competitor is not None:
+                values_by_column.update(
+                    {
+                        url_column: _clean_text(competitor.url),
+                        price_column: competitor.price,
+                        sales_column: competitor.monthly_sales,
+                    }
+                )
+        values_by_column["AO"] = child.target_daily_sales
+        values_by_column["AP"] = child.reference_price
+        fields_by_column = {
+            column: value for column, value in values_by_column.items() if value is not None and value != ""
+        }
+        fields_by_header: dict[str, object] = {}
+        for column, value in fields_by_column.items():
+            for header in headers_by_column[column]:
+                normalized_header = normalize_header(header)
+                if normalized_header:
+                    fields_by_header[normalized_header] = value
+
+        manual_secondary = {
+            "country": country,
+            "site": site_code,
+            "currency_code": currency_code,
+            "main_sku": main_sku,
+            "main_sku_name": main_sku_name,
+            "sub_sku": sub_sku,
+            "sub_sku_name": _clean_text(child.sub_sku_name),
+            "salesperson_name": owner,
+            "business_period": period,
+            "keyword": keyword,
+            "route": payload.route,
+            "target_daily_sales": child.target_daily_sales,
+            "reference_price": child.reference_price,
+            "secondary_competitor_url": _clean_text(child.secondary_competitor_url),
+            "competitors": {
+                key: competitor.model_dump(mode="json") for key, competitor in child.competitors.items()
+            },
+        }
         snapshot = {
-            "manual_secondary": {
-                "country": country,
-                "site": site,
-                "main_sku": main_sku,
-                "sub_sku": sub_sku,
-                "salesperson_name": owner,
-                "business_period": _clean_text(payload.business_period) or "手工二调",
-                "secondary_competitor_url": _clean_text(payload.secondary_competitor_url),
-            }
+            "source_type": "manual_secondary",
+            "currency_code": currency_code,
+            "allowed_columns": list(headers_by_column),
+            "headers_by_column": headers_by_column,
+            "fields_by_column": fields_by_column,
+            "fields_by_header": fields_by_header,
+            "cells": dict(fields_by_column),
+            "manual_secondary": manual_secondary,
         }
         opportunity = models.NewProductOpportunity(
             id=models.new_id(),
             source_type="manual_secondary",
-            source_file="手工新增二次调研",
+            source_file="平台手工新增 SKU",
             source_sheet="manual_secondary",
-            batch=snapshot["manual_secondary"]["business_period"],
+            source_row=source_row,
+            batch=period,
             country=country,
-            site=site,
+            site=site_code,
             developer_name=owner,
-            main_sku_name=_clean_text(payload.main_sku_name),
+            keyword=keyword,
+            main_sku_name=main_sku_name,
             main_sku=main_sku,
-            sub_sku_name=_clean_text(payload.sub_sku_name),
+            sub_sku_name=_clean_text(child.sub_sku_name),
             sub_sku=sub_sku,
-            current_status=CLAIM_WAITING_SECONDARY_RESEARCH,
+            current_status=opportunity_status,
             snapshot=snapshot,
         )
         db.add(opportunity)
@@ -1662,34 +1740,87 @@ def create_manual_secondary_research(
             models.SourceRecordSnapshot(
                 id=models.new_id(),
                 opportunity_id=opportunity.id,
-                source_file="手工新增二次调研",
+                source_file=opportunity.source_file,
                 source_sheet="manual_secondary",
-                payload=snapshot,
+                source_row=source_row,
+                column_range="E,Z:AP",
+                payload=deepcopy(snapshot),
             )
         )
+        for competitor_key, (research_type, _url_column, _price_column, _sales_column) in MANUAL_COMPETITOR_COLUMNS.items():
+            competitor = child.competitors.get(competitor_key)
+            if competitor is None or not any(
+                value is not None
+                for value in (competitor.url, competitor.price, competitor.monthly_sales)
+            ):
+                continue
+            db.add(
+                models.MarketResearchItem(
+                    id=models.new_id(),
+                    opportunity_id=opportunity.id,
+                    platform="Shopee",
+                    research_type=research_type,
+                    competitor_url=_clean_text(competitor.url),
+                    competitor_price=competitor.price,
+                    competitor_monthly_sales=competitor.monthly_sales,
+                    reference_daily_sales=child.target_daily_sales,
+                    reference_price=child.reference_price,
+                )
+            )
 
-    claim = models.SalesClaimForecast(
-        id=models.new_id(),
-        opportunity_id=opportunity.id,
-        salesperson_name=owner,
-        claim_result=CLAIM_RESULT_CLAIM,
-        source_column="manual_secondary",
-        claim_source="manual_secondary",
-        downstream_status=CLAIM_WAITING_SECONDARY_RESEARCH,
-        secondary_competitor_url=_clean_text(payload.secondary_competitor_url),
-    )
-    db.add(claim)
+        claim = models.SalesClaimForecast(
+            id=models.new_id(),
+            opportunity_id=opportunity.id,
+            platform="Shopee",
+            salesperson_name=owner,
+            claim_result=CLAIM_RESULT_CLAIM,
+            claim_daily_sales=child.target_daily_sales if payload.route == "initial_stocking" else None,
+            source_column="platform",
+            claim_source="manual_secondary",
+            downstream_status=downstream_status,
+            inventory_available=True if payload.route == "ready_to_list" else False if payload.route == "initial_stocking" else None,
+            needs_stocking=False if payload.route == "ready_to_list" else True if payload.route == "initial_stocking" else None,
+            stocking_decision_updated_at=now if payload.route != "direct_secondary" else None,
+            secondary_competitor_url=_clean_text(child.secondary_competitor_url),
+            secondary_target_daily_sales=child.target_daily_sales,
+        )
+        db.add(claim)
+        if payload.route == "initial_stocking":
+            db.flush()
+            create_stocking_draft_for_claim(db, claim.id, actor_name or owner)
+        audit(
+            db,
+            "secondary_research.manual_created",
+            "sales_claim_forecast",
+            claim.id,
+            {
+                "opportunity_id": opportunity.id,
+                "main_sku": main_sku,
+                "sub_sku": sub_sku,
+                "site": site_code,
+                "route": payload.route,
+            },
+            actor_name or owner,
+            actor_user_id,
+        )
+        created.append((claim, opportunity))
+
     audit(
         db,
-        "secondary_research.manual_created",
-        "sales_claim_forecast",
-        claim.id,
-        {"opportunity_id": opportunity.id, "main_sku": main_sku, "sub_sku": sub_sku, "site": site},
+        "secondary_research.manual_group_created",
+        "manual_secondary_group",
+        created[0][1].id,
+        {
+            "main_sku": main_sku,
+            "site": site_code,
+            "route": payload.route,
+            "sub_skus": [sub_sku for sub_sku, _child in children],
+        },
         actor_name or owner,
         actor_user_id,
     )
     db.flush()
-    return secondary_research_item(claim, opportunity, secondary_research_peers(db, claim))
+    return [secondary_research_item(claim, opportunity, []) for claim, opportunity in created]
 
 
 PLM_ARRIVAL_ASSIGNMENT_PENDING_STATUSES = frozenset({"pending_assignment", "existing_system_sku"})
@@ -4858,6 +4989,7 @@ def _stocking_source_label(opportunity: models.NewProductOpportunity) -> str:
         "selection1_developer_claim_feedback": "选品1",
         "selection2_caigen_claim_feedback": "选品2/财根",
         SALES_SELF_SELECTION: "销售自选",
+        "manual_secondary": "手工新增",
     }.get(opportunity.source_type, opportunity.source_type)
 
 
