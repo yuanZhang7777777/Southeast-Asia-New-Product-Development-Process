@@ -12,6 +12,13 @@ import {
   SECONDARY_RESEARCH_SKIP_LISTING,
   syncSecondaryResearchDraftPatch
 } from "../src/secondaryResearchDrafts.ts";
+import {
+  buildManualProductPayload,
+  createManualProductDraft,
+  emptyManualProductChild,
+  manualProductCurrency,
+  validateManualProductDraft
+} from "../src/manualProductEntry.ts";
 
 const secondaryResearchViewSource = readFileSync(new URL("../src/SecondaryResearchView.tsx", import.meta.url), "utf8");
 const apiSource = readFileSync(new URL("../src/api.ts", import.meta.url), "utf8");
@@ -217,6 +224,72 @@ test("二次调研支持手工新增之前没有的 SKU", () => {
   assert.match(secondaryResearchViewSource, /新增二调 SKU/);
   assert.match(secondaryResearchViewSource, /createManualSecondaryResearch/);
   assert.match(apiSource, /\/secondary-research\/manual/);
+});
+
+test("手工新增按站点显示 ISO 货币并保留三组竞品", () => {
+  assert.equal(manualProductCurrency("菲律宾"), "PHP");
+  assert.equal(manualProductCurrency("TH"), "THB");
+  const draft = createManualProductDraft("菲律宾", "销售A", "销售自选8.24-8.30");
+  draft.main_sku = " MAIN ";
+  draft.keyword = " 折叠收纳 ";
+  draft.children[0] = {
+    ...draft.children[0],
+    sub_sku: " SUB-A ",
+    target_daily_sales: "6",
+    reference_price: "399",
+    competitors: {
+      ...draft.children[0].competitors,
+      lowest: { url: "https://shopee.ph/low", price: "299", monthly_sales: "88" }
+    }
+  };
+
+  assert.deepEqual(validateManualProductDraft(draft, "direct_secondary"), {});
+  assert.deepEqual(buildManualProductPayload(draft, "direct_secondary").children[0], {
+    sub_sku: "SUB-A",
+    sub_sku_name: null,
+    target_daily_sales: 6,
+    reference_price: 399,
+    secondary_competitor_url: null,
+    competitors: {
+      lowest: { url: "https://shopee.ph/low", price: 299, monthly_sales: 88 }
+    }
+  });
+});
+
+test("手工新增阻止组内重复 SKU 且备货和刊登要求目标单销", () => {
+  const draft = createManualProductDraft("菲律宾", "销售A", "销售自选8.24-8.30");
+  draft.main_sku = "MAIN";
+  draft.children = [
+    { ...emptyManualProductChild(), sub_sku: "Sub-A" },
+    { ...emptyManualProductChild(), sub_sku: "sub-a" }
+  ];
+
+  assert.equal(validateManualProductDraft(draft, "direct_secondary")["children.1.sub_sku"], "子 SKU 不能重复");
+  draft.children[1].sub_sku = "SUB-B";
+  assert.equal(
+    validateManualProductDraft(draft, "initial_stocking")["children.0.target_daily_sales"],
+    "首次备货必须填写大于 0 的目标单销"
+  );
+  assert.equal(
+    validateManualProductDraft(draft, "ready_to_list")["children.1.target_daily_sales"],
+    "可刊登必须填写大于 0 的目标单销"
+  );
+});
+
+test("手工新增拒绝未知站点、负数和非 HTTP 链接", () => {
+  const draft = createManualProductDraft("UNKNOWN", "销售A", "销售自选8.24-8.30");
+  draft.main_sku = "MAIN";
+  draft.children[0].sub_sku = "SUB-A";
+  draft.children[0].reference_price = "-1";
+  draft.children[0].competitors.lowest.url = "ftp://example.com/item";
+  const errors = validateManualProductDraft(draft, "direct_secondary");
+
+  assert.equal(errors.country, "暂不支持该国家/站点");
+  assert.equal(errors["children.0.reference_price"], "竞对参考售价必须是大于或等于 0 的数字");
+  assert.equal(
+    errors["children.0.competitors.lowest.url"],
+    "请输入 http:// 或 https:// 开头的有效链接"
+  );
 });
 
 test("源表链接按实际 URL 编号，重复链接显示同链接编号", () => {

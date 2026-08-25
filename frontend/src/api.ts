@@ -1,3 +1,5 @@
+import type { ManualProductEntryPayload } from "./manualProductEntry";
+
 export const API_BASE = import.meta.env.VITE_API_BASE_URL || "/api";
 const AUTH_TOKEN_KEY = "np_flow_auth_token";
 
@@ -489,17 +491,6 @@ export type SecondaryResearchGroup = {
   items: SecondaryResearchItem[];
 };
 
-export type ManualSecondaryResearchPayload = {
-  country: string;
-  main_sku: string;
-  sub_sku: string;
-  salesperson_name?: string | null;
-  business_period?: string | null;
-  main_sku_name?: string | null;
-  sub_sku_name?: string | null;
-  secondary_competitor_url?: string | null;
-};
-
 export type PlmArrivalAssignment = {
   plm_arrival_item_id: string;
   arrival_date: string;
@@ -921,8 +912,8 @@ export const api = {
     ),
   secondaryResearchExport: (filter?: { scenario?: string; salesperson_name?: string; business_period?: string; country?: string; query?: string }) =>
     download(`/secondary-research/export${query(filter)}`, "二次调研导出.xlsx"),
-  createManualSecondaryResearch: (payload: ManualSecondaryResearchPayload) =>
-    request<SecondaryResearchItem>("/secondary-research/manual", { method: "POST", body: JSON.stringify(payload) }),
+  createManualSecondaryResearch: (payload: ManualProductEntryPayload) =>
+    request<SecondaryResearchItem[]>("/secondary-research/manual", { method: "POST", body: JSON.stringify(payload) }),
   plmArrivalAssignments: () => request<PlmArrivalAssignment[]>("/secondary-research/plm-arrival-assignments"),
   assignPlmArrivalGroup: (plmArrivalItemIds: string[], salespersonName: string) =>
     request<PlmArrivalAssignment[]>("/secondary-research/plm-arrival-assignments/assign-group", {
