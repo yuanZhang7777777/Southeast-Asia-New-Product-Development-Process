@@ -32,6 +32,15 @@ SITE_LABELS = {
     "ID": "印度尼西亚",
 }
 
+SITE_CURRENCIES = {
+    "PH": "PHP",
+    "TH": "THB",
+    "VN": "VND",
+    "MY": "MYR",
+    "SG": "SGD",
+    "ID": "IDR",
+}
+
 
 def normalize_site_code(value: Any) -> str | None:
     if value is None:
@@ -49,6 +58,11 @@ def site_display_label(value: Any) -> str | None:
     if not code:
         return None
     return SITE_LABELS.get(code, code)
+
+
+def site_currency_code(value: Any) -> str | None:
+    code = normalize_site_code(value)
+    return SITE_CURRENCIES.get(code) if code else None
 
 
 def site_match_values(value: Any) -> set[str]:

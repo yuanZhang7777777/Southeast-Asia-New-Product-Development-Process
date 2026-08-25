@@ -16,6 +16,7 @@ from app.auth import AuthContext  # noqa: E402
 from app.db import Base, SessionLocal, engine  # noqa: E402
 from app.main import app  # noqa: E402
 from app.routers.secondary_research import secondary_research_owner, secondary_research_write_owner  # noqa: E402
+from app.site_codes import site_currency_code  # noqa: E402
 
 
 client = TestClient(app)
@@ -24,6 +25,58 @@ client = TestClient(app)
 def setup_function() -> None:
     Base.metadata.drop_all(bind=engine)
     Base.metadata.create_all(bind=engine)
+
+
+def test_manual_secondary_site_currency_codes_are_unambiguous() -> None:
+    assert {code: site_currency_code(code) for code in ("PH", "TH", "VN", "MY", "SG", "ID")} == {
+        "PH": "PHP",
+        "TH": "THB",
+        "VN": "VND",
+        "MY": "MYR",
+        "SG": "SGD",
+        "ID": "IDR",
+    }
+    assert site_currency_code("菲律宾") == "PHP"
+    assert site_currency_code("UNKNOWN") is None
+
+
+def test_manual_secondary_contract_rejects_duplicate_children_and_missing_route_target() -> None:
+    with pytest.raises(ValueError, match="child sub_sku values must be unique"):
+        schemas.ManualSecondaryResearchCreate.model_validate(
+            {
+                "country": "PH",
+                "main_sku": "MAIN",
+                "route": "direct_secondary",
+                "children": [{"sub_sku": "Sub-A"}, {"sub_sku": "sub-a"}],
+            }
+        )
+    with pytest.raises(ValueError, match="target_daily_sales must be positive"):
+        schemas.ManualSecondaryResearchCreate.model_validate(
+            {
+                "country": "PH",
+                "main_sku": "MAIN",
+                "route": "initial_stocking",
+                "children": [{"sub_sku": "SUB-A"}],
+            }
+        )
+
+
+def test_manual_secondary_contract_rejects_non_http_urls() -> None:
+    with pytest.raises(ValueError, match="URL must use http or https"):
+        schemas.ManualSecondaryResearchCreate.model_validate(
+            {
+                "country": "PH",
+                "main_sku": "MAIN",
+                "route": "direct_secondary",
+                "children": [
+                    {
+                        "sub_sku": "SUB-A",
+                        "secondary_competitor_url": "not-a-url",
+                        "competitors": {"lowest": {"url": "https://example.com/item"}},
+                    }
+                ],
+            }
+        )
 
 
 def test_secondary_research_read_scope_allows_managers_and_locks_operators() -> None:

@@ -1,6 +1,7 @@
 import math
 from datetime import date, datetime
 from typing import Any, Literal
+from urllib.parse import urlparse
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -730,18 +731,74 @@ class SecondaryResearchSubmitGroupRequest(BaseModel):
     claim_record_ids: list[str] = Field(min_length=1)
 
 
+def _optional_http_url(value: str | None) -> str | None:
+    if value is None:
+        return None
+    text = value.strip()
+    if not text:
+        return None
+    parsed = urlparse(text)
+    if parsed.scheme.lower() not in {"http", "https"} or not parsed.netloc:
+        raise ValueError("URL must use http or https")
+    return text
+
+
+class ManualCompetitorCreate(BaseModel):
+    url: str | None = None
+    price: float | None = Field(default=None, ge=0)
+    monthly_sales: float | None = Field(default=None, ge=0)
+
+    @field_validator("url")
+    @classmethod
+    def valid_url(cls, value: str | None) -> str | None:
+        return _optional_http_url(value)
+
+    model_config = {"extra": "forbid", "allow_inf_nan": False}
+
+
+class ManualSecondaryChildCreate(BaseModel):
+    sub_sku: str
+    sub_sku_name: str | None = None
+    target_daily_sales: float | None = Field(default=None, ge=0)
+    reference_price: float | None = Field(default=None, ge=0)
+    secondary_competitor_url: str | None = None
+    competitors: dict[Literal["lowest", "most_orders", "new_arrival"], ManualCompetitorCreate] = Field(
+        default_factory=dict
+    )
+
+    @field_validator("secondary_competitor_url")
+    @classmethod
+    def valid_secondary_competitor_url(cls, value: str | None) -> str | None:
+        return _optional_http_url(value)
+
+    model_config = {"extra": "forbid", "allow_inf_nan": False}
+
+
 class ManualSecondaryResearchCreate(BaseModel):
     country: str
     site: str | None = None
     main_sku: str
-    sub_sku: str
     salesperson_name: str | None = None
     business_period: str | None = None
     main_sku_name: str | None = None
-    sub_sku_name: str | None = None
-    secondary_competitor_url: str | None = None
+    keyword: str | None = None
+    route: Literal["direct_secondary", "initial_stocking", "ready_to_list"]
+    children: list[ManualSecondaryChildCreate] = Field(min_length=1, max_length=500)
 
-    model_config = {"extra": "forbid"}
+    @model_validator(mode="after")
+    def validate_children(self):
+        normalized = [child.sub_sku.strip().casefold() for child in self.children]
+        if any(not value for value in normalized):
+            raise ValueError("child sub_sku is required")
+        if len(normalized) != len(set(normalized)):
+            raise ValueError("child sub_sku values must be unique")
+        if self.route != "direct_secondary" and any(
+            not child.target_daily_sales or child.target_daily_sales <= 0 for child in self.children
+        ):
+            raise ValueError("target_daily_sales must be positive for this route")
+        return self
+
+    model_config = {"extra": "forbid", "allow_inf_nan": False}
 
 
 class PlmArrivalSystemMatchRead(BaseModel):
