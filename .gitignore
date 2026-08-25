@@ -36,6 +36,7 @@ outputs/public_reverse_tunnel.log
 outputs/public_mapping_record.md
 outputs/
 backend/.runtime/
+backend/.test_outputs/
 backend/*.db.bak-*
 .agents/
 .codex_recovery/
