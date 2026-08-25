@@ -34,6 +34,20 @@ import { createKeyedSaveQueue, imageFiles } from "./imageUploads";
 import { isSelection2Item, selection2HeaderFields, Selection2SectionKey } from "./historicalSnapshot";
 import { cachedValue, setCachedValue } from "./pageDataCache";
 import { normalizeSiteText } from "./opportunityGroups";
+import {
+  buildManualProductPayload,
+  createManualProductDraft,
+  emptyManualProductChild,
+  manualProductCurrency,
+  validateManualProductDraft
+} from "./manualProductEntry";
+import type {
+  ManualCompetitorDraft,
+  ManualCompetitorKey,
+  ManualProductChildDraft,
+  ManualProductDraft,
+  ManualProductRoute
+} from "./manualProductEntry";
 
 type SourceModuleKey = "market" | "pricing" | "development" | "cost";
 type DrawerModuleKey = SourceModuleKey | "claims";
@@ -71,19 +85,12 @@ const moduleColumns: Record<SourceModuleKey, string[]> = {
   cost: columnsBetween("AW", "BX")
 };
 type DraftMap = Record<string, SecondaryResearchDraft<UploadedEvidenceImage>>;
-const MANUAL_SECONDARY_COUNTRIES = ["菲律宾", "泰国", "越南", "马来西亚"];
-
-type ManualSecondaryDraft = {
-  country: string;
-  salesperson_name: string;
-  business_period: string;
-  main_sku: string;
-  main_sku_name: string;
-  sub_sku: string;
-  sub_sku_name: string;
-  secondary_competitor_url: string;
-};
-type ManualSecondaryErrors = Partial<Record<keyof ManualSecondaryDraft, string>>;
+const MANUAL_SECONDARY_COUNTRIES = ["菲律宾", "泰国", "越南", "马来西亚", "新加坡", "印度尼西亚"];
+const MANUAL_COMPETITOR_SECTIONS: Array<{ key: ManualCompetitorKey; label: string }> = [
+  { key: "lowest", label: "最低价竞品" },
+  { key: "most_orders", label: "月销最高竞品" },
+  { key: "new_arrival", label: "新晋竞品" }
+];
 type PlmArrivalAssignmentGroup = {
   groupKey: string;
   itemIds: string[];
@@ -133,8 +140,8 @@ export function SecondaryResearchView(props: {
   const uploadCounts = useRef<Record<string, number>>({});
   const [, setUploadRevision] = useState(0);
   const [loading, setLoading] = useState(false);
-  const [manualSecondary, setManualSecondary] = useState<ManualSecondaryDraft | null>(null);
-  const [manualSecondaryErrors, setManualSecondaryErrors] = useState<ManualSecondaryErrors>({});
+  const [manualSecondary, setManualSecondary] = useState<ManualProductDraft | null>(null);
+  const [manualSecondaryErrors, setManualSecondaryErrors] = useState<Record<string, string>>({});
   const manualSecondaryDialog = useRef<HTMLDivElement | null>(null);
   const [plmAssignments, setPlmAssignments] = useState<PlmArrivalAssignment[]>([]);
   const [assignmentOperatorProfiles, setAssignmentOperatorProfiles] = useState<OperatorAssignmentProfile[]>([]);
@@ -474,16 +481,11 @@ export function SecondaryResearchView(props: {
 
   function openManualSecondary() {
     setManualSecondaryErrors({});
-    setManualSecondary({
-      country: countryFilter || "菲律宾",
-      salesperson_name: props.editable ? props.salespersonName : ownerFilter,
-      business_period: defaultManualSecondaryBusinessPeriod(),
-      main_sku: "",
-      main_sku_name: "",
-      sub_sku: "",
-      sub_sku_name: "",
-      secondary_competitor_url: ""
-    });
+    setManualSecondary(createManualProductDraft(
+      countryFilter || "菲律宾",
+      props.editable ? props.salespersonName : ownerFilter,
+      defaultManualSecondaryBusinessPeriod()
+    ));
   }
 
   function closeManualSecondary() {
@@ -491,49 +493,94 @@ export function SecondaryResearchView(props: {
     setManualSecondaryErrors({});
   }
 
-  function updateManualSecondary(field: keyof ManualSecondaryDraft, value: string) {
+  function clearManualSecondaryError(path: string) {
+    setManualSecondaryErrors((current) => {
+      if (!current[path]) return current;
+      const next = { ...current };
+      delete next[path];
+      return next;
+    });
+  }
+
+  function updateManualSecondary(field: Exclude<keyof ManualProductDraft, "children">, value: string) {
     setManualSecondary((current) => current ? { ...current, [field]: value } : current);
-    setManualSecondaryErrors((current) => ({ ...current, [field]: undefined }));
+    clearManualSecondaryError(field);
   }
 
-  function validateManualSecondary(draft: ManualSecondaryDraft) {
-    const errors: ManualSecondaryErrors = {};
-    if (!draft.country.trim()) errors.country = "请填写国家";
-    if (!draft.main_sku.trim()) errors.main_sku = "请填写主 SKU";
-    if (!draft.sub_sku.trim()) errors.sub_sku = "请填写子 SKU";
-    if (!draft.salesperson_name.trim()) errors.salesperson_name = "请填写负责人";
-    return errors;
+  function updateManualSecondaryChild(
+    index: number,
+    field: Exclude<keyof ManualProductChildDraft, "competitors">,
+    value: string
+  ) {
+    setManualSecondary((current) => current ? {
+      ...current,
+      children: current.children.map((child, childIndex) => childIndex === index ? { ...child, [field]: value } : child)
+    } : current);
+    clearManualSecondaryError(`children.${index}.${field}`);
   }
 
-  async function submitManualSecondary() {
+  function updateManualSecondaryCompetitor(
+    index: number,
+    competitorKey: ManualCompetitorKey,
+    field: keyof ManualCompetitorDraft,
+    value: string
+  ) {
+    setManualSecondary((current) => current ? {
+      ...current,
+      children: current.children.map((child, childIndex) => childIndex === index ? {
+        ...child,
+        competitors: {
+          ...child.competitors,
+          [competitorKey]: { ...child.competitors[competitorKey], [field]: value }
+        }
+      } : child)
+    } : current);
+    clearManualSecondaryError(`children.${index}.competitors.${competitorKey}.${field}`);
+  }
+
+  function addManualSecondaryChild() {
+    setManualSecondary((current) => current ? {
+      ...current,
+      children: [...current.children, emptyManualProductChild()]
+    } : current);
+    setManualSecondaryErrors({});
+  }
+
+  function removeManualSecondaryChild(index: number) {
+    setManualSecondary((current) => current && current.children.length > 1 ? {
+      ...current,
+      children: current.children.filter((_child, childIndex) => childIndex !== index)
+    } : current);
+    setManualSecondaryErrors({});
+  }
+
+  async function submitManualSecondary(route: ManualProductRoute) {
     if (!manualSecondary) return;
-    const errors = validateManualSecondary(manualSecondary);
+    const errors = validateManualProductDraft(manualSecondary, route);
     setManualSecondaryErrors(errors);
     if (Object.keys(errors).length) {
-      props.onStatus("请补全新增二调 SKU 信息");
+      props.onStatus("请修正新增 SKU 中标红字段");
       return;
     }
     const mainSku = manualSecondary.main_sku.trim();
+    const childCount = manualSecondary.children.length;
     setLoading(true);
     try {
-      await api.createManualSecondaryResearch({
-        country: manualSecondary.country.trim(),
-        salesperson_name: manualSecondary.salesperson_name.trim(),
-        business_period: manualSecondary.business_period.trim() || null,
-        main_sku: mainSku,
-        main_sku_name: manualSecondary.main_sku_name.trim() || null,
-        sub_sku: manualSecondary.sub_sku.trim(),
-        sub_sku_name: manualSecondary.sub_sku_name.trim() || null,
-        secondary_competitor_url: manualSecondary.secondary_competitor_url.trim() || null
-      });
+      await api.createManualSecondaryResearch(buildManualProductPayload(manualSecondary, route));
       closeManualSecondary();
-      setScenario("pending");
-      setPeriodFilter("__all__");
-      setQuery(mainSku);
-      props.onStatus(`${mainSku} 已新增到二次调研待处理`);
-      await loadGroups({ force: true });
+      if (route === "direct_secondary") {
+        setScenario("pending");
+        setPeriodFilter("__all__");
+        setQuery(mainSku);
+        props.onStatus(`${mainSku} 的 ${childCount} 个子 SKU 已新增到二次调研待处理`);
+        await loadGroups({ force: true });
+      } else if (route === "initial_stocking") {
+        props.onStatus(`${mainSku} 已创建首次备货草稿；请到备货申请完善并提交，导出并到货后会进入二调`);
+      } else {
+        props.onStatus(`${mainSku} 已进入刊登与观察待处理`);
+      }
     } catch (error) {
-      props.onStatus(error instanceof Error ? error.message : "新增二调 SKU 失败");
+      props.onStatus(error instanceof Error ? error.message : "新增 SKU 失败");
     } finally {
       setLoading(false);
     }
@@ -559,6 +606,7 @@ export function SecondaryResearchView(props: {
     }
   }
 
+  const manualSecondaryCurrency = manualProductCurrency(manualSecondary?.country);
   const controls = (
     <div className={`research-workbench-controls${group ? "" : " research-empty-controls"}`}>
       <div className="research-scenarios"><button className={`btn small ${scenario === "pending" ? "primary" : ""}`} type="button" onClick={() => setScenario("pending")}>待处理</button><button className={`btn small ${scenario === "submitted" ? "primary" : ""}`} type="button" onClick={() => setScenario("submitted")}>我已提交</button>{props.canManage && <button className={`btn small ${scenario === "arrival_assignment" ? "primary" : ""}`} type="button" onClick={() => setScenario("arrival_assignment")}>到货待分配</button>}</div>
@@ -570,36 +618,166 @@ export function SecondaryResearchView(props: {
       <button className="btn small" type="button" disabled={loading} onClick={() => void (scenario === "arrival_assignment" ? loadPlmAssignments({ force: true }) : loadGroups({ force: true }))}>刷新</button>
       {scenario !== "arrival_assignment" && <button className="btn small" type="button" disabled={loading} onClick={() => void exportResearch()}>导出二次调研</button>}
       {scenario !== "arrival_assignment" && <button className="btn small" type="button" disabled={loading} onClick={() => void exportResearch("all")}>导出全部二调</button>}
-      {scenario !== "arrival_assignment" && <button className="btn small primary" type="button" disabled={loading || (props.editable && !props.salespersonName)} onClick={openManualSecondary}><Plus size={13} />新增二调 SKU</button>}
+      {scenario !== "arrival_assignment" && <button className="btn small primary" type="button" disabled={loading || (props.editable && !props.salespersonName)} onClick={openManualSecondary}><Plus size={13} />新增 SKU</button>}
     </div>
   );
 
   const manualSecondaryDialogNode = manualSecondary && (
     <div className="listing-overlay" role="presentation">
       <div
-        className="listing-dialog"
+        className="listing-dialog manual-product-dialog"
         role="dialog"
         aria-modal="true"
         aria-labelledby="manual-secondary-title"
         tabIndex={-1}
         ref={manualSecondaryDialog}
       >
-        <button aria-label="关闭新增二调 SKU" className="listing-dialog-close" type="button" onClick={closeManualSecondary}><X size={18} /></button>
-        <h2 id="manual-secondary-title">新增二调 SKU</h2>
-        <p>用于承接原来商品看板里没有的 SKU。新增后进入二次调研待处理，不发钉钉、不跑 PLM。</p>
-        <div className="manual-listing-grid">
-          <label>国家 *<select className={manualSecondaryErrors.country ? "listing-error-input" : ""} value={manualSecondary.country} onChange={(event) => updateManualSecondary("country", event.target.value)}>{MANUAL_SECONDARY_COUNTRIES.map((country) => <option value={country} key={country}>{country}</option>)}</select><FieldError message={manualSecondaryErrors.country} /></label>
-          <label>负责人 *<input disabled={props.editable} className={manualSecondaryErrors.salesperson_name ? "listing-error-input" : ""} value={manualSecondary.salesperson_name} onChange={(event) => updateManualSecondary("salesperson_name", event.target.value)} /><FieldError message={manualSecondaryErrors.salesperson_name} /></label>
+        <button aria-label="关闭新增 SKU" className="listing-dialog-close" type="button" onClick={closeManualSecondary}><X size={18} /></button>
+        <h2 id="manual-secondary-title">新增 SKU</h2>
+        <p>用于新增商品看板里没有的 SKU。同一组子 SKU 共用一次提交去向，不发钉钉。</p>
+        <div className="manual-product-common-grid">
+          <label>
+            国家 / 币种 *
+            <select
+              className={manualSecondaryErrors.country ? "listing-error-input" : ""}
+              value={manualSecondary.country}
+              onChange={(event) => updateManualSecondary("country", event.target.value)}
+            >
+              {MANUAL_SECONDARY_COUNTRIES.map((country) => <option value={country} key={country}>{country}</option>)}
+            </select>
+            <small>售价币种：{manualSecondaryCurrency || "-"}</small>
+            <FieldError message={manualSecondaryErrors.country} />
+          </label>
+          <label>
+            负责人 *
+            <input
+              disabled={props.editable}
+              className={manualSecondaryErrors.salesperson_name ? "listing-error-input" : ""}
+              value={manualSecondary.salesperson_name}
+              onChange={(event) => updateManualSecondary("salesperson_name", event.target.value)}
+            />
+            <FieldError message={manualSecondaryErrors.salesperson_name} />
+          </label>
           <label>业务期<input value={manualSecondary.business_period} onChange={(event) => updateManualSecondary("business_period", event.target.value)} placeholder="默认当前自然周，可改" /></label>
-          <label>主 SKU *<input className={manualSecondaryErrors.main_sku ? "listing-error-input" : ""} value={manualSecondary.main_sku} onChange={(event) => updateManualSecondary("main_sku", event.target.value)} /><FieldError message={manualSecondaryErrors.main_sku} /></label>
+          <label>
+            主 SKU *
+            <input className={manualSecondaryErrors.main_sku ? "listing-error-input" : ""} value={manualSecondary.main_sku} onChange={(event) => updateManualSecondary("main_sku", event.target.value)} />
+            <FieldError message={manualSecondaryErrors.main_sku} />
+          </label>
           <label>主 SKU 名称<input value={manualSecondary.main_sku_name} onChange={(event) => updateManualSecondary("main_sku_name", event.target.value)} /></label>
-          <label>子 SKU *<input className={manualSecondaryErrors.sub_sku ? "listing-error-input" : ""} value={manualSecondary.sub_sku} onChange={(event) => updateManualSecondary("sub_sku", event.target.value)} /><FieldError message={manualSecondaryErrors.sub_sku} /></label>
-          <label>子 SKU 名称<input value={manualSecondary.sub_sku_name} onChange={(event) => updateManualSecondary("sub_sku_name", event.target.value)} /></label>
-          <label>锚定链接<input value={manualSecondary.secondary_competitor_url} onChange={(event) => updateManualSecondary("secondary_competitor_url", event.target.value)} placeholder="可选" /></label>
+          <label>关键词<input value={manualSecondary.keyword} onChange={(event) => updateManualSecondary("keyword", event.target.value)} placeholder="可选" /></label>
         </div>
+
+        {manualSecondary.children.map((child, index) => (
+          <section className="manual-product-child" aria-label={`子 SKU ${index + 1}`} key={index}>
+            <div className="manual-product-child-head">
+              <h3>子 SKU {index + 1}</h3>
+              {manualSecondary.children.length > 1 && (
+                <button className="btn small" type="button" aria-label={`删除子 SKU ${index + 1}`} onClick={() => removeManualSecondaryChild(index)}>删除</button>
+              )}
+            </div>
+            <div className="manual-product-child-grid">
+              <label>
+                子 SKU *
+                <input
+                  aria-label={`子 SKU ${index + 1}`}
+                  className={manualSecondaryErrors[`children.${index}.sub_sku`] ? "listing-error-input" : ""}
+                  value={child.sub_sku}
+                  onChange={(event) => updateManualSecondaryChild(index, "sub_sku", event.target.value)}
+                />
+                <FieldError message={manualSecondaryErrors[`children.${index}.sub_sku`]} />
+              </label>
+              <label>子 SKU 名称<input aria-label={`子 SKU 名称 ${index + 1}`} value={child.sub_sku_name} onChange={(event) => updateManualSecondaryChild(index, "sub_sku_name", event.target.value)} /></label>
+              <label>
+                目标单销（首次备货 / 可刊登必填）
+                <input
+                  type="number"
+                  min="0"
+                  step="any"
+                  className={manualSecondaryErrors[`children.${index}.target_daily_sales`] ? "listing-error-input" : ""}
+                  value={child.target_daily_sales}
+                  onChange={(event) => updateManualSecondaryChild(index, "target_daily_sales", event.target.value)}
+                />
+                <FieldError message={manualSecondaryErrors[`children.${index}.target_daily_sales`]} />
+              </label>
+              <label>
+                竞对参考售价（{manualSecondaryCurrency || "当地币种"}）
+                <input
+                  type="number"
+                  min="0"
+                  step="any"
+                  className={manualSecondaryErrors[`children.${index}.reference_price`] ? "listing-error-input" : ""}
+                  value={child.reference_price}
+                  onChange={(event) => updateManualSecondaryChild(index, "reference_price", event.target.value)}
+                />
+                <FieldError message={manualSecondaryErrors[`children.${index}.reference_price`]} />
+              </label>
+              <label>
+                二调锚定链接
+                <input
+                  type="url"
+                  className={manualSecondaryErrors[`children.${index}.secondary_competitor_url`] ? "listing-error-input" : ""}
+                  value={child.secondary_competitor_url}
+                  onChange={(event) => updateManualSecondaryChild(index, "secondary_competitor_url", event.target.value)}
+                  placeholder="https://...（可选）"
+                />
+                <FieldError message={manualSecondaryErrors[`children.${index}.secondary_competitor_url`]} />
+              </label>
+            </div>
+            <div className="manual-product-competitors">
+              {MANUAL_COMPETITOR_SECTIONS.map((section) => {
+                const competitor = child.competitors[section.key];
+                const errorPrefix = `children.${index}.competitors.${section.key}`;
+                return (
+                  <div className="manual-product-competitor" key={section.key}>
+                    <h4>{section.label}</h4>
+                    <label>
+                      链接
+                      <input
+                        type="url"
+                        className={manualSecondaryErrors[`${errorPrefix}.url`] ? "listing-error-input" : ""}
+                        value={competitor.url}
+                        onChange={(event) => updateManualSecondaryCompetitor(index, section.key, "url", event.target.value)}
+                        placeholder="https://..."
+                      />
+                      <FieldError message={manualSecondaryErrors[`${errorPrefix}.url`]} />
+                    </label>
+                    <label>
+                      售价（{manualSecondaryCurrency || "当地币种"}）
+                      <input
+                        type="number"
+                        min="0"
+                        step="any"
+                        className={manualSecondaryErrors[`${errorPrefix}.price`] ? "listing-error-input" : ""}
+                        value={competitor.price}
+                        onChange={(event) => updateManualSecondaryCompetitor(index, section.key, "price", event.target.value)}
+                      />
+                      <FieldError message={manualSecondaryErrors[`${errorPrefix}.price`]} />
+                    </label>
+                    <label>
+                      月销
+                      <input
+                        type="number"
+                        min="0"
+                        step="any"
+                        className={manualSecondaryErrors[`${errorPrefix}.monthly_sales`] ? "listing-error-input" : ""}
+                        value={competitor.monthly_sales}
+                        onChange={(event) => updateManualSecondaryCompetitor(index, section.key, "monthly_sales", event.target.value)}
+                      />
+                      <FieldError message={manualSecondaryErrors[`${errorPrefix}.monthly_sales`]} />
+                    </label>
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+        ))}
+        <button className="btn small" type="button" onClick={addManualSecondaryChild}><Plus size={13} />添加子 SKU</button>
         <div className="listing-dialog-actions">
           <button className="btn" type="button" onClick={closeManualSecondary}>取消</button>
-          <button className="btn primary" type="button" disabled={loading} onClick={() => void submitManualSecondary()}>确认新增</button>
+          <button className="btn primary" type="button" disabled={loading} onClick={() => void submitManualSecondary("direct_secondary")}>直接进入二调</button>
+          <button className="btn" type="button" disabled={loading} onClick={() => void submitManualSecondary("initial_stocking")}>首次备货</button>
+          <button className="btn" type="button" disabled={loading} onClick={() => void submitManualSecondary("ready_to_list")}>可刊登</button>
         </div>
       </div>
     </div>

@@ -165,6 +165,7 @@ export function buildStockingExportPayload(requestIds: readonly string[]) {
 
 export function stockingSourceLabel(source: string) {
   if (source === "sales_self_selection") return "销售自选";
+  if (source === "manual_secondary") return "手工新增";
   if (source === "selection1" || source === "selection1_developer_claim_feedback") return "选品1";
   if (source === "selection2_caigen_claim_feedback") return "选品2/财根";
   return source;

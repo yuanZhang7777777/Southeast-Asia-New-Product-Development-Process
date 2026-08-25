@@ -260,6 +260,7 @@ test("主管导出选择只保留当前可见且仍可导出的申请", () => {
 test("来源标签和销售自选弹窗提供准确且可访问的名称", () => {
   assert.equal(stockingSourceLabel("selection1_developer_claim_feedback"), "选品1");
   assert.equal(stockingSourceLabel("selection2_caigen_claim_feedback"), "选品2/财根");
+  assert.equal(stockingSourceLabel("manual_secondary"), "手工新增");
   assert.match(view, /role="dialog" aria-modal="true" aria-labelledby="sales-self-title"/);
   assert.match(view, /id="sales-self-title"/);
   assert.match(view, /aria-label="关闭销售自选弹窗"/);
@@ -281,12 +282,18 @@ test("运营界面覆盖销售自选、三分支、体积降级、草稿和提�
   assert.match(view, /stocking-request-form-grid/);
 });
 
-test("主管筛选和选择固定在内部滚动的 16 列表格上方", () => {
+test("主管筛选和选择固定在内部滚动的备货与追溯明细表上方", () => {
   assert.match(view, /stocking-manager-toolbar/);
   assert.match(view, /导出选中/);
   assert.match(view, /全选当前筛选/);
   assert.match(view, /stocking-export-scroll/);
-  assert.equal((view.match(/<th>/g) || []).length, 16);
+  const headerRows = Array.from(view.matchAll(/<thead><tr>(.*?)<\/tr><\/thead>/g), (match) =>
+    Array.from(match[1].matchAll(/<th>(.*?)<\/th>/g), (header) => header[1])
+  );
+  assert.deepEqual(headerRows, [
+    ["操作状态", "申请日期", "备货类型", "选品数据源", "销售员", "主 SKU", "子 SKU", "成本价", "单个体积", "备货单销", "备货数量", "备货国家", "备货仓库", "货值", "体积", "补货原因"],
+    ["追溯类型", "操作状态", "销售员", "主 SKU", "子 SKU", "站点", "认领结果", "认领单销", "不认领理由", "销售反馈总结", "主管复核", "来源"]
+  ]);
   const scrollRule = styles.match(/\.stocking-export-scroll\s*\{([^}]*)\}/)?.[1] || "";
   assert.match(scrollRule, /overflow:\s*auto/);
   assert.match(scrollRule, /min-width:\s*0/);

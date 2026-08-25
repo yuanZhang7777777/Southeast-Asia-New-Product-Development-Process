@@ -221,9 +221,23 @@ test("二次调研填写区使用锚定链接和新增字段且不再编辑 AL",
 });
 
 test("二次调研支持手工新增之前没有的 SKU", () => {
-  assert.match(secondaryResearchViewSource, /新增二调 SKU/);
+  assert.match(secondaryResearchViewSource, /新增 SKU/);
   assert.match(secondaryResearchViewSource, /createManualSecondaryResearch/);
   assert.match(apiSource, /\/secondary-research\/manual/);
+});
+
+test("新增 SKU 弹窗接入多子 SKU、三组竞品和三条既有流程", () => {
+  assert.match(secondaryResearchViewSource, /<h2 id="manual-secondary-title">新增 SKU<\/h2>/);
+  assert.match(secondaryResearchViewSource, /添加子 SKU/);
+  assert.match(secondaryResearchViewSource, /最低价竞品/);
+  assert.match(secondaryResearchViewSource, /月销最高竞品/);
+  assert.match(secondaryResearchViewSource, /新晋竞品/);
+  assert.match(secondaryResearchViewSource, /直接进入二调/);
+  assert.match(secondaryResearchViewSource, /首次备货/);
+  assert.match(secondaryResearchViewSource, /可刊登/);
+  assert.match(secondaryResearchViewSource, /submitManualSecondary\("direct_secondary"\)/);
+  assert.match(secondaryResearchViewSource, /submitManualSecondary\("initial_stocking"\)/);
+  assert.match(secondaryResearchViewSource, /submitManualSecondary\("ready_to_list"\)/);
 });
 
 test("手工新增按站点显示 ISO 货币并保留三组竞品", () => {
