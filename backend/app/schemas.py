@@ -323,6 +323,7 @@ class AssignmentBoardGroup(BaseModel):
 class AssignmentBoardResponse(BaseModel):
     batches: list[str] = Field(default_factory=list)
     assignees: list[str] = Field(default_factory=list)
+    status_options: list[str] = Field(default_factory=list)
     groups: list[AssignmentBoardGroup] = Field(default_factory=list)
 
 
@@ -720,8 +721,8 @@ class SecondaryResearchDraftUpdate(BaseModel):
     @field_validator("secondary_target_daily_sales")
     @classmethod
     def valid_target_daily_sales(cls, value: float | None) -> float | None:
-        if value is not None and value <= 0:
-            raise ValueError("secondary_target_daily_sales must be greater than 0")
+        if value is not None and value < 0:
+            raise ValueError("secondary_target_daily_sales must be non-negative")
         return value
 
 
@@ -842,6 +843,8 @@ class ListingRecordRead(BaseModel):
     representative_sub_sku: str | None = None
     is_history: bool = False
     bound_main_skus: list[str] = Field(default_factory=list)
+    bound_sub_skus: list[str] = Field(default_factory=list)
+    bound_sub_sku_names: list[str] = Field(default_factory=list)
 
 
 class ObservationPeriodRead(BaseModel):

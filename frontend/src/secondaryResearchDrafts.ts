@@ -8,6 +8,21 @@ type SecondaryResearchFilterGroup = {
   country?: string | null; business_period?: string | null; salesperson_name: string; main_sku: string; main_sku_name?: string | null;
   items: readonly { sub_sku: string; sub_sku_name?: string | null; secondary_research_submitted_at?: string | null; downstream_status: string }[];
 };
+
+export function defaultManualSecondaryBusinessPeriod(now = new Date()) {
+  const start = new Date(now);
+  start.setHours(0, 0, 0, 0);
+  const mondayOffset = (start.getDay() + 6) % 7;
+  start.setDate(start.getDate() - mondayOffset);
+  const end = new Date(start);
+  end.setDate(start.getDate() + 6);
+  return `销售自选${monthDay(start)}-${monthDay(end)}`;
+}
+
+function monthDay(date: Date) {
+  return `${date.getMonth() + 1}.${date.getDate()}`;
+}
+
 export function filterSecondaryResearchGroups<T extends SecondaryResearchFilterGroup>(groups: readonly T[], filters: SecondaryResearchFilters): T[] {
   const query = filters.query?.trim().toLocaleLowerCase();
   return groups.flatMap((group) => {
@@ -47,7 +62,7 @@ export function createSecondaryResearchDraft<TImage = Record<string, unknown>>(
     source.secondary_competitor_url ||
     source.secondary_conclusion ||
     source.product_positioning ||
-    source.secondary_target_daily_sales ||
+    source.secondary_target_daily_sales != null ||
     source.secondary_selling_points ||
     source.secondary_evidence_images?.length
   );
@@ -96,6 +111,27 @@ export function syncSecondaryResearchDraftPatch<TImage>(
   return next;
 }
 
+export function secondaryResearchTargetDailySalesValue(
+  draft: Pick<SecondaryResearchDraft, "positioning" | "targetDailySales">
+) {
+  const text = draft.targetDailySales.trim();
+  if (!text) return null;
+  const target = Number(text);
+  if (!Number.isFinite(target)) return null;
+  if (target > 0) return target;
+  if (target === 0 && SECONDARY_RESEARCH_SKIP_LISTING.has(draft.positioning)) return 0;
+  return null;
+}
+
+export function isSecondaryResearchDraftComplete<TImage>(draft: SecondaryResearchDraft<TImage>) {
+  return Boolean(
+    draft.conclusion.trim() &&
+    draft.positioning &&
+    secondaryResearchTargetDailySalesValue(draft) != null &&
+    draft.sellingPoints.trim()
+  );
+}
+
 export function incompleteSecondaryResearchItems<TImage>(
   items: readonly { claim_record_id: string; sub_sku: string }[],
   drafts: Record<string, SecondaryResearchDraft<TImage>>
@@ -103,8 +139,7 @@ export function incompleteSecondaryResearchItems<TImage>(
   return items
     .filter((item) => {
       const draft = drafts[item.claim_record_id] || createSecondaryResearchDraft<TImage>();
-      const target = Number(draft.targetDailySales);
-      return !draft.conclusion.trim() || !draft.positioning || !Number.isFinite(target) || target <= 0 || !draft.sellingPoints.trim();
+      return !isSecondaryResearchDraftComplete(draft);
     })
     .map((item) => item.sub_sku);
 }

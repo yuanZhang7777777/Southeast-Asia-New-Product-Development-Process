@@ -1518,6 +1518,19 @@ textarea {
   padding: 4px 7px;
 }
 
+.assignment-compact-input {
+  flex: 0 1 116px;
+  width: 116px;
+  min-width: 92px;
+  min-height: 30px;
+  padding: 4px 7px;
+}
+
+.assignment-compact-select.status {
+  flex-basis: 132px;
+  width: 132px;
+}
+
 .assignment-compact-select.category {
   flex-basis: 138px;
   width: 138px;

@@ -21,7 +21,7 @@ def build_plm_excel_history(
     grouped: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
     item_count = 0
     for date_text, workbook in workbooks:
-        preview = parse_plm_arrival_preview(workbook, date_text, bloc_name=bloc_name, include_non_new=True)
+        preview = parse_plm_arrival_preview(workbook, date_text, bloc_name=bloc_name)
         for item in preview["items"]:
             country = _norm(item.get("country"))
             sub_sku = _norm(item.get("sub_sku"))

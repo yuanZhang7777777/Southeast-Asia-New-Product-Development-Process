@@ -32,3 +32,10 @@ export function boardGroupSummary<T extends AssignmentBoardRowLike>(groups: read
     assignees: new Set(rows.map((row) => row.assignee_name).filter(Boolean)).size
   };
 }
+
+
+export function filterBoardOptionCandidates(options: readonly string[], query: string) {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return [...options];
+  return options.filter((option) => option.toLowerCase().includes(needle));
+}

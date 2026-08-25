@@ -58,7 +58,7 @@ import {
 } from "./api";
 import { AdminConsoleView } from "./AdminConsoleView";
 import { ClaimDraftState, claimSubmissionState, createClaimDraft, createClaimDraftFromLatest, formatRejectReason, parseClaimEvidenceImages, parseRejectReason, patchClaimDraftGroup, REJECT_REASON_OPTIONS } from "./claimDrafts";
-import { applyBoardReassignment, boardGroupSummary, canReassignBoardRow } from "./assignmentBoard";
+import { applyBoardReassignment, boardGroupSummary, canReassignBoardRow, filterBoardOptionCandidates } from "./assignmentBoard";
 import { filterAssignmentItems, groupOperatorProfilesBySite, moveOperatorWithinSite, reorderOperatorWithinSite, sortOperatorProfiles } from "./assignmentFilters";
 import { competitorGroupForColumn, competitorGroupForLabel } from "./competitorGroups";
 import {
@@ -1348,7 +1348,6 @@ function App() {
               ))}
             </div>
           </div>
-          <span className="hub-note">当前为测试阶段：真实钉钉自动推送保持关闭</span>
         </nav>
 
         <section className={(["claim", "research", "listing", "review", "admin"].includes(activeView) || activeView === "stock") && !detailGroup ? "layout claim-full-layout" : "layout"}>
@@ -3647,6 +3646,8 @@ function AssignmentBoardPanel(props: { operatorProfiles: OperatorAssignmentProfi
   const [board, setBoard] = useState<AssignmentBoardResponse | null>(null);
   const [batchFilter, setBatchFilter] = useState("");
   const [assigneeFilter, setAssigneeFilter] = useState("");
+  const [assigneeInput, setAssigneeInput] = useState("");
+  const [statusFilter, setStatusFilter] = useState("");
   const [reloadNonce, setReloadNonce] = useState(0);
   const [boardLoading, setBoardLoading] = useState(false);
   const [boardMessage, setBoardMessage] = useState("");
@@ -3658,7 +3659,11 @@ function AssignmentBoardPanel(props: { operatorProfiles: OperatorAssignmentProfi
     let cancelled = false;
     setBoardLoading(true);
     api
-      .assignmentBoard({ batch: batchFilter || undefined, assignee_name: assigneeFilter || undefined })
+      .assignmentBoard({
+        batch: batchFilter || undefined,
+        assignee_name: assigneeFilter || undefined,
+        opportunity_status: statusFilter || undefined
+      })
       .then((result) => {
         if (cancelled) return;
         setBoard(result);
@@ -3676,12 +3681,19 @@ function AssignmentBoardPanel(props: { operatorProfiles: OperatorAssignmentProfi
     return () => {
       cancelled = true;
     };
-  }, [assigneeFilter, batchFilter, reloadNonce]);
+  }, [assigneeFilter, batchFilter, statusFilter, reloadNonce]);
 
   const enabledProfiles = sortOperatorProfiles(props.operatorProfiles).filter((profile) => profile.enabled);
   const profileGroups = groupOperatorProfilesBySite(enabledProfiles);
   const groups = board?.groups || [];
   const summary = boardGroupSummary(groups);
+  const assigneeOptions = board?.assignees || [];
+  const assigneeCandidates = filterBoardOptionCandidates(assigneeOptions, assigneeInput);
+
+  function updateAssigneeInput(value: string) {
+    setAssigneeInput(value);
+    setAssigneeFilter(!value || assigneeOptions.includes(value) ? value : "");
+  }
 
   async function reassign(row: AssignmentBoardRow) {
     const assignee = reassignDrafts[row.task_id] || "";
@@ -3722,12 +3734,25 @@ function AssignmentBoardPanel(props: { operatorProfiles: OperatorAssignmentProfi
             <option key={batch || "__none"} value={batch}>{batch || "未指定期数"}</option>
           ))}
         </select>
-        <select className="assignment-compact-select" aria-label="按受派运营筛选分配结果" value={assigneeFilter} onChange={(event) => setAssigneeFilter(event.target.value)}>
-          <option value="">全部运营</option>
-          {(board?.assignees || []).map((name) => (
-            <option key={name} value={name}>{name}</option>
+        <select className="assignment-compact-select status" aria-label="按商品状态筛选分配结果" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
+          <option value="">全部状态</option>
+          {(board?.status_options || []).map((status) => (
+            <option key={status} value={status}>{statusMeta[status]?.label || status}</option>
           ))}
         </select>
+        <input
+          aria-label="按受派运营筛选分配结果"
+          className="assignment-compact-input"
+          list="assignment-board-assignee-options"
+          onChange={(event) => updateAssigneeInput(event.target.value)}
+          placeholder="全部运营"
+          value={assigneeInput}
+        />
+        <datalist id="assignment-board-assignee-options">
+          {assigneeCandidates.map((name) => (
+            <option key={name} value={name} />
+          ))}
+        </datalist>
         <button className="btn small" type="button" onClick={() => setReloadNonce((nonce) => nonce + 1)}>
           <RefreshCw size={14} />
           刷新

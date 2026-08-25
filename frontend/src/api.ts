@@ -317,6 +317,7 @@ export type AssignmentBoardGroup = {
 export type AssignmentBoardResponse = {
   batches: string[];
   assignees: string[];
+  status_options: string[];
   groups: AssignmentBoardGroup[];
 };
 
@@ -631,7 +632,10 @@ export type ListingRecord = {
   first_round_completed_at?: string | null;
   is_shared_item?: boolean;
   is_history?: boolean;
+  representative_sub_sku?: string | null;
   bound_main_skus?: string[];
+  bound_sub_skus?: string[];
+  bound_sub_sku_names?: string[];
 };
 
 export type ObservationPeriodRow = {
@@ -894,7 +898,7 @@ export const api = {
     }),
   assignmentConfirm: (opportunity_ids: string[], assignee_name: string) =>
     request<Task[]>("/assignments/confirm", { method: "POST", body: JSON.stringify({ opportunity_ids, assignee_name }) }),
-  assignmentBoard: (filter?: { batch?: string; assignee_name?: string }) =>
+  assignmentBoard: (filter?: { batch?: string; assignee_name?: string; opportunity_status?: string }) =>
     request<AssignmentBoardResponse>(`/assignments/board${query(filter)}`),
   assignmentReassign: (payload: { task_id: string; assignee_name: string; reason: string }) =>
     request<Task>("/assignments/reassign", { method: "POST", body: JSON.stringify(payload) }),

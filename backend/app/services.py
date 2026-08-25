@@ -796,6 +796,7 @@ def list_assignment_board(
     db: Session,
     batch: str | None = None,
     assignee_name: str | None = None,
+    opportunity_status: str | None = None,
 ) -> schemas.AssignmentBoardResponse:
     rows = db.execute(
         select(models.FlowTask, models.NewProductOpportunity)
@@ -842,10 +843,13 @@ def list_assignment_board(
         if period not in batches:
             batches.append(period)
     assignees = sorted({row.assignee_name for row in latest_rows if row.assignee_name})
+    status_options = sorted({row.opportunity_status for row in latest_rows if row.opportunity_status})
     filtered = [
         row
         for row in latest_rows
-        if (not batch or (row.batch or "") == batch) and (not assignee_name or row.assignee_name == assignee_name)
+        if (not batch or (row.batch or "") == batch)
+        and (not assignee_name or row.assignee_name == assignee_name)
+        and (not opportunity_status or row.opportunity_status == opportunity_status)
     ]
     grouped: dict[str, list[schemas.AssignmentBoardRow]] = defaultdict(list)
     for row in filtered:
@@ -855,7 +859,7 @@ def list_assignment_board(
         for period in batches
         if period in grouped
     ]
-    return schemas.AssignmentBoardResponse(batches=batches, assignees=assignees, groups=groups)
+    return schemas.AssignmentBoardResponse(batches=batches, assignees=assignees, status_options=status_options, groups=groups)
 
 
 def confirm_assignment(
@@ -2366,7 +2370,7 @@ def correct_secondary_research(
             raise ValueError("secondary_conclusion is required")
         if claim.product_positioning not in {"引流款", "利润款", "淘汰款", "稳定款", "清仓款"}:
             raise ValueError("product_positioning is required")
-        if not claim.secondary_target_daily_sales or claim.secondary_target_daily_sales <= 0:
+        if not _valid_secondary_target_daily_sales(claim):
             raise ValueError("secondary_target_daily_sales is required")
         if not _clean_text(claim.secondary_selling_points):
             raise ValueError("secondary_selling_points is required")
@@ -2441,8 +2445,7 @@ def submit_secondary_research_group(
         for claim, opportunity in selected
         if not _clean_text(claim.secondary_conclusion)
         or claim.product_positioning not in {"引流款", "利润款", "淘汰款", "稳定款", "清仓款"}
-        or not claim.secondary_target_daily_sales
-        or claim.secondary_target_daily_sales <= 0
+        or not _valid_secondary_target_daily_sales(claim)
         or not _clean_text(claim.secondary_selling_points)
     ]
     if missing:
@@ -2465,6 +2468,15 @@ def submit_secondary_research_group(
         )
         result.append(secondary_research_item(claim, opportunity, secondary_research_peers(db, claim)))
     return result
+
+
+def _valid_secondary_target_daily_sales(claim: models.SalesClaimForecast) -> bool:
+    value = claim.secondary_target_daily_sales
+    if value is None:
+        return False
+    if value > 0:
+        return True
+    return value == 0 and claim.product_positioning in {"淘汰款", "清仓款"}
 
 
 def list_secondary_research_export_rows(
@@ -2726,12 +2738,19 @@ def list_pending_listing_tasks(
                 "salesperson_name": claim.salesperson_name or "",
                 "claim_record_ids": [],
                 "default_first_period_start": default_start,
+                "_search_terms": [],
             },
         )
         if not group.get("image_url") and opportunity.image_url:
             group["image_url"] = opportunity.image_url
         if not group.get("main_sku_name") and opportunity.main_sku_name:
             group["main_sku_name"] = opportunity.main_sku_name
+        group["_search_terms"].extend([
+            opportunity.main_sku,
+            opportunity.main_sku_name,
+            opportunity.sub_sku,
+            opportunity.sub_sku_name,
+        ])
         waiting_group_keys.add(key)
         group["claim_record_ids"].append(claim.id)
     listing_statement = select(models.ListingRecord)
@@ -2762,10 +2781,12 @@ def list_pending_listing_tasks(
                 "salesperson_name": listing.salesperson_name,
                 "claim_record_ids": list(listing.source_claim_ids or []),
                 "default_first_period_start": default_start,
+                "_search_terms": [],
             },
         )
     for key, group in groups.items():
         group["claim_record_ids"].sort()
+        group["_search_terms"] = sorted({value for value in group.get("_search_terms", []) if value})
         reusable_ids = sorted(
             listing.id
             for listing in reusable_by_key.get(
@@ -3177,18 +3198,25 @@ def listing_source_context(
                 if image_url and listing_id not in images_by_listing:
                     images_by_listing[listing_id] = image_url
     bound_skus_by_listing: dict[str, set[str]] = defaultdict(set)
+    bound_sub_skus_by_listing: dict[str, set[str]] = defaultdict(set)
     if listings:
         listing_ids = [listing.id for listing in listings]
         listing_site_by_id = {
             listing.id: normalize_site_code(listing.site or listing.country)
             for listing in listings
         }
-        for listing_id, bound_main_sku in db.execute(
-            select(models.ListingSkuBinding.listing_record_id, models.ListingSkuBinding.main_sku).where(
+        for listing_id, bound_main_sku, bound_sub_sku in db.execute(
+            select(
+                models.ListingSkuBinding.listing_record_id,
+                models.ListingSkuBinding.main_sku,
+                models.ListingSkuBinding.sub_sku,
+            ).where(
                 models.ListingSkuBinding.listing_record_id.in_(listing_ids)
             )
         ):
             bound_skus_by_listing[listing_id].add(bound_main_sku)
+            if bound_sub_sku:
+                bound_sub_skus_by_listing[listing_id].add(bound_sub_sku)
         for listing_id, image_url in db.execute(
             select(models.ListingSkuBinding.listing_record_id, models.NewProductOpportunity.image_url)
             .join(
@@ -3233,6 +3261,7 @@ def listing_source_context(
                 if image_url:
                     images_by_listing[listing.id] = image_url
                     break
+    product_context = listing_product_context(db, listings)
     return {
         listing.id: {
             "source_business_periods": sorted(periods_by_listing[listing.id]),
@@ -3240,11 +3269,56 @@ def listing_source_context(
             if len(positions_by_listing[listing.id]) == 1
             else None,
             "bound_main_skus": sorted(bound_skus_by_listing[listing.id]),
+            "bound_sub_skus": sorted(bound_sub_skus_by_listing[listing.id] | product_context[listing.id]["sub_skus"]),
+            "bound_sub_sku_names": sorted(product_context[listing.id]["sub_sku_names"]),
+            "product_main_sku_name": product_context[listing.id]["main_sku_name"],
+            "product_search_terms": sorted(product_context[listing.id]["search_terms"]),
             "image_url": images_by_listing.get(listing.id),
         }
         for listing in listings
     }
 
+
+def listing_product_context(db: Session, listings: list[models.ListingRecord]) -> dict[str, dict]:
+    context = {
+        listing.id: {"main_sku_name": None, "sub_skus": set(), "sub_sku_names": set(), "search_terms": set()}
+        for listing in listings
+    }
+    listings_by_main_sku: dict[str, list[models.ListingRecord]] = defaultdict(list)
+    for listing in listings:
+        listings_by_main_sku[listing.main_sku].append(listing)
+    if not listings_by_main_sku:
+        return context
+    opportunities = db.scalars(
+        select(models.NewProductOpportunity)
+        .where(
+            models.NewProductOpportunity.main_sku.in_(list(listings_by_main_sku)),
+            models.NewProductOpportunity.current_status != OPPORTUNITY_DISABLED,
+        )
+        .order_by(models.NewProductOpportunity.created_at.desc())
+    )
+    for opportunity in opportunities:
+        opportunity_site = normalize_site_code(opportunity.site or opportunity.country)
+        for listing in listings_by_main_sku.get(opportunity.main_sku, []):
+            listing_site = normalize_site_code(listing.site or listing.country)
+            if listing_site and opportunity_site != listing_site:
+                continue
+            entry = context[listing.id]
+            if not entry["main_sku_name"] and opportunity.main_sku_name:
+                entry["main_sku_name"] = opportunity.main_sku_name
+            for field in (
+                opportunity.main_sku,
+                opportunity.main_sku_name,
+                opportunity.sub_sku,
+                opportunity.sub_sku_name,
+            ):
+                if field:
+                    entry["search_terms"].add(field)
+            if opportunity.sub_sku:
+                entry["sub_skus"].add(opportunity.sub_sku)
+            if opportunity.sub_sku_name:
+                entry["sub_sku_names"].add(opportunity.sub_sku_name)
+    return context
 
 def observation_positioning_defaults(
     db: Session,
@@ -3285,7 +3359,7 @@ def listing_record_read(item: models.ListingRecord, source_context: dict | None 
         "id": item.id,
         "task_key": item.source_group_key,
         "main_sku": item.main_sku,
-        "main_sku_name": item.main_sku_name,
+        "main_sku_name": item.main_sku_name or source_context.get("product_main_sku_name"),
         "image_url": source_context.get("image_url"),
         "country": item.country,
         "site": item.site,
@@ -3304,6 +3378,8 @@ def listing_record_read(item: models.ListingRecord, source_context: dict | None 
         "representative_sub_sku": item.representative_sub_sku,
         "is_history": item.source_type == "history_finebi",
         "bound_main_skus": source_context.get("bound_main_skus", []),
+        "bound_sub_skus": source_context.get("bound_sub_skus", []),
+        "bound_sub_sku_names": source_context.get("bound_sub_sku_names", []),
     }
 
 
@@ -3311,8 +3387,9 @@ def observation_period_read(
     period: models.ItemObservationPeriod,
     listing: models.ListingRecord,
     default_product_positioning: str | None = None,
-    image_url: str | None = None,
+    source_context: dict | None = None,
 ) -> dict:
+    source_context = source_context or {}
     rate = None
     if period.total_revenue not in {None, 0} and period.gross_profit_amount is not None:
         rate = period.gross_profit_amount / period.total_revenue
@@ -3320,8 +3397,8 @@ def observation_period_read(
         "id": period.id,
         "listing_record_id": listing.id,
         "main_sku": listing.main_sku,
-        "main_sku_name": listing.main_sku_name,
-        "image_url": image_url,
+        "main_sku_name": listing.main_sku_name or source_context.get("product_main_sku_name"),
+        "image_url": source_context.get("image_url"),
         "country": listing.country,
         "salesperson_name": listing.salesperson_name,
         "shop": listing.shop,
@@ -3374,23 +3451,14 @@ def list_listing_workbench(
         statement = statement.where(models.ListingRecord.shop.contains(shop.strip()))
     if tracking_status:
         statement = statement.where(models.ListingRecord.tracking_status == tracking_status)
+    listings = list(db.scalars(statement.order_by(models.ListingRecord.created_at.desc())))
+    source_context = listing_source_context(db, listings)
     text = (query or "").strip()
     if text:
-        like = f"%{text}%"
-        statement = statement.where(
-            or_(
-                models.ListingRecord.main_sku.ilike(like),
-                models.ListingRecord.main_sku_name.ilike(like),
-                models.ListingRecord.item.ilike(like),
-            )
-        )
-        pending = [
-            task
-            for task in pending
-            if text.lower() in task["main_sku"].lower()
-            or text.lower() in (task["main_sku_name"] or "").lower()
+        listings = [
+            listing for listing in listings if listing_matches_workbench_query(listing, source_context[listing.id], text)
         ]
-    listings = list(db.scalars(statement.order_by(models.ListingRecord.created_at.desc())))
+        pending = [task for task in pending if pending_listing_task_matches_query(task, text)]
     available_business_periods = sorted({
         *(item.business_period for item in listings if item.business_period),
         *(task["business_period"] for task in pending if task["business_period"]),
@@ -3438,12 +3506,36 @@ def list_listing_workbench(
                 period,
                 listing_by_id[period.listing_record_id],
                 positioning_defaults.get(period.id),
-                source_context.get(period.listing_record_id, {}).get("image_url"),
+                source_context.get(period.listing_record_id),
             )
             for period in periods
         ],
     }
 
+
+def listing_matches_workbench_query(listing: models.ListingRecord, source_context: dict, text: str) -> bool:
+    return query_matches_terms(
+        text,
+        [
+            listing.main_sku,
+            listing.main_sku_name,
+            listing.item,
+            source_context.get("product_main_sku_name"),
+            *(source_context.get("bound_main_skus") or []),
+            *(source_context.get("bound_sub_skus") or []),
+            *(source_context.get("bound_sub_sku_names") or []),
+            *(source_context.get("product_search_terms") or []),
+        ],
+    )
+
+
+def pending_listing_task_matches_query(task: dict, text: str) -> bool:
+    return query_matches_terms(text, [task["main_sku"], task.get("main_sku_name"), *(task.get("_search_terms") or [])])
+
+
+def query_matches_terms(text: str, terms: list[str | None]) -> bool:
+    needle = text.lower()
+    return any(needle in value.lower() for value in terms if value)
 
 def listing_summary(db: Session, main_sku: str, owner: str | None = None, country: str | None = None) -> dict:
     # 商品详情只看单个主 SKU：直接按 SKU（含绑定关系）查库，避免整表拉全部刊登与周数据再丢弃。
@@ -3836,6 +3928,71 @@ def recompute_listing_binding_state(db: Session, listing: models.ListingRecord) 
     listing.representative_sub_sku = sub_skus[0] if len(sub_skus) == 1 else None
 
 
+def listing_observation_daily_target(db: Session, listing: models.ListingRecord) -> float:
+    claim_ids = {claim_id for claim_id in (listing.source_claim_ids or []) if claim_id}
+    claim_ids.update(
+        claim_id
+        for claim_id in db.scalars(
+            select(models.ListingSkuBinding.claim_record_id).where(
+                models.ListingSkuBinding.listing_record_id == listing.id,
+                models.ListingSkuBinding.claim_record_id.is_not(None),
+            )
+        )
+        if claim_id
+    )
+    if not claim_ids:
+        return 1.0
+
+    positive_targets: list[float] = []
+    has_skip_target = False
+    for target, positioning in db.execute(
+        select(
+            models.SalesClaimForecast.secondary_target_daily_sales,
+            models.SalesClaimForecast.product_positioning,
+        ).where(models.SalesClaimForecast.id.in_(claim_ids))
+    ):
+        if target is None:
+            continue
+        if target > 0:
+            positive_targets.append(float(target))
+        elif target == 0 and positioning in {"淘汰款", "清仓款"}:
+            has_skip_target = True
+    if positive_targets:
+        return max(positive_targets)
+    if has_skip_target:
+        return 0.0
+    return 1.0
+
+
+def observation_period_reaches_target(period: models.ItemObservationPeriod, target_daily_sales: float) -> bool:
+    if target_daily_sales <= 0:
+        return True
+    if period.order_count is None:
+        return False
+    days = 7
+    if period.period_start and period.period_end:
+        days = max((period.period_end - period.period_start).days + 1, 1)
+    return period.order_count >= target_daily_sales * days
+
+
+def mark_initial_observation_completed_if_ready(
+    db: Session,
+    listing: models.ListingRecord,
+    completed_at: datetime,
+) -> None:
+    initial_periods = list(
+        db.scalars(
+            select(models.ItemObservationPeriod).where(
+                models.ItemObservationPeriod.listing_record_id == listing.id,
+                models.ItemObservationPeriod.week_number <= 4,
+                models.ItemObservationPeriod.record_source == "platform",
+            )
+        )
+    )
+    if len(initial_periods) == 4 and all(period.status == "completed" for period in initial_periods):
+        listing.initial_observation_completed_at = listing.initial_observation_completed_at or completed_at
+
+
 def apply_week_metrics(
     db: Session,
     shop: str,
@@ -3879,33 +4036,43 @@ def apply_week_metrics(
     period.gross_profit_amount = float(metrics["gross_profit_amount"])
     period.source_snapshot = metrics.get("source_snapshot") or {key: metrics[key] for key in required}
     period.metrics_fetched_at = models.now_utc()
-    if period.status == "pending_data":
-        period.status = "pending_review"
+    target_daily_sales = listing_observation_daily_target(db, listing)
+    target_reached = observation_period_reaches_target(period, target_daily_sales)
+    if period.status in {"pending_data", "pending_review"}:
+        period.status = "completed" if target_reached else "pending_review"
+    if period.status == "completed" and period.week_number <= 4:
+        mark_initial_observation_completed_if_ready(db, listing, period.metrics_fetched_at)
 
-    dedupe_key = f"dingtalk_card:observation-period:{period.id}"
-    pending_notification = any(
-        isinstance(value, models.NotificationLog) and value.dedupe_key == dedupe_key for value in db.new
-    )
-    if not pending_notification and db.scalar(
-        select(models.NotificationLog.id).where(models.NotificationLog.dedupe_key == dedupe_key)
-    ) is None:
-        db.add(
-            models.NotificationLog(
-                id=models.new_id(),
-                dedupe_key=dedupe_key,
-                task_id=period.id,
-                receiver_name=listing.salesperson_name,
-                channel="work_notice",
-                message_title=f"{listing.item} 第{period.week_number}周数据待复盘",
-                send_status="pending",
-            )
+    if period.status == "pending_review":
+        dedupe_key = f"dingtalk_card:observation-period:{period.id}"
+        pending_notification = any(
+            isinstance(value, models.NotificationLog) and value.dedupe_key == dedupe_key for value in db.new
         )
+        if not pending_notification and db.scalar(
+            select(models.NotificationLog.id).where(models.NotificationLog.dedupe_key == dedupe_key)
+        ) is None:
+            db.add(
+                models.NotificationLog(
+                    id=models.new_id(),
+                    dedupe_key=dedupe_key,
+                    task_id=period.id,
+                    receiver_name=listing.salesperson_name,
+                    channel="work_notice",
+                    message_title=f"{listing.item} 第{period.week_number}周数据待复盘",
+                    send_status="pending",
+                )
+            )
     audit(
         db,
         "observation.metrics_applied",
         "item_observation_period",
         period.id,
-        {"item": listing.item, "period_start": period_start.isoformat()},
+        {
+            "item": listing.item,
+            "period_start": period_start.isoformat(),
+            "target_daily_sales": target_daily_sales,
+            "target_reached": target_reached,
+        },
         actor_name,
     )
     return period

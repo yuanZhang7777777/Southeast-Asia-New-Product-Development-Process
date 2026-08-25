@@ -15,11 +15,14 @@ import {
 import {
   filterSecondaryResearchGroups,
   createSecondaryResearchDraft,
+  defaultManualSecondaryBusinessPeriod,
   incompleteSecondaryResearchItems,
+  isSecondaryResearchDraftComplete,
   patchSecondaryResearchDraft,
   researchLinkLabels,
   SECONDARY_RESEARCH_POSITIONINGS,
   SECONDARY_RESEARCH_SKIP_LISTING,
+  secondaryResearchTargetDailySalesValue,
   syncSecondaryResearchDraftPatch,
   SecondaryResearchDraft
 } from "./secondaryResearchDrafts";
@@ -161,6 +164,7 @@ export function SecondaryResearchView(props: {
     scenario: researchScenario, query, country: countryFilter, businessPeriod: periodFilter === "__all__" ? "" : periodFilter,
     salespersonName: props.editable ? "" : ownerFilter
   }), [allGroups, countryFilter, ownerFilter, periodFilter, props.editable, query, researchScenario]);
+  const manualSecondaryOpen = Boolean(manualSecondary);
   const visiblePlmAssignments = useMemo(() => {
     const keyword = query.trim().toLowerCase();
     return plmAssignments.filter((item) => {
@@ -292,7 +296,7 @@ export function SecondaryResearchView(props: {
 
   useEffect(() => {
     if (manualSecondary) manualSecondaryDialog.current?.focus();
-  }, [manualSecondary]);
+  }, [manualSecondaryOpen]);
 
   const groupProgress = useMemo(() => {
     if (!group) return { complete: 0, total: 0 };
@@ -421,8 +425,7 @@ export function SecondaryResearchView(props: {
   async function saveCorrection(item: SecondaryResearchItem) {
     if (isCorrectionBusy(item.claim_record_id)) return;
     const draft = draftsRef.current[item.claim_record_id];
-    const target = Number(draft?.targetDailySales);
-    if (!draft?.conclusion.trim() || !draft.positioning || !Number.isFinite(target) || target <= 0 || !draft.sellingPoints.trim()) {
+    if (!draft || !isSecondaryResearchDraftComplete(draft)) {
       props.onStatus(`${item.sub_sku} 请填写复查结论、商品定位、目标单销和卖点总结`);
       return;
     }
@@ -474,7 +477,7 @@ export function SecondaryResearchView(props: {
     setManualSecondary({
       country: countryFilter || "菲律宾",
       salesperson_name: props.editable ? props.salespersonName : ownerFilter,
-      business_period: "",
+      business_period: defaultManualSecondaryBusinessPeriod(),
       main_sku: "",
       main_sku_name: "",
       sub_sku: "",
@@ -536,19 +539,19 @@ export function SecondaryResearchView(props: {
     }
   }
 
-  async function exportResearch() {
-    if (scenario === "arrival_assignment") return;
+  async function exportResearch(exportScenario: Exclude<ResearchScenario, "arrival_assignment"> | "all" = researchScenario) {
+    if (scenario === "arrival_assignment" && exportScenario !== "all") return;
     setLoading(true);
     try {
       const businessPeriod = periodFilter === "__all__" ? "" : periodFilter;
       await api.secondaryResearchExport({
-        scenario: researchScenario,
+        scenario: exportScenario,
         salesperson_name: props.editable ? props.salespersonName : ownerFilter,
         business_period: businessPeriod,
         country: countryFilter,
         query: query.trim()
       });
-      props.onStatus("二次调研导出已下载");
+      props.onStatus(exportScenario === "all" ? "全部二次调研导出已下载" : "二次调研导出已下载");
     } catch (error) {
       props.onStatus(error instanceof Error ? error.message : "二次调研导出失败");
     } finally {
@@ -566,6 +569,7 @@ export function SecondaryResearchView(props: {
       <button className="btn small" type="button" onClick={() => { setQuery(""); setCountryFilter(""); setOwnerFilter(""); setPeriodFilter("__all__"); }}>清空</button>
       <button className="btn small" type="button" disabled={loading} onClick={() => void (scenario === "arrival_assignment" ? loadPlmAssignments({ force: true }) : loadGroups({ force: true }))}>刷新</button>
       {scenario !== "arrival_assignment" && <button className="btn small" type="button" disabled={loading} onClick={() => void exportResearch()}>导出二次调研</button>}
+      {scenario !== "arrival_assignment" && <button className="btn small" type="button" disabled={loading} onClick={() => void exportResearch("all")}>导出全部二调</button>}
       {scenario !== "arrival_assignment" && <button className="btn small primary" type="button" disabled={loading || (props.editable && !props.salespersonName)} onClick={openManualSecondary}><Plus size={13} />新增二调 SKU</button>}
     </div>
   );
@@ -586,7 +590,7 @@ export function SecondaryResearchView(props: {
         <div className="manual-listing-grid">
           <label>国家 *<select className={manualSecondaryErrors.country ? "listing-error-input" : ""} value={manualSecondary.country} onChange={(event) => updateManualSecondary("country", event.target.value)}>{MANUAL_SECONDARY_COUNTRIES.map((country) => <option value={country} key={country}>{country}</option>)}</select><FieldError message={manualSecondaryErrors.country} /></label>
           <label>负责人 *<input disabled={props.editable} className={manualSecondaryErrors.salesperson_name ? "listing-error-input" : ""} value={manualSecondary.salesperson_name} onChange={(event) => updateManualSecondary("salesperson_name", event.target.value)} /><FieldError message={manualSecondaryErrors.salesperson_name} /></label>
-          <label>业务期<input value={manualSecondary.business_period} onChange={(event) => updateManualSecondary("business_period", event.target.value)} placeholder="不填则为手工二调" /></label>
+          <label>业务期<input value={manualSecondary.business_period} onChange={(event) => updateManualSecondary("business_period", event.target.value)} placeholder="默认当前自然周，可改" /></label>
           <label>主 SKU *<input className={manualSecondaryErrors.main_sku ? "listing-error-input" : ""} value={manualSecondary.main_sku} onChange={(event) => updateManualSecondary("main_sku", event.target.value)} /><FieldError message={manualSecondaryErrors.main_sku} /></label>
           <label>主 SKU 名称<input value={manualSecondary.main_sku_name} onChange={(event) => updateManualSecondary("main_sku_name", event.target.value)} /></label>
           <label>子 SKU *<input className={manualSecondaryErrors.sub_sku ? "listing-error-input" : ""} value={manualSecondary.sub_sku} onChange={(event) => updateManualSecondary("sub_sku", event.target.value)} /><FieldError message={manualSecondaryErrors.sub_sku} /></label>
@@ -1328,12 +1332,11 @@ function sourceModuleColumns(group: SecondaryResearchGroup, moduleKey: SourceMod
 }
 
 function draftPayload(draft: SecondaryResearchDraft<UploadedEvidenceImage>) {
-  const targetDailySales = Number(draft.targetDailySales);
   return {
     secondary_competitor_url: draft.competitorUrl.trim() || null,
     secondary_conclusion: draft.conclusion.trim() || null,
     product_positioning: draft.positioning || null,
-    secondary_target_daily_sales: Number.isFinite(targetDailySales) && targetDailySales > 0 ? targetDailySales : null,
+    secondary_target_daily_sales: secondaryResearchTargetDailySalesValue(draft),
     secondary_selling_points: draft.sellingPoints.trim() || null,
     secondary_evidence_images: draft.evidenceImages
   };

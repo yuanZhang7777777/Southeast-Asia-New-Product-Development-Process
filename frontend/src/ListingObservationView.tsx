@@ -25,6 +25,7 @@ import {
   formatPercent,
   hasFetchedMetrics,
   latestObservationMetricRow,
+  listingWorkbenchGroupMatchesQuery,
   ListingDraft,
   ListingDraftErrors,
   mapReviewServerRowErrors,
@@ -264,11 +265,12 @@ export function ListingObservationView(props: {
   );
   const visibleGroups = useMemo(
     () => businessGroups.flatMap((group) => {
-      const matchedRows = sortObservationRows(filterObservationRows(group.periodRows, effectiveFilters));
+      const contextMatches = listingWorkbenchGroupMatchesQuery(group, effectiveFilters.query);
+      const matchedRows = sortObservationRows(filterObservationRows(
+        group.periodRows,
+        contextMatches ? { ...effectiveFilters, query: "" } : effectiveFilters
+      ));
       const periodRows = matchedRows.filter((row) => observationPeriodDisplay(row) !== "hidden");
-      const text = effectiveFilters.query?.trim().toLocaleLowerCase();
-      const contextMatches = !text || [group.context.main_sku, group.context.main_sku_name]
-        .some((value) => value?.toLocaleLowerCase().includes(text));
       // 周期观察合并卡的 context.salesperson_name 可能是多负责人逗号串：负责人筛选按 listing 命中，命中后只显示该负责人的 Item。
       const ownerFilter = effectiveFilters.salesperson_name;
       const ownerListings = ownerFilter
@@ -780,7 +782,7 @@ export function ListingObservationView(props: {
         <div className="listing-filters">
           <label className="listing-search">
             关键词
-            <input value={filters.query} onChange={(event) => setFilter("query", event.target.value)} placeholder="主 SKU / Item / 商品名称" />
+            <input value={filters.query} onChange={(event) => setFilter("query", event.target.value)} placeholder="主/子 SKU / Item / 商品名称" />
           </label>
           <label>
             国家

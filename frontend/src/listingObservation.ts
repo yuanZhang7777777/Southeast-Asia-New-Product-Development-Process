@@ -162,7 +162,6 @@ export function buildListingTaskContexts<
     site?: string | null;
     main_sku: string;
     main_sku_name?: string | null;
-    image_url?: string | null;
     salesperson_name: string;
     claim_record_ids: string[];
     default_first_period_start: string;
@@ -173,7 +172,6 @@ export function buildListingTaskContexts<
     site?: string | null;
     main_sku: string;
     main_sku_name?: string | null;
-    image_url?: string | null;
     salesperson_name: string;
   }
 >(tasks: readonly TTask[], listings: readonly TListing[], defaultFirstPeriodStart: string) {
@@ -185,7 +183,6 @@ export function buildListingTaskContexts<
     site?: string | null;
     main_sku: string;
     main_sku_name?: string | null;
-    image_url?: string | null;
     salesperson_name: string;
     claim_record_ids: never[];
     default_first_period_start: string;
@@ -201,7 +198,6 @@ export function buildListingTaskContexts<
       site: listing.site,
       main_sku: listing.main_sku,
       main_sku_name: listing.main_sku_name,
-      image_url: listing.image_url,
       salesperson_name: listing.salesperson_name,
       claim_record_ids: [],
       default_first_period_start: defaultFirstPeriodStart
@@ -279,6 +275,24 @@ function earliestListingBusinessPeriod(listings: readonly Pick<ListingRecord, "b
 
 function unique(values: readonly string[]) {
   return Array.from(new Set(values.filter(Boolean)));
+}
+
+
+export function listingWorkbenchGroupMatchesQuery(group: ListingWorkbenchGroup, query?: string): boolean {
+  const needle = query?.trim().toLocaleLowerCase();
+  if (!needle) return true;
+  return [
+    group.context.main_sku,
+    group.context.main_sku_name,
+    ...group.listings.flatMap((listing) => [
+      listing.main_sku,
+      listing.main_sku_name,
+      listing.representative_sub_sku,
+      ...(listing.bound_main_skus || []),
+      ...(listing.bound_sub_skus || []),
+      ...(listing.bound_sub_sku_names || [])
+    ])
+  ].some((value) => value?.toLocaleLowerCase().includes(needle));
 }
 
 export function filterListingWorkbenchGroups(

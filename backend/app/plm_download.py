@@ -115,6 +115,7 @@ def download_plm_export(
             "bindType": 1,
             "mergeSaleName": 0,
             "hideZeroData": 0,
+            "blocNameList": [bloc_name] if bloc_name else [],
             "latestStorageTimeStart": start,
             "latestStorageTimeEnd": end,
         },

@@ -46,6 +46,8 @@ def parse_plm_arrival_preview(
         items: list[dict[str, Any]] = []
         for source_row, row in enumerate(sheet.iter_rows(min_row=2, values_only=True), start=2):
             values = {field: row[index] if index < len(row) else None for field, index in indexes.items()}
+            if bloc_name and _text(values.get("bloc_name")) != bloc_name:
+                continue
             first_date = _date_value(values.get("first_listing_time"))
             if first_date is None:
                 arrival_type = "unknown"

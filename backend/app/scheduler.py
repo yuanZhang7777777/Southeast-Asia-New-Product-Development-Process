@@ -121,6 +121,7 @@ def run_plm_sync(settings: Settings, date_text: str) -> dict[str, object]:
         base_url=settings.plm_base_url,
         username=settings.plm_username,
         password=settings.plm_password,
+        bloc_name=settings.plm_bloc_name,
         cache_dir=settings.plm_cache_dir,
     )
     with SessionLocal() as db:
@@ -129,6 +130,7 @@ def run_plm_sync(settings: Settings, date_text: str) -> dict[str, object]:
             path,
             date_text,
             source_file=path.name,
+            bloc_name=settings.plm_bloc_name,
             workflow_automation_enabled=settings.workflow_automation_enabled,
         )
     return {"file": path.name, "arrival": arrival}

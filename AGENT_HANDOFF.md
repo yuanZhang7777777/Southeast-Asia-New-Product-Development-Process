@@ -1,24 +1,25 @@
 # Agent Handoff
 
-> Updated: 2026-08-18 15:42 Asia/Shanghai
+> Updated: 2026-08-25 11:35 Asia/Shanghai
 > Purpose: current facts, hard boundaries, and the next executable sequence only. Detailed history stays in `docs/20-项目推进总控.md` and `C:\Users\86173\.codex\work-logs\`.
 
 ## Read Order
 
 1. This file: current scope and stop conditions.
-2. `docs/2026-07-09-已确认需求记录.md`: confirmed business rules, highest priority.
-3. `docs/20-项目推进总控.md`: detailed delivery timeline and recorded read-backs.
-4. `docs/21-后半段需求领导对齐问题清单.md`: downstream workflow, PLM/FineBI facts, and unresolved business inputs.
-5. `docs/02-功能实现状态.md`: implementation and test status.
-6. `docs/06-部署与服务器准备.md`: environment, backup, deployment, and rollback procedures.
-7. `AGENTS.md`: project safety and engineering rules.
+2. `docs/production-baseline-20260825.md`: verified production-source recovery anchor and hash manifest.
+3. `docs/2026-07-09-已确认需求记录.md`: confirmed business rules, highest priority.
+4. `docs/20-项目推进总控.md`: detailed delivery timeline and recorded read-backs.
+5. `docs/21-后半段需求领导对齐问题清单.md`: downstream workflow, PLM/FineBI facts, and unresolved business inputs.
+6. `docs/02-功能实现状态.md`: implementation and test status.
+7. `docs/06-部署与服务器准备.md`: environment, backup, deployment, and rollback procedures.
+8. `AGENTS.md`: project safety and engineering rules.
 
 Do not recover decisions from old release notes or screenshot-only discussions when they conflict with the files above or the user's newest message.
 
 ## Immediate Operating Boundaries
 
 - The worktree is deliberately dirty and contains work from multiple agents. Start every implementation task with `git status --short`, inspect the relevant diff, and never run `git reset --hard`, `git checkout --`, or overwrite unrelated changes.
-- The active code baseline is `main` at or after merge commit `59429cf`. For deployment, data migration, or rollback, cite the exact commit being used.
+- The verified production-source recovery anchor is the local branch `lxc/production-baseline-20260825` and annotated tag `prod-2026-08-25-baseline`. The 2026-08-25 audit proved that neither local `main` nor any other pre-existing local branch matched the complete production source tree. Do not select a deployment branch from the stale server marker; read `docs/production-baseline-20260825.md` and its SHA-256 manifest first.
 - This root `AGENT_HANDOFF.md` is the only active handoff. Any `AGENT_HANDOFF-*` file found in older branches or worktrees is historical evidence only and must not override this file.
 - Production changes require a fresh explicit user approval, a production backup, a dry-run/read-back report, and the deployment runbook. Do not infer approval from an old handoff line.
 - `hz-new-product-dev` is the only active development environment after the 2026-07-30 Hong Kong cutover. The former development Compose stack is down with zero containers and no `18081` listener; its seven named volumes and verified database backup remain for recovery only and must not be restarted.
@@ -29,7 +30,7 @@ Do not recover decisions from old release notes or screenshot-only discussions w
 
 ## Current Objective
 
-Production is live at `hz-new-product-preprod:/opt/hengzhe-new-product/app` with `PLATFORM_BASE_URL=http://101.132.26.138:8080` and `RELEASE_COMMIT=c2fe6f8`. DingTalk autosend is enabled, and daily PLM arrival notification is handled by the guarded 10:00 cron `/opt/hengzhe-new-product/app/run_plm_daily_notify.sh`. Current PLM intake rule is authoritative: the PLM export is still requested by `latest_storage_time` target Beijing date because that is the available PLM export filter, but the system now classifies new arrivals by `first_listing_time` Beijing date within target date ±2 days. Do not filter by group/bloc for the normal arrival run. PLM salesperson/group are audit fields, not ownership blockers. Automatic routing uses current visible business data by normalized country/site + child SKU: one current match enters that system owner’s secondary research; no current match enters the PLM salesperson’s secondary research only when that person is an enabled real operator responsible for the same country/site; otherwise the item stays in `到货待分配`, grouped by country/site + main SKU for manager/super-admin assignment.
+Production is live at `hz-new-product-preprod:/opt/hengzhe-new-product/app` with `PLATFORM_BASE_URL=http://101.132.26.138:8080`. The server still says `RELEASE_COMMIT=c2fe6f8`, but the 2026-08-25 host/container/hash audit proved that marker is stale and must not be used as the deployed Git identity. The sanitized 148-file source snapshot is preserved at local tag `prod-2026-08-25-baseline`; its backend host files match the running API container 76/76. DingTalk autosend is enabled, and daily PLM arrival notification is handled by the guarded 10:00 cron `/opt/hengzhe-new-product/app/run_plm_daily_notify.sh`. Current PLM intake rule is authoritative: the PLM export is still requested by `latest_storage_time` target Beijing date because that is the available PLM export filter, but the system now classifies new arrivals by `first_listing_time` Beijing date within target date ±2 days. Do not filter by group/bloc for the normal arrival run. PLM salesperson/group are audit fields, not ownership blockers. Automatic routing uses current visible business data by normalized country/site + child SKU: one current match enters that system owner’s secondary research; no current match enters the PLM salesperson’s secondary research only when that person is an enabled real operator responsible for the same country/site; otherwise the item stays in `到货待分配`, grouped by country/site + main SKU for manager/super-admin assignment.
 
 2026-08-18 15:42 Asia/Shanghai production PLM all-country-seller rule deployed: user clarified “只要有货同一个国家就能卖”. Production now removes normal PLM group filtering, uses `首次上架时间` target date ±2 days for new-arrival classification, matches existing platform goods by `国家/站点 + 子SKU` instead of salesperson/main-SKU ownership, and auto-opens `PLM新增到货` secondary research for the PLM salesperson only when that salesperson is still an enabled operator for the same country/site. If a same-country child SKU already exists in current visible business data but has already submitted secondary research or entered listing/observation, production skips creating a duplicate `PLM新增到货` task. If not, the row remains in `pending_assignment` for manager/super-admin assignment. Code commit `c2fe6f8` is deployed on production; `/api/health` returned OK and `api/postgres/redis/reverse-proxy/scheduler/worker` were running. Verification from `backend/`: `python -m pytest tests/test_plm_processing.py tests/test_plm_arrivals.py tests/test_scheduler.py tests/test_notification_jobs.py tests/test_notification_disabled.py -q` returned 60 passed after the final fast-path guard; previous broader PLM regression returned 134 passed. Production 2026-08-11 through 2026-08-17 PLM backfill log: `/opt/hengzhe-new-product/app/logs/plm_backfill_20260811_0817_20260818_152735.log`; backfill matched 25/12/2/0/0/4/4 rows by date and 12 previously missing date-person arrival cards were sent after read-back. HCD022 is already submitted/listing observation, so it should not reappear in pending secondary research; HXG49 remains pending assignment because current production only finds old hidden/archive rows, not a current visible owner.
 

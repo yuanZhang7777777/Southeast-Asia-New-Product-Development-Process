@@ -29,9 +29,10 @@ def preview(payload: schemas.AssignmentPreviewRequest, db: Session = Depends(get
 def board(
     batch: str | None = None,
     assignee_name: str | None = None,
+    opportunity_status: str | None = None,
     db: Session = Depends(get_db),
 ) -> schemas.AssignmentBoardResponse:
-    return services.list_assignment_board(db, batch=batch, assignee_name=assignee_name)
+    return services.list_assignment_board(db, batch=batch, assignee_name=assignee_name, opportunity_status=opportunity_status)
 
 
 @router.post("/confirm", response_model=list[schemas.TaskRead])

@@ -42,13 +42,13 @@ def process_plm_arrival_workbook(
     scope_name = bloc_name or ALL_BLOC_SCOPE
     source_hash = hashlib.sha256(
         path.read_bytes()
-        + f"\n{date_text}\n{ALL_BLOC_SCOPE}\nfirst_listing_window={DEFAULT_FIRST_LISTING_WINDOW_DAYS}".encode()
+        + f"\n{date_text}\n{scope_name}\nfirst_listing_window={DEFAULT_FIRST_LISTING_WINDOW_DAYS}".encode()
     ).hexdigest()
     existing = db.scalar(select(models.PlmArrivalBatch).where(models.PlmArrivalBatch.source_hash == source_hash))
     if existing:
         return _summary(db, existing, "duplicate")
 
-    preview = parse_plm_arrival_preview(path, date_text)
+    preview = parse_plm_arrival_preview(path, date_text, bloc_name=bloc_name)
     batch = models.PlmArrivalBatch(
         arrival_date=date_text,
         source_file=source_file or path.name,

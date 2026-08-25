@@ -275,7 +275,7 @@ def _listing_reminder_groups(db: Session) -> list[_ListingReminderGroup]:
         .join(models.NewProductOpportunity, models.SalesClaimForecast.opportunity_id == models.NewProductOpportunity.id)
         .where(
             models.SalesClaimForecast.claim_result == CLAIM_RESULT_CLAIM,
-            models.SalesClaimForecast.source_column == "platform",
+            models.SalesClaimForecast.source_column.in_(CURRENT_SECONDARY_SOURCE_COLUMNS),
             models.SalesClaimForecast.downstream_status.in_((CLAIM_WAITING_LISTING, CLAIM_WAITING_SECONDARY_RESEARCH)),
             arrival_exists,
         )
